@@ -1,0 +1,142 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qloudpulse-agent.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    extensions:
+      health_check:
+        endpoint: ${env:MY_POD_IP}:13133
+      bearertokenauth:
+        token: ${env:QLOUDPULSE_TOKEN}
+      # Finds the nodes, so that one pod can read every kubelet.
+      k8s_observer:
+        auth_type: serviceAccount
+        observe_nodes: true
+        observe_pods: false
+        observe_services: false
+
+    receivers:
+      # Requests, node capacity and pod phase, from the Kubernetes API.
+      k8s_cluster:
+        auth_type: serviceAccount
+        collection_interval: {{ .Values.collectionInterval }}
+        node_conditions_to_report: []
+        allocatable_types_to_report: [cpu, memory]
+      # CPU and memory used, from each node's kubelet. No extra_metadata_labels: they would need nodes/proxy.
+      receiver_creator:
+        watch_observers: [k8s_observer]
+        receivers:
+          kubeletstats:
+            rule: type == "k8s.node"
+            config:
+              auth_type: serviceAccount
+              collection_interval: {{ .Values.collectionInterval }}
+              endpoint: '`joinHostPort(endpoint, kubelet_endpoint_port)`'
+              insecure_skip_verify: true
+              metric_groups: [pod]
+
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+      # Only what the cost split reads leaves the cluster.
+      filter/only_cost_metrics:
+        error_mode: ignore
+        metrics:
+          metric:
+            - 'not IsMatch(metric.name, "^k8s\\.(container\\.(cpu|memory)_request|pod\\.phase|node\\.allocatable_(cpu|memory)|pod\\.cpu\\.usage|pod\\.memory\\.working_set)$")'
+      k8s_attributes:
+        auth_type: serviceAccount
+        passthrough: false
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.uid
+        extract:
+          metadata:
+            - k8s.deployment.name
+            - k8s.statefulset.name
+            - k8s.daemonset.name
+            - k8s.job.name
+            - k8s.cronjob.name
+          {{- if or .Values.labels.pod .Values.labels.namespace .Values.environmentNamespaceLabel }}
+          labels:
+            {{- range .Values.labels.pod }}
+            - tag_name: qloudpulse.pod.label.{{ include "qloudpulse-agent.labelName" . }}
+              key: {{ . | quote }}
+              from: pod
+            {{- end }}
+            {{- range .Values.labels.namespace }}
+            - tag_name: qloudpulse.namespace.label.{{ include "qloudpulse-agent.labelName" . }}
+              key: {{ . | quote }}
+              from: namespace
+            {{- end }}
+            {{- with .Values.environmentNamespaceLabel }}
+            - tag_name: qloudpulse.environment
+              key: {{ . | quote }}
+              from: namespace
+            {{- end }}
+          {{- end }}
+      # The exporter drops resource attributes, so what the series need goes onto the data points.
+      transform/labels:
+        metric_statements:
+          - context: datapoint
+            statements:
+              - set(attributes["k8s_namespace_name"], resource.attributes["k8s.namespace.name"])
+              - set(attributes["k8s_pod_name"], resource.attributes["k8s.pod.name"])
+              - set(attributes["k8s_container_name"], resource.attributes["k8s.container.name"])
+              - set(attributes["k8s_node_name"], resource.attributes["k8s.node.name"])
+              # One workload name and kind. A CronJob comes last, so it wins over the Job it made.
+              - set(attributes["k8s_workload_name"], resource.attributes["k8s.deployment.name"]) where resource.attributes["k8s.deployment.name"] != nil
+              - set(attributes["k8s_workload_kind"], "Deployment") where resource.attributes["k8s.deployment.name"] != nil
+              - set(attributes["k8s_workload_name"], resource.attributes["k8s.statefulset.name"]) where resource.attributes["k8s.statefulset.name"] != nil
+              - set(attributes["k8s_workload_kind"], "StatefulSet") where resource.attributes["k8s.statefulset.name"] != nil
+              - set(attributes["k8s_workload_name"], resource.attributes["k8s.daemonset.name"]) where resource.attributes["k8s.daemonset.name"] != nil
+              - set(attributes["k8s_workload_kind"], "DaemonSet") where resource.attributes["k8s.daemonset.name"] != nil
+              - set(attributes["k8s_workload_name"], resource.attributes["k8s.job.name"]) where resource.attributes["k8s.job.name"] != nil
+              - set(attributes["k8s_workload_kind"], "Job") where resource.attributes["k8s.job.name"] != nil
+              - set(attributes["k8s_workload_name"], resource.attributes["k8s.cronjob.name"]) where resource.attributes["k8s.cronjob.name"] != nil
+              - set(attributes["k8s_workload_kind"], "CronJob") where resource.attributes["k8s.cronjob.name"] != nil
+              {{- if .Values.environmentNamespaceLabel }}
+              - set(attributes["environment"], resource.attributes["qloudpulse.environment"]) where resource.attributes["qloudpulse.environment"] != nil
+              {{- end }}
+              # Labels on one series per pod, so that they do not multiply the others.
+              {{- range .Values.labels.pod }}
+              {{- $name := include "qloudpulse-agent.labelName" . }}
+              - set(attributes["k8s_pod_label_{{ $name }}"], resource.attributes["qloudpulse.pod.label.{{ $name }}"]) where metric.name == "k8s.pod.phase" and resource.attributes["qloudpulse.pod.label.{{ $name }}"] != nil
+              {{- end }}
+              {{- range .Values.labels.namespace }}
+              {{- $name := include "qloudpulse-agent.labelName" . }}
+              - set(attributes["k8s_namespace_label_{{ $name }}"], resource.attributes["qloudpulse.namespace.label.{{ $name }}"]) where metric.name == "k8s.pod.phase" and resource.attributes["qloudpulse.namespace.label.{{ $name }}"] != nil
+              {{- end }}
+      batch:
+        timeout: 10s
+
+    exporters:
+      prometheus_remote_write:
+        endpoint: ${env:QLOUDPULSE_ENDPOINT}
+        auth:
+          authenticator: bearertokenauth
+        external_labels:
+          k8s_cluster_name: ${env:QLOUDPULSE_CLUSTER_NAME}
+          environment: ${env:QLOUDPULSE_ENVIRONMENT}
+        target_info:
+          enabled: false
+
+    service:
+      extensions: [health_check, bearertokenauth, k8s_observer]
+      telemetry:
+        logs:
+          level: info
+        metrics:
+          level: none
+      pipelines:
+        metrics:
+          receivers: [k8s_cluster, receiver_creator]
+          processors: [memory_limiter, filter/only_cost_metrics, k8s_attributes, transform/labels, batch]
+          exporters: [prometheus_remote_write]

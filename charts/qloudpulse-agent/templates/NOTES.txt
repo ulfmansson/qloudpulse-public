@@ -1,0 +1,9 @@
+qloudpulse-agent is starting in namespace {{ .Release.Namespace }}, for cluster {{ .Values.clusterName }}.
+
+Check that it runs and is sending:
+
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/name=qloudpulse-agent
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ .Release.Name }} --tail=20
+
+"401" in the log means the token is wrong. "connection refused" or "timeout" means the pod cannot reach
+{{ .Values.endpoint }}, or a node's kubelet on port 10250.

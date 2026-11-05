@@ -1,0 +1,13 @@
+apiVersion: v2
+name: qloudpulse-agent
+description: Sends pod requests and usage from a Kubernetes cluster to qloudpulse, with the upstream OpenTelemetry Collector
+type: application
+version: 0.1.0
+appVersion: "0.163.2"
+home: https://github.com/ulfmansson/qloudpulse-public
+sources:
+  - https://github.com/ulfmansson/qloudpulse-public
+keywords:
+  - kubernetes
+  - cost
+  - opentelemetry

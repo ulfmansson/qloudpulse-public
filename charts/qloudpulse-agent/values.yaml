@@ -1,0 +1,56 @@
+# Required. On EKS this must be the EKS cluster's own name: qloudpulse uses it to find each node's EC2 instance.
+clusterName: ""
+
+# Required. The address qloudpulse gives you, ending in /api/v1/write.
+endpoint: ""
+
+# Required, unless existingSecret is set. Your company's token from qloudpulse. It can write metrics for your company
+# and nothing else.
+token: ""
+
+# The name of a Secret you manage, with the token under the key `token`. Set this to keep the token out of Helm's values.
+existingSecret: ""
+
+# What reports call this cluster's environment.
+environment: default
+
+# A namespace label that holds the environment, for clusters that share several. A namespace with the label overrides
+# `environment` for its pods.
+environmentNamespaceLabel: ""
+
+# The labels to send, for grouping costs. None are sent unless you list them, because a label can hold something you
+# may not want to share. They are sent on one series per pod, so they do not multiply the others.
+labels:
+  pod: []
+  # - app.kubernetes.io/name
+  # - team
+  namespace: []
+  # - team
+
+# How often to read the cluster. The cost split is built on 30 seconds.
+collectionInterval: 30s
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+  # Leave this at the chart's version: qloudpulse tests each Collector version against the metric names it reads.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Raise the memory limit and goMemLimit together for clusters of more than about 100 nodes. goMemLimit is about 80% of
+# the limit. There is no CPU limit on purpose: a limit throttles the pod even on an idle node. Requests stay low because
+# they reserve capacity even when unused: on a small cluster the pod uses about 5m CPU and 50 Mi of memory.
+resources:
+  requests:
+    cpu: 25m
+    memory: 96Mi
+  limits:
+    memory: 512Mi
+goMemLimit: 400MiB
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+priorityClassName: ""

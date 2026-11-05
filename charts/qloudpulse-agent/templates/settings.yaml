@@ -1,0 +1,24 @@
+{{- if not .Values.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qloudpulse-agent.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  token: {{ required "Set token to your company's token from qloudpulse, or existingSecret to a Secret that holds it." .Values.token | quote }}
+---
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-settings
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "qloudpulse-agent.labels" . | nindent 4 }}
+data:
+  QLOUDPULSE_CLUSTER_NAME: {{ required "Set clusterName. On EKS it must be the EKS cluster's own name." .Values.clusterName | quote }}
+  QLOUDPULSE_ENDPOINT: {{ required "Set endpoint to the address qloudpulse gives you, ending in /api/v1/write." .Values.endpoint | quote }}
+  QLOUDPULSE_ENVIRONMENT: {{ .Values.environment | quote }}

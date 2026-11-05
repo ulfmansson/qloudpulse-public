@@ -1,0 +1,318 @@
+# The qloudpulse cluster agent as plain YAML. It installs the same thing as the Helm chart in charts/qloudpulse-agent,
+# which this file is generated from by scripts/render-manifest.sh.
+#
+# Before you apply it, replace these three values, in the Secret and the ConfigMap just below:
+#
+#   REPLACE-WITH-YOUR-TOKEN         your company's token from qloudpulse
+#   REPLACE-WITH-CLUSTER-NAME       on EKS, the EKS cluster's own name
+#   https://REPLACE-WITH-ENDPOINT/  the address qloudpulse gives you, ending in /api/v1/write
+#
+# Then run: kubectl apply -f qloudpulse-agent.yaml
+# If you change a value later, also run: kubectl -n qloudpulse rollout restart deployment/qloudpulse-agent
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: qloudpulse
+  labels:
+    app.kubernetes.io/name: qloudpulse-agent
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: qloudpulse-agent
+  namespace: qloudpulse
+  labels:
+    app.kubernetes.io/name: qloudpulse-agent
+    app.kubernetes.io/instance: qloudpulse-agent
+    app.kubernetes.io/version: "0.163.2"
+    app.kubernetes.io/managed-by: kubectl
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: qloudpulse-agent
+  namespace: qloudpulse
+  labels:
+    app.kubernetes.io/name: qloudpulse-agent
+    app.kubernetes.io/instance: qloudpulse-agent
+    app.kubernetes.io/version: "0.163.2"
+    app.kubernetes.io/managed-by: kubectl
+type: Opaque
+stringData:
+  token: "REPLACE-WITH-YOUR-TOKEN"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qloudpulse-agent-config
+  namespace: qloudpulse
+  labels:
+    app.kubernetes.io/name: qloudpulse-agent
+    app.kubernetes.io/instance: qloudpulse-agent
+    app.kubernetes.io/version: "0.163.2"
+    app.kubernetes.io/managed-by: kubectl
+data:
+  config.yaml: |
+    extensions:
+      health_check:
+        endpoint: ${env:MY_POD_IP}:13133
+      bearertokenauth:
+        token: ${env:QLOUDPULSE_TOKEN}
+      # Finds the nodes, so that one pod can read every kubelet.
+      k8s_observer:
+        auth_type: serviceAccount
+        observe_nodes: true
+        observe_pods: false
+        observe_services: false
+
+    receivers:
+      # Requests, node capacity and pod phase, from the Kubernetes API.
+      k8s_cluster:
+        auth_type: serviceAccount
+        collection_interval: 30s
+        node_conditions_to_report: []
+        allocatable_types_to_report: [cpu, memory]
+      # CPU and memory used, from each node's kubelet. No extra_metadata_labels: they would need nodes/proxy.
+      receiver_creator:
+        watch_observers: [k8s_observer]
+        receivers:
+          kubeletstats:
+            rule: type == "k8s.node"
+            config:
+              auth_type: serviceAccount
+              collection_interval: 30s
+              endpoint: '`joinHostPort(endpoint, kubelet_endpoint_port)`'
+              insecure_skip_verify: true
+              metric_groups: [pod]
+
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+      # Only what the cost split reads leaves the cluster.
+      filter/only_cost_metrics:
+        error_mode: ignore
+        metrics:
+          metric:
+            - 'not IsMatch(metric.name, "^k8s\\.(container\\.(cpu|memory)_request|pod\\.phase|node\\.allocatable_(cpu|memory)|pod\\.cpu\\.usage|pod\\.memory\\.working_set)$")'
+      k8s_attributes:
+        auth_type: serviceAccount
+        passthrough: false
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.uid
+        extract:
+          metadata:
+            - k8s.deployment.name
+            - k8s.statefulset.name
+            - k8s.daemonset.name
+            - k8s.job.name
+            - k8s.cronjob.name
+      # The exporter drops resource attributes, so what the series need goes onto the data points.
+      transform/labels:
+        metric_statements:
+          - context: datapoint
+            statements:
+              - set(attributes["k8s_namespace_name"], resource.attributes["k8s.namespace.name"])
+              - set(attributes["k8s_pod_name"], resource.attributes["k8s.pod.name"])
+              - set(attributes["k8s_container_name"], resource.attributes["k8s.container.name"])
+              - set(attributes["k8s_node_name"], resource.attributes["k8s.node.name"])
+              # One workload name and kind. A CronJob comes last, so it wins over the Job it made.
+              - set(attributes["k8s_workload_name"], resource.attributes["k8s.deployment.name"]) where resource.attributes["k8s.deployment.name"] != nil
+              - set(attributes["k8s_workload_kind"], "Deployment") where resource.attributes["k8s.deployment.name"] != nil
+              - set(attributes["k8s_workload_name"], resource.attributes["k8s.statefulset.name"]) where resource.attributes["k8s.statefulset.name"] != nil
+              - set(attributes["k8s_workload_kind"], "StatefulSet") where resource.attributes["k8s.statefulset.name"] != nil
+              - set(attributes["k8s_workload_name"], resource.attributes["k8s.daemonset.name"]) where resource.attributes["k8s.daemonset.name"] != nil
+              - set(attributes["k8s_workload_kind"], "DaemonSet") where resource.attributes["k8s.daemonset.name"] != nil
+              - set(attributes["k8s_workload_name"], resource.attributes["k8s.job.name"]) where resource.attributes["k8s.job.name"] != nil
+              - set(attributes["k8s_workload_kind"], "Job") where resource.attributes["k8s.job.name"] != nil
+              - set(attributes["k8s_workload_name"], resource.attributes["k8s.cronjob.name"]) where resource.attributes["k8s.cronjob.name"] != nil
+              - set(attributes["k8s_workload_kind"], "CronJob") where resource.attributes["k8s.cronjob.name"] != nil
+              # Labels on one series per pod, so that they do not multiply the others.
+      batch:
+        timeout: 10s
+
+    exporters:
+      prometheus_remote_write:
+        endpoint: ${env:QLOUDPULSE_ENDPOINT}
+        auth:
+          authenticator: bearertokenauth
+        external_labels:
+          k8s_cluster_name: ${env:QLOUDPULSE_CLUSTER_NAME}
+          environment: ${env:QLOUDPULSE_ENVIRONMENT}
+        target_info:
+          enabled: false
+
+    service:
+      extensions: [health_check, bearertokenauth, k8s_observer]
+      telemetry:
+        logs:
+          level: info
+        metrics:
+          level: none
+      pipelines:
+        metrics:
+          receivers: [k8s_cluster, receiver_creator]
+          processors: [memory_limiter, filter/only_cost_metrics, k8s_attributes, transform/labels, batch]
+          exporters: [prometheus_remote_write]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qloudpulse-agent-settings
+  namespace: qloudpulse
+  labels:
+    app.kubernetes.io/name: qloudpulse-agent
+    app.kubernetes.io/instance: qloudpulse-agent
+    app.kubernetes.io/version: "0.163.2"
+    app.kubernetes.io/managed-by: kubectl
+data:
+  QLOUDPULSE_CLUSTER_NAME: "REPLACE-WITH-CLUSTER-NAME"
+  QLOUDPULSE_ENDPOINT: "https://REPLACE-WITH-ENDPOINT/api/v1/write"
+  QLOUDPULSE_ENVIRONMENT: "default"
+---
+# Read-only. No Secrets, ConfigMaps, pods/log, pods/exec or nodes/proxy.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: qloudpulse-agent
+  labels:
+    app.kubernetes.io/name: qloudpulse-agent
+    app.kubernetes.io/instance: qloudpulse-agent
+    app.kubernetes.io/version: "0.163.2"
+    app.kubernetes.io/managed-by: kubectl
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - nodes
+      - pods
+      - replicationcontrollers
+      - resourcequotas
+      - services
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [daemonsets, deployments, replicasets, statefulsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [cronjobs, jobs]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+  # CPU and memory used, from the kubelet's /stats/summary.
+  - apiGroups: [""]
+    resources: [nodes/stats]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: qloudpulse-agent
+  labels:
+    app.kubernetes.io/name: qloudpulse-agent
+    app.kubernetes.io/instance: qloudpulse-agent
+    app.kubernetes.io/version: "0.163.2"
+    app.kubernetes.io/managed-by: kubectl
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: qloudpulse-agent
+subjects:
+  - kind: ServiceAccount
+    name: qloudpulse-agent
+    namespace: qloudpulse
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qloudpulse-agent
+  namespace: qloudpulse
+  labels:
+    app.kubernetes.io/name: qloudpulse-agent
+    app.kubernetes.io/instance: qloudpulse-agent
+    app.kubernetes.io/version: "0.163.2"
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  # Always one: a second pod would read every kubelet again, and k8s_cluster must run once per cluster.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qloudpulse-agent
+      app.kubernetes.io/instance: qloudpulse-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: qloudpulse-agent
+        app.kubernetes.io/instance: qloudpulse-agent
+    spec:
+      serviceAccountName: qloudpulse-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: collector
+          image: "otel/opentelemetry-collector-contrib:0.163.2"
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config=/conf/config.yaml
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          envFrom:
+            - configMapRef:
+                name: qloudpulse-agent-settings
+          env:
+            - name: MY_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: QLOUDPULSE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: qloudpulse-agent
+                  key: token
+            - name: GOMEMLIMIT
+              value: "400MiB"
+          ports:
+            - name: health
+              containerPort: 13133
+          startupProbe:
+            httpGet:
+              path: /
+              port: health
+            periodSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            periodSeconds: 20
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            limits:
+              memory: 512Mi
+            requests:
+              cpu: 25m
+              memory: 96Mi
+          volumeMounts:
+            - name: config
+              mountPath: /conf
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: qloudpulse-agent-config
