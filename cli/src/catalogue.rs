@@ -1,198 +1,126 @@
-//! The resource types the client prices, and the attributes it sends for each.
+//! The resource types qloudpulse prices and the attributes the client sends for each: the catalogue, which the client
+//! reads from qloudpulse (`GET …/estimates/catalogue`) on every run, or from `--catalogue FILE`.
 //!
-//! Nothing outside these lists is read from a resource: an attribute that does not set a price stays in CI. A path
-//! `a.b` takes `b` from the object `a`, or from every object in the list `a`.
-//!
-//! Pulumi's AWS provider is built from Terraform's, so the names are Terraform's in camelCase; a Terraform plan reader
-//! can use the same lists with the names in snake_case.
+//! The list lives with the pricing, so qloudpulse prices a new type without a new client. Nothing outside it is read
+//! from a resource: an attribute that does not set a price stays in CI. A path `a.b` takes `b` from the object `a`,
+//! or from every object in the list `a`. `--dry-run` prints exactly what the list makes the client send.
 
-/// One resource type the client prices.
-#[derive(Debug)]
-pub struct PricedType {
+use std::collections::HashSet;
+
+use anyhow::{Context, Result, bail};
+use serde::Deserialize;
+
+use crate::request::FORMAT_VERSION;
+
+/// The list as qloudpulse publishes it.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Catalogue {
+    pub format_version: u32,
+    /// Pulumi packages, such as `aws`, whose types outside the list are counted as not priced.
+    #[serde(default)]
+    pub providers: Vec<String>,
+    pub types: Vec<CatalogueType>,
+}
+
+/// One type qloudpulse prices.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CatalogueType {
     /// The Pulumi type token, as `pulumi preview --json` writes it.
-    pub token: &'static str,
+    #[serde(rename = "type")]
+    pub token: String,
     /// What the comment calls it.
-    pub label: &'static str,
+    pub label: String,
     /// The attributes that set its price. Empty for a type priced from usage alone, such as an S3 bucket.
-    pub attributes: &'static [&'static str],
+    #[serde(default)]
+    pub attributes: Vec<String>,
+    /// Attributes whose value is another resource, such as an ECS service's task definition. The client sends that
+    /// resource's key, and the resource itself when the change leaves it the same.
+    #[serde(default)]
+    pub references: Vec<String>,
 }
 
-/// Every type the client prices, the first version's list: EC2, EBS, RDS and Aurora, ElastiCache, NAT gateways,
-/// public IPv4 addresses, load balancers, EKS, Lambda and S3.
-pub const PRICED: &[PricedType] = &[
-    PricedType {
-        token: "aws:ec2/instance:Instance",
-        label: "EC2 instance",
-        attributes: &[
-            "instanceType",
-            "tenancy",
-            "ebsOptimized",
-            "creditSpecification.cpuCredits",
-            "rootBlockDevice.volumeSize",
-            "rootBlockDevice.volumeType",
-            "rootBlockDevice.iops",
-            "rootBlockDevice.throughput",
-            "ebsBlockDevices.volumeSize",
-            "ebsBlockDevices.volumeType",
-            "ebsBlockDevices.iops",
-            "ebsBlockDevices.throughput",
-        ],
-    },
-    PricedType {
-        token: "aws:ebs/volume:Volume",
-        label: "EBS volume",
-        attributes: &["size", "type", "iops", "throughput"],
-    },
-    PricedType {
-        token: "aws:rds/instance:Instance",
-        label: "RDS instance",
-        attributes: &[
-            "instanceClass",
-            "engine",
-            "engineVersion",
-            "licenseModel",
-            "multiAz",
-            "allocatedStorage",
-            "storageType",
-            "iops",
-            "storageThroughput",
-            "backupRetentionPeriod",
-            "performanceInsightsEnabled",
-            "performanceInsightsRetentionPeriod",
-        ],
-    },
-    PricedType {
-        token: "aws:rds/cluster:Cluster",
-        label: "Aurora cluster",
-        attributes: &[
-            "engine",
-            "engineVersion",
-            "engineMode",
-            "storageType",
-            "backupRetentionPeriod",
-            "serverlessv2ScalingConfiguration.minCapacity",
-            "serverlessv2ScalingConfiguration.maxCapacity",
-        ],
-    },
-    PricedType {
-        token: "aws:rds/clusterInstance:ClusterInstance",
-        label: "Aurora instance",
-        attributes: &["instanceClass", "engine", "performanceInsightsEnabled"],
-    },
-    PricedType {
-        token: "aws:elasticache/cluster:Cluster",
-        label: "ElastiCache cluster",
-        attributes: &["nodeType", "numCacheNodes", "engine"],
-    },
-    PricedType {
-        token: "aws:elasticache/replicationGroup:ReplicationGroup",
-        label: "ElastiCache replication group",
-        attributes: &[
-            "nodeType",
-            "engine",
-            "numCacheClusters",
-            "numNodeGroups",
-            "replicasPerNodeGroup",
-            "multiAzEnabled",
-        ],
-    },
-    PricedType {
-        token: "aws:ec2/natGateway:NatGateway",
-        label: "NAT gateway",
-        attributes: &["connectivityType"],
-    },
-    PricedType {
-        token: "aws:ec2/eip:Eip",
-        label: "Elastic IP",
-        attributes: &["domain"],
-    },
-    PricedType {
-        token: "aws:lb/loadBalancer:LoadBalancer",
-        label: "load balancer",
-        attributes: &["loadBalancerType"],
-    },
-    PricedType {
-        token: "aws:alb/loadBalancer:LoadBalancer",
-        label: "load balancer",
-        attributes: &["loadBalancerType"],
-    },
-    PricedType {
-        token: "aws:eks/cluster:Cluster",
-        label: "EKS cluster",
-        attributes: &["version"],
-    },
-    PricedType {
-        token: "aws:eks/nodeGroup:NodeGroup",
-        label: "EKS node group",
-        attributes: &[
-            "instanceTypes",
-            "capacityType",
-            "diskSize",
-            "amiType",
-            "scalingConfig.desiredSize",
-            "scalingConfig.minSize",
-            "scalingConfig.maxSize",
-        ],
-    },
-    PricedType {
-        token: "aws:lambda/function:Function",
-        label: "Lambda function",
-        attributes: &["memorySize", "architectures", "ephemeralStorage.size"],
-    },
-    PricedType {
-        token: "aws:s3/bucket:Bucket",
-        label: "S3 bucket",
-        attributes: &[],
-    },
-    PricedType {
-        token: "aws:s3/bucketV2:BucketV2",
-        label: "S3 bucket",
-        attributes: &[],
-    },
-];
+impl Catalogue {
+    /// Reads and checks a catalogue.
+    pub fn parse(json: &str) -> Result<Catalogue> {
+        let catalogue: Catalogue = serde_json::from_str(json).context("the catalogue is not qloudpulse's format")?;
+        if catalogue.format_version != FORMAT_VERSION {
+            bail!(
+                "the catalogue is format {}, and this client reads {FORMAT_VERSION}; update the client",
+                catalogue.format_version
+            );
+        }
+        let mut seen = HashSet::new();
+        for t in &catalogue.types {
+            if !seen.insert(t.token.as_str()) {
+                bail!("the catalogue lists {} twice", t.token);
+            }
+            for a in &t.attributes {
+                if a.is_empty() || a.split('.').count() > 2 {
+                    bail!(
+                        "the catalogue's attribute {a:?} of {} is empty or deeper than two",
+                        t.token
+                    );
+                }
+            }
+            for r in &t.references {
+                if r.is_empty() || r.contains('.') {
+                    bail!("the catalogue's reference {r:?} of {} is empty or a path", t.token);
+                }
+            }
+        }
+        Ok(catalogue)
+    }
 
-/// The priced type with this token, if the client prices it.
-pub fn priced(token: &str) -> Option<&'static PricedType> {
-    PRICED.iter().find(|t| t.token == token)
-}
+    /// The type with this token, if qloudpulse prices it.
+    pub fn priced(&self, token: &str) -> Option<&CatalogueType> {
+        self.types.iter().find(|t| t.token == token)
+    }
 
-/// Whether a token names an AWS resource, so that one the client does not price is counted as not priced.
-pub fn is_aws(token: &str) -> bool {
-    token.starts_with("aws:")
+    /// Whether a type of one of the catalogue's providers, so that one outside the list is counted as not priced.
+    pub fn counts(&self, token: &str) -> bool {
+        token
+            .split_once(':')
+            .is_some_and(|(package, _)| self.providers.iter().any(|p| p == package))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
 
-    const BLOCK_DEVICE: [&str; 4] = ["volumeSize", "volumeType", "iops", "throughput"];
+    const SMALL: &str = r#"{"formatVersion": 1, "providers": ["aws"], "types": [
+        {"type": "aws:ebs/volume:Volume", "label": "EBS volume", "attributes": ["size", "type"]},
+        {"type": "aws:ecs/service:Service", "label": "ECS service", "attributes": ["desiredCount"],
+         "references": ["taskDefinition"]}]}"#;
 
     #[test]
-    fn tokens_are_unique() {
-        let mut seen = HashSet::new();
-        for t in PRICED {
-            assert!(seen.insert(t.token), "{} is listed twice", t.token);
-        }
+    fn reads_types_and_counts_by_provider() {
+        let c = Catalogue::parse(SMALL).unwrap();
+        assert_eq!(c.priced("aws:ebs/volume:Volume").unwrap().label, "EBS volume");
+        assert_eq!(
+            c.priced("aws:ecs/service:Service").unwrap().references,
+            ["taskDefinition"]
+        );
+        assert!(c.priced("aws:s3/bucket:Bucket").is_none());
+        assert!(c.counts("aws:s3/bucket:Bucket"));
+        assert!(!c.counts("random:index/randomString:RandomString"));
+        assert!(!c.counts("awsx:ec2:Vpc"));
     }
 
     #[test]
-    fn block_device_attributes_are_listed_for_both_kinds_of_ec2_disk() {
-        let ec2 = priced("aws:ec2/instance:Instance").unwrap();
-        for parent in ["rootBlockDevice", "ebsBlockDevices"] {
-            for leaf in BLOCK_DEVICE {
-                let path = format!("{parent}.{leaf}");
-                assert!(ec2.attributes.contains(&path.as_str()), "{path} is missing");
-            }
-        }
-    }
-
-    #[test]
-    fn paths_are_at_most_two_deep() {
-        for t in PRICED {
-            for a in t.attributes {
-                assert!(a.split('.').count() <= 2, "{a} in {} is deeper than two", t.token);
-            }
-        }
+    fn a_list_that_breaks_its_rules_is_refused() {
+        let twice = r#"{"formatVersion": 1, "types": [{"type": "t", "label": "T"}, {"type": "t", "label": "T"}]}"#;
+        assert!(Catalogue::parse(twice).unwrap_err().to_string().contains("twice"));
+        let deep = r#"{"formatVersion": 1, "types": [{"type": "t", "label": "T", "attributes": ["a.b.c"]}]}"#;
+        assert!(Catalogue::parse(deep).unwrap_err().to_string().contains("deeper"));
+        let newer = r#"{"formatVersion": 2, "types": []}"#;
+        assert!(
+            Catalogue::parse(newer)
+                .unwrap_err()
+                .to_string()
+                .contains("update the client")
+        );
+        assert!(Catalogue::parse("[]").is_err());
     }
 }

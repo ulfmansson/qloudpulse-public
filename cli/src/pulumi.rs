@@ -1,8 +1,9 @@
 //! Reads the JSON of `pulumi preview --json` and turns it into a request.
 //!
 //! The format is Pulumi's `display.PreviewDigest`: `steps[]`, each with `op`, `urn` and the resource's `oldState` and
-//! `newState` (`apitype.ResourceV3`: `type`, `custom`, `id`, `inputs`, `outputs`, `provider`). Pulumi prints a secret
-//! as `"[secret]"` and a value it knows only after apply as its unknown sentinel; the client sends neither.
+//! `newState` (`apitype.ResourceV3`: `type`, `custom`, `id`, `inputs`, `outputs`, `provider`,
+//! `propertyDependencies`). Pulumi prints a secret as `"[secret]"` and a value it knows only after apply as its
+//! unknown sentinel; the client sends neither. Which types and attributes are sent is the catalogue's.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -11,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use sha2::{Digest as _, Sha256};
 
-use crate::catalogue;
+use crate::catalogue::{Catalogue, CatalogueType};
 use crate::request::{ChangeKind, FORMAT_VERSION, NotPriced, Request, ResourceChange, Tool};
 
 /// What Pulumi writes for a value it will only know after apply.
@@ -52,6 +53,9 @@ pub struct State {
     pub inputs: Option<Value>,
     #[serde(default)]
     pub provider: Option<String>,
+    /// For each input, the URNs of the resources its value came from.
+    #[serde(default, rename = "propertyDependencies")]
+    pub property_dependencies: BTreeMap<String, Vec<String>>,
 }
 
 /// What the request is built with besides the preview.
@@ -170,14 +174,15 @@ fn pick_into(src: &Value, path: &[&str], dst: &mut Value) -> bool {
 }
 
 /// The priced attributes of a resource's inputs, and the ones that were hidden.
-fn priced_attributes(inputs: Option<&Value>, attributes: &[&str]) -> (Map<String, Value>, Vec<String>) {
+fn priced_attributes<S: AsRef<str>>(inputs: Option<&Value>, attributes: &[S]) -> (Map<String, Value>, Vec<String>) {
     let mut out = Value::Object(Map::new());
     let mut hidden = Vec::new();
     if let Some(inputs) = inputs {
         for attribute in attributes {
+            let attribute = attribute.as_ref();
             let path: Vec<&str> = attribute.split('.').collect();
             if pick_into(inputs, &path, &mut out) {
-                hidden.push((*attribute).to_string());
+                hidden.push(attribute.to_string());
             }
         }
     }
@@ -214,8 +219,25 @@ impl Gathered {
     }
 }
 
-/// Builds the request from a preview.
-pub fn estimate(preview: &Preview, options: &Options) -> Estimate {
+/// The keys of the resources a state's references name, from the inputs' dependencies; the URNs go into `referred`.
+fn references_of<'a>(
+    state: Option<&'a State>,
+    t: &CatalogueType,
+    referred: &mut Vec<&'a str>,
+) -> Option<BTreeMap<String, String>> {
+    let state = state?;
+    let mut out = BTreeMap::new();
+    for name in &t.references {
+        if let Some(urn) = state.property_dependencies.get(name).and_then(|urns| urns.first()) {
+            out.insert(name.clone(), key(urn));
+            referred.push(urn.as_str());
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// Builds the request from a preview, sending what the catalogue lists.
+pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> Estimate {
     let mut order: Vec<&str> = Vec::new();
     let mut gathered: HashMap<&str, Gathered> = HashMap::new();
     let mut provider_regions: HashMap<&str, String> = HashMap::new();
@@ -258,10 +280,24 @@ pub fn estimate(preview: &Preview, options: &Options) -> Estimate {
         .filter(|r| is_region(r))
         .map(str::to_string);
     let fallback_region = stack_region.or_else(|| options.region.clone().filter(|r| is_region(r)));
+    let region_of = |g: &Gathered| {
+        let provider = g
+            .new
+            .as_ref()
+            .and_then(|s| s.provider.as_deref())
+            .or_else(|| g.old.as_ref().and_then(|s| s.provider.as_deref()))
+            .or(g.provider.as_deref());
+        provider
+            .and_then(|p| provider_regions.get(provider_urn(p)))
+            .cloned()
+            .or_else(|| fallback_region.clone())
+    };
 
     let mut resources = Vec::new();
     let mut locals = Vec::new();
     let mut not_priced: BTreeMap<String, u32> = BTreeMap::new();
+    let mut sent: BTreeSet<&str> = BTreeSet::new();
+    let mut referred: Vec<&str> = Vec::new();
 
     for urn in order {
         let g = &gathered[urn];
@@ -272,33 +308,23 @@ pub fn estimate(preview: &Preview, options: &Options) -> Estimate {
         if !state.custom || state.type_token.starts_with("pulumi:") {
             continue;
         }
-        let Some(priced) = catalogue::priced(&state.type_token) else {
-            if catalogue::is_aws(&state.type_token) {
+        let Some(priced) = catalogue.priced(&state.type_token) else {
+            if catalogue.counts(&state.type_token) {
                 *not_priced.entry(state.type_token.clone()).or_default() += 1;
             }
             continue;
         };
-
-        let provider = g
-            .new
-            .as_ref()
-            .and_then(|s| s.provider.as_deref())
-            .or_else(|| g.old.as_ref().and_then(|s| s.provider.as_deref()))
-            .or(g.provider.as_deref());
-        let region = provider
-            .and_then(|p| provider_regions.get(provider_urn(p)))
-            .cloned()
-            .or_else(|| fallback_region.clone());
+        let region = region_of(g);
 
         let before = match change {
             ChangeKind::Create => None,
-            _ => Some(priced_attributes(g.old.as_ref().and_then(|s| s.inputs.as_ref()), priced.attributes).0),
+            _ => Some(priced_attributes(g.old.as_ref().and_then(|s| s.inputs.as_ref()), &priced.attributes).0),
         };
         let (after, unknown) = match change {
             ChangeKind::Delete => (None, Vec::new()),
             _ => {
                 let (attrs, hidden) =
-                    priced_attributes(g.new.as_ref().and_then(|s| s.inputs.as_ref()), priced.attributes);
+                    priced_attributes(g.new.as_ref().and_then(|s| s.inputs.as_ref()), &priced.attributes);
                 (Some(attrs), hidden)
             }
         };
@@ -312,7 +338,13 @@ pub fn estimate(preview: &Preview, options: &Options) -> Estimate {
             None
         };
 
+        let references = match change {
+            ChangeKind::Delete => references_of(g.old.as_ref(), priced, &mut referred),
+            _ => references_of(g.new.as_ref(), priced, &mut referred),
+        };
+
         let key = key(urn);
+        sent.insert(urn);
         locals.push(Local {
             key: key.clone(),
             name: name(urn).to_string(),
@@ -328,6 +360,34 @@ pub fn estimate(preview: &Preview, options: &Options) -> Estimate {
             after,
             unknown,
             resource_id,
+            references,
+        });
+    }
+
+    // A resource a changed one refers to and the change leaves the same, such as the task definition of a service
+    // whose count changes, goes too: it is in the preview with `--show-sames`.
+    for urn in referred {
+        if !sent.insert(urn) {
+            continue;
+        }
+        let Some(g) = gathered.get(urn) else { continue };
+        let Some(state) = g.new.as_ref().or(g.old.as_ref()) else {
+            continue;
+        };
+        let Some(priced) = catalogue.priced(&state.type_token) else {
+            continue;
+        };
+        let (attrs, hidden) = priced_attributes(state.inputs.as_ref(), &priced.attributes);
+        resources.push(ResourceChange {
+            key: key(urn),
+            change: ChangeKind::Same,
+            type_token: state.type_token.clone(),
+            region: region_of(g),
+            before: None,
+            after: Some(attrs),
+            unknown: hidden,
+            resource_id: None,
+            references: None,
         });
     }
 

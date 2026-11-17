@@ -1,5 +1,7 @@
 //! The request the client sends and the answer it reads: `estimate.schema.json`.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -19,6 +21,8 @@ pub enum ChangeKind {
     Update,
     Replace,
     Delete,
+    /// Left as it is, and sent because a changed resource refers to it. qloudpulse does not answer it on its own.
+    Same,
 }
 
 impl ChangeKind {
@@ -29,6 +33,7 @@ impl ChangeKind {
             ChangeKind::Update => "changed",
             ChangeKind::Replace => "replaced",
             ChangeKind::Delete => "removed",
+            ChangeKind::Same => "unchanged",
         }
     }
 }
@@ -55,6 +60,9 @@ pub struct ResourceChange {
     pub unknown: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_id: Option<String>,
+    /// For each of the catalogue's references of this type, the key of the resource it names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub references: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -5,8 +5,9 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 
+use qloudpulse_cli::catalogue::Catalogue;
 use qloudpulse_cli::pulumi::{self, Options};
-use qloudpulse_cli::request::{FORMAT_VERSION, Response};
+use qloudpulse_cli::request::{ChangeKind, FORMAT_VERSION, Response};
 use qloudpulse_cli::{render, send};
 
 #[derive(Parser)]
@@ -40,7 +41,8 @@ Example:
 enum Command {
     /// Price an infrastructure change before it is applied, from `pulumi preview --json`.
     ///
-    /// Prints a Markdown comment for the pull request.
+    /// Prints a Markdown comment for the pull request. Which resource types and attributes are sent is qloudpulse's
+    /// catalogue, read from the endpoint on every run (no token needed), or from --catalogue.
     #[command(after_help = format!("{ESTIMATE_ENVIRONMENT}\n\n{CONNECT}"))]
     Estimate(EstimateArgs),
 }
@@ -54,9 +56,13 @@ struct EstimateArgs {
     #[arg(long)]
     dry_run: bool,
 
-    /// Where to send the request.
+    /// Where to send the request. Its catalogue is read from this address and /catalogue.
     #[arg(long, env = "QLOUDPULSE_ENDPOINT", default_value = send::DEFAULT_ENDPOINT)]
     endpoint: String,
+
+    /// Read the catalogue of priced types from this file instead of the endpoint, such as one saved with curl.
+    #[arg(long, env = "QLOUDPULSE_CATALOGUE")]
+    catalogue: Option<PathBuf>,
 
     /// The AWS region of resources whose provider and stack name none, such as eu-west-1.
     #[arg(long)]
@@ -103,13 +109,29 @@ fn estimate(args: &EstimateArgs) -> Result<()> {
         region: args.region.clone(),
         with_resource_ids: args.with_resource_ids,
     };
-    let estimate = pulumi::estimate(&preview, &options);
+    let catalogue = match &args.catalogue {
+        Some(path) => Catalogue::parse(
+            &std::fs::read_to_string(path).with_context(|| format!("could not read {}", path.display()))?,
+        )?,
+        None => send::fetch_catalogue(&args.endpoint)?,
+    };
+    let estimate = pulumi::estimate(&preview, &catalogue, &options);
     let request = &estimate.request;
 
     let not_priced: u32 = request.not_priced.iter().map(|n| n.count).sum();
+    let same = request
+        .resources
+        .iter()
+        .filter(|r| r.change == ChangeKind::Same)
+        .count();
+    let referred = if same > 0 {
+        format!(" (and {same} unchanged that they refer to)")
+    } else {
+        String::new()
+    };
     eprintln!(
-        "qloudpulse: {} resources to price, {} not priced",
-        request.resources.len(),
+        "qloudpulse: {} resources to price{referred}, {} not priced",
+        request.resources.len() - same,
         not_priced
     );
 
@@ -118,7 +140,7 @@ fn estimate(args: &EstimateArgs) -> Result<()> {
         return Ok(());
     }
 
-    let response = if request.resources.is_empty() {
+    let response = if request.resources.len() == same {
         Response {
             format_version: FORMAT_VERSION,
             estimate_id: None,

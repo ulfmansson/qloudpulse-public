@@ -7,6 +7,10 @@ plans come next.
 It sends the attributes that set each resource's price to qloudpulse (`POST /api/report/public/estimates`). Names,
 tags, config and secrets stay in your CI. [What it sends](#what-it-sends) lists exactly what goes.
 
+Which resource types are priced, and which of their attributes are sent, is qloudpulse's **catalogue**. The client
+reads it on every run from `GET /api/report/public/estimates/catalogue` (open, no token), so when qloudpulse prices a
+new type, the client you already have sends it.
+
 ## Install
 
 Each release has a static binary for Linux (x86_64 and arm64) and binaries for macOS, with their SHA-256 sums:
@@ -28,7 +32,7 @@ Or build it from this directory with Rust 1.88 or later: `cargo build --release 
 ## Use
 
 ```bash
-pulumi preview --json -s payments-prod | qloudpulse estimate > comment.md
+pulumi preview --json --show-sames -s payments-prod | qloudpulse estimate > comment.md
 ```
 
 | Option | |
@@ -38,7 +42,8 @@ pulumi preview --json -s payments-prod | qloudpulse estimate > comment.md
 | `--region <region>` | The region of resources whose provider and stack name none |
 | `--with-resource-ids` | Send the cloud ID of each resource that exists before the change, so its usage comes from what it really used |
 | `--format json` | Print qloudpulse's answer as JSON instead of the comment |
-| `--endpoint <url>` | Another address, such as your own qloudpulse install, also `QLOUDPULSE_ENDPOINT`. https only; http only to localhost |
+| `--endpoint <url>` | Another address, such as your own qloudpulse install, also `QLOUDPULSE_ENDPOINT`. https only; http only to localhost. The catalogue is read from this address and `/catalogue` |
+| `--catalogue <file>` | Read the catalogue from a file instead, also `QLOUDPULSE_CATALOGUE`: to pin what is sent, or where CI reaches nothing but the endpoint's POST. `curl -fsS https://app.qloudpulse.com/api/report/public/estimates/catalogue > catalogue.json` saves it |
 
 The token is read from `QLOUDPULSE_TOKEN` only, never from an option: a change-event source's token (`qpev_…`), from
 Settings, Events in qloudpulse. The same source can send the change event after `pulumi up`.
@@ -51,15 +56,15 @@ In GitHub Actions:
     QLOUDPULSE_TOKEN: ${{ secrets.QLOUDPULSE_TOKEN }}
     GH_TOKEN: ${{ github.token }}
   run: |
-    pulumi preview --json -s payments-prod > preview.json
+    pulumi preview --json --show-sames -s payments-prod > preview.json
     qloudpulse estimate preview.json > comment.md
     gh pr comment ${{ github.event.pull_request.number }} --body-file comment.md
 ```
 
 ## What it sends
 
-Only what sets a price. For each resource the change creates, updates, replaces or deletes, of a type in
-[`src/catalogue.rs`](src/catalogue.rs):
+Only what sets a price. For each resource the change creates, updates, replaces or deletes, of a type in the
+catalogue:
 
 - its type token and the change;
 - its region, from its provider, else the stack's `aws:region`, else `--region`;
@@ -67,9 +72,15 @@ Only what sets a price. For each resource the change creates, updates, replaces 
   `[secret]`, is left out and its attribute named under `unknown`;
 - a key, `r` and 16 hex digits of the SHA-256 of its URN. The URN, with the stack, project and resource names, stays
   in CI, and the comment's names come from the preview the client still holds;
+- for a type whose catalogue entry has `references`, such as an ECS service's `taskDefinition`, the key of the resource
+  each one names (from Pulumi's `propertyDependencies`), so qloudpulse can price the two together;
 - with `--with-resource-ids`, its cloud ID.
 
-AWS types it does not price are counted by type. Nothing else from the preview is sent: no names, tags, config,
+A resource a changed one refers to and the change leaves the same is sent too, as `"change": "same"`, with its
+catalogue attributes only. Pulumi lists unchanged resources only with `pulumi preview --json --show-sames`; without it
+the reference's key is sent and qloudpulse says what it could not price.
+
+Types of the catalogue's providers (`aws`) that it does not list are counted by type. Nothing else from the preview is sent: no names, tags, config,
 outputs or secrets. `--dry-run` prints exactly what would go. The request and the answer are
 [`estimate.schema.json`](estimate.schema.json).
 
@@ -81,8 +92,9 @@ cargo test --locked
 
 Before a commit, `cargo fmt` and `cargo clippy --all-targets -- -D warnings`.
 
-To price a new type, add it to `PRICED` in `src/catalogue.rs` with the attributes that set its price. qloudpulse has
-to price that type too, or it answers the resource as not priced.
+A new type is priced in qloudpulse, not here: its catalogue and its pricing change together, and qloudpulse keeps only
+the catalogue's attributes of whatever a client sends. A client change is needed only for a new kind of input, such as
+a Terraform plan.
 
 `pulumi preview --json` writes Pulumi's `display.PreviewDigest`: `steps[]`, each with `op`, `urn` and the resource's
 `oldState` and `newState` (`apitype.ResourceV3`). A replacement can come as three steps, `create-replacement`,
