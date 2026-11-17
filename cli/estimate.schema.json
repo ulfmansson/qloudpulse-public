@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/ulfmansson/qloudpulse-public/main/cli/estimate.schema.json",
   "title": "Estimate of an infrastructure change",
-  "description": "What `qloudpulse estimate` sends to POST /api/report/public/estimates, and what qloudpulse answers. The request carries only what sets a price: resource names stay in CI, and each resource is named by a key the client derives from it.",
+  "description": "What `qloudpulse estimate` sends to POST https://api.qloudpulse.com/v1/estimates (formerly /api/report/public/estimates on app.qloudpulse.com), and what qloudpulse answers. The request carries only what sets a price: resource names stay in CI, and each resource is named by a key the client derives from it.",
   "oneOf": [{ "$ref": "#/$defs/request" }, { "$ref": "#/$defs/response" }, { "$ref": "#/$defs/catalogueQuestion" }, { "$ref": "#/$defs/catalogue" }],
   "$defs": {
     "request": {
@@ -96,7 +96,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["formatVersion", "types"],
-      "description": "POST /api/report/public/estimates/catalogue: the resource types the client found in a preview, type tokens only. Open without a token.",
+      "description": "POST /v1/estimates/catalogue (formerly /api/report/public/estimates/catalogue): the resource types the client found in a preview, type tokens only. Open without a token.",
       "properties": {
         "formatVersion": { "const": 1 },
         "types": {
