@@ -1,7 +1,13 @@
 # qloudpulse-public
 
-What you install to connect a Kubernetes cluster to qloudpulse: the cluster agent, as a Helm chart or as plain YAML.
-Both install the same thing.
+What you install to use qloudpulse from your own systems:
+
+- **The cluster agent** connects a Kubernetes cluster, as a Helm chart or as plain YAML. Both install the same thing.
+  The rest of this page is about it.
+- **The CLI** (`qloudpulse estimate`) prices an infrastructure change in CI before it is applied. See
+  [`cli/README.md`](cli/README.md).
+
+## The cluster agent
 
 The agent is one pod running the upstream [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/), with
 no code of ours in it. Everything it does is in the config you can read in
@@ -117,3 +123,7 @@ kubectl delete -f qloudpulse-agent.yaml
 
 `manifests/qloudpulse-agent.yaml` is generated from the chart, so the two cannot differ. After a change to the chart, run
 `scripts/render-manifest.sh` and commit both.
+
+## License
+
+[Apache License 2.0](LICENSE).

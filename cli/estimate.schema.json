@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/ulfmansson/qloudpulse-public/main/cli/estimate.schema.json",
+  "title": "Estimate of an infrastructure change",
+  "description": "What `qloudpulse estimate` sends to POST /api/report/public/estimates, and what qloudpulse answers. The request carries only what sets a price: resource names stay in CI, and each resource is named by a key the client derives from it.",
+  "oneOf": [{ "$ref": "#/$defs/request" }, { "$ref": "#/$defs/response" }],
+  "$defs": {
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["formatVersion", "tool", "resources", "notPriced"],
+      "properties": {
+        "formatVersion": {
+          "const": 1,
+          "description": "Version of this format. Bump only for a change an older reader would read wrongly."
+        },
+        "tool": {
+          "enum": ["pulumi"],
+          "description": "What the change was read from. Terraform and OpenTofu plans come later."
+        },
+        "resources": {
+          "type": "array",
+          "maxItems": 5000,
+          "description": "The resources the change creates, updates, replaces or deletes, of the types the client prices.",
+          "items": { "$ref": "#/$defs/resourceChange" }
+        },
+        "notPriced": {
+          "type": "array",
+          "description": "AWS resource types in the change that the client does not price, with how many of each.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "count"],
+            "properties": {
+              "type": { "type": "string", "minLength": 1, "maxLength": 200 },
+              "count": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
+    "resourceChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "change", "type", "region", "before", "after", "unknown"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^r[0-9a-f]{16}$",
+          "description": "r + the first 16 hex digits of the SHA-256 of the resource's Pulumi URN. The answer names the resource by it."
+        },
+        "change": { "enum": ["create", "update", "replace", "delete"] },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "The Pulumi type token, such as aws:rds/instance:Instance."
+        },
+        "region": {
+          "type": ["string", "null"],
+          "pattern": "^[a-z]{2}(-[a-z]+)+-[0-9]+$",
+          "description": "The AWS region, or null when neither the preview nor --region names one."
+        },
+        "before": {
+          "type": ["object", "null"],
+          "description": "The priced attributes before the change; null for a create."
+        },
+        "after": {
+          "type": ["object", "null"],
+          "description": "The priced attributes after the change; null for a delete."
+        },
+        "unknown": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" },
+          "description": "Priced attributes whose value after the change is known only after apply, or is a secret. Their values are not sent."
+        },
+        "resourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "The cloud ID of a resource that exists before the change. Sent only with --with-resource-ids."
+        }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["formatVersion", "currency", "resources"],
+      "properties": {
+        "formatVersion": { "const": 1 },
+        "estimateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Names this estimate, so the change event sent after apply can refer to it."
+        },
+        "currency": { "const": "USD" },
+        "resources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/resourceEstimate" }
+        }
+      }
+    },
+    "resourceEstimate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "basis"],
+      "properties": {
+        "key": { "type": "string", "pattern": "^r[0-9a-f]{16}$" },
+        "monthlyBefore": { "type": ["number", "null"], "minimum": 0 },
+        "monthlyAfter": { "type": ["number", "null"], "minimum": 0 },
+        "basis": {
+          "enum": ["company-rate", "list-price", "not-priced"],
+          "description": "What the figures come from: the rate the company's bill shows it pays, AWS's list price, or nothing."
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Why a resource is not priced, or what its figures leave out."
+        },
+        "notes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/note" }
+        }
+      }
+    },
+    "note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "text"],
+      "properties": {
+        "kind": {
+          "enum": ["saving", "usage", "info"],
+          "description": "saving: a cheaper choice from the savings catalogue. usage: what an existing resource used. info: anything else."
+        },
+        "text": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "monthlySaving": { "type": "number", "minimum": 0 },
+        "risk": {
+          "enum": ["low", "medium", "high"],
+          "description": "How likely the change is to need work or cause trouble: a Graviton move is medium, since every image must have an arm64 build."
+        }
+      }
+    }
+  }
+}

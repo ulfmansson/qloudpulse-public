@@ -1,0 +1,30 @@
+[package]
+name = "qloudpulse-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "qloudpulse from the command line: prices an infrastructure change before it is applied"
+publish = false
+license = "Apache-2.0"
+repository = "https://github.com/ulfmansson/qloudpulse-public"
+
+[lib]
+name = "qloudpulse_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "qloudpulse"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4.6", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+ureq = { version = "3.5", features = ["json"] }
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1

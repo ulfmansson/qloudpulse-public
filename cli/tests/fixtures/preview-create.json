@@ -1,0 +1,153 @@
+{
+  "config": {
+    "aws:region": "eu-west-1",
+    "shop:dbPassword": "[secret]"
+  },
+  "steps": [
+    {
+      "op": "create",
+      "urn": "urn:pulumi:dev::shop::pulumi:pulumi:Stack::shop-dev",
+      "newState": {
+        "urn": "urn:pulumi:dev::shop::pulumi:pulumi:Stack::shop-dev",
+        "custom": false,
+        "type": "pulumi:pulumi:Stack"
+      },
+      "detailedDiff": null
+    },
+    {
+      "op": "create",
+      "urn": "urn:pulumi:dev::shop::pulumi:providers:aws::default_7_10_0",
+      "newState": {
+        "urn": "urn:pulumi:dev::shop::pulumi:providers:aws::default_7_10_0",
+        "custom": true,
+        "id": "04da6b54-80e4-46f7-96ec-b56ff0331ba9",
+        "type": "pulumi:providers:aws",
+        "inputs": { "region": "eu-north-1", "skipCredentialsValidation": "false", "version": "7.10.0" }
+      },
+      "detailedDiff": null
+    },
+    {
+      "op": "same",
+      "urn": "urn:pulumi:dev::shop::pulumi:providers:aws::us",
+      "oldState": {
+        "urn": "urn:pulumi:dev::shop::pulumi:providers:aws::us",
+        "custom": true,
+        "id": "5b1e0c9a-2f6d-4f0b-9d64-7f0c2a1b3c4d",
+        "type": "pulumi:providers:aws",
+        "inputs": { "region": "us-east-1" }
+      },
+      "newState": {
+        "urn": "urn:pulumi:dev::shop::pulumi:providers:aws::us",
+        "custom": true,
+        "id": "5b1e0c9a-2f6d-4f0b-9d64-7f0c2a1b3c4d",
+        "type": "pulumi:providers:aws",
+        "inputs": { "region": "us-east-1" }
+      },
+      "detailedDiff": null
+    },
+    {
+      "op": "create",
+      "urn": "urn:pulumi:dev::shop::shop:index:Api::api",
+      "newState": {
+        "urn": "urn:pulumi:dev::shop::shop:index:Api::api",
+        "custom": false,
+        "type": "shop:index:Api",
+        "parent": "urn:pulumi:dev::shop::pulumi:pulumi:Stack::shop-dev"
+      },
+      "detailedDiff": null
+    },
+    {
+      "op": "create",
+      "urn": "urn:pulumi:dev::shop::aws:rds/instance:Instance::orders",
+      "provider": "urn:pulumi:dev::shop::pulumi:providers:aws::default_7_10_0::04da6b54-80e4-46f7-96ec-b56ff0331ba9",
+      "newState": {
+        "urn": "urn:pulumi:dev::shop::aws:rds/instance:Instance::orders",
+        "custom": true,
+        "type": "aws:rds/instance:Instance",
+        "inputs": {
+          "allocatedStorage": 100,
+          "engine": "postgres",
+          "engineVersion": "16.4",
+          "identifier": "04da6b54-80e4-46f7-96ec-b56ff0331ba9",
+          "instanceClass": "db.r6i.xlarge",
+          "multiAz": true,
+          "password": "[secret]",
+          "storageType": "gp3",
+          "tags": { "team": "payments", "owner": "someone@example.com" },
+          "username": "app"
+        },
+        "provider": "urn:pulumi:dev::shop::pulumi:providers:aws::default_7_10_0::04da6b54-80e4-46f7-96ec-b56ff0331ba9"
+      },
+      "detailedDiff": null
+    },
+    {
+      "op": "create",
+      "urn": "urn:pulumi:dev::shop::shop:index:Api$aws:ec2/instance:Instance::web",
+      "provider": "urn:pulumi:dev::shop::pulumi:providers:aws::us::5b1e0c9a-2f6d-4f0b-9d64-7f0c2a1b3c4d",
+      "newState": {
+        "urn": "urn:pulumi:dev::shop::shop:index:Api$aws:ec2/instance:Instance::web",
+        "custom": true,
+        "type": "aws:ec2/instance:Instance",
+        "inputs": {
+          "ami": "ami-0123456789abcdef0",
+          "instanceType": "04da6b54-80e4-46f7-96ec-b56ff0331ba9",
+          "rootBlockDevice": { "encrypted": true, "volumeSize": 50, "volumeType": "gp3" },
+          "userData": "#!/bin/sh\necho private"
+        },
+        "parent": "urn:pulumi:dev::shop::shop:index:Api::api",
+        "provider": "urn:pulumi:dev::shop::pulumi:providers:aws::us::5b1e0c9a-2f6d-4f0b-9d64-7f0c2a1b3c4d"
+      },
+      "detailedDiff": null
+    },
+    {
+      "op": "create",
+      "urn": "urn:pulumi:dev::shop::aws:lambda/function:Function::resize",
+      "newState": {
+        "urn": "urn:pulumi:dev::shop::aws:lambda/function:Function::resize",
+        "custom": true,
+        "type": "aws:lambda/function:Function",
+        "inputs": {
+          "architectures": ["x86_64"],
+          "environment": { "variables": { "API_KEY": "[secret]" } },
+          "memorySize": 1024,
+          "role": "04da6b54-80e4-46f7-96ec-b56ff0331ba9"
+        }
+      },
+      "detailedDiff": null
+    },
+    {
+      "op": "create",
+      "urn": "urn:pulumi:dev::shop::aws:sqs/queue:Queue::jobs",
+      "newState": {
+        "urn": "urn:pulumi:dev::shop::aws:sqs/queue:Queue::jobs",
+        "custom": true,
+        "type": "aws:sqs/queue:Queue",
+        "inputs": { "visibilityTimeoutSeconds": 30 }
+      },
+      "detailedDiff": null
+    },
+    {
+      "op": "create",
+      "urn": "urn:pulumi:dev::shop::aws:sqs/queue:Queue::dead-letters",
+      "newState": {
+        "urn": "urn:pulumi:dev::shop::aws:sqs/queue:Queue::dead-letters",
+        "custom": true,
+        "type": "aws:sqs/queue:Queue",
+        "inputs": {}
+      },
+      "detailedDiff": null
+    },
+    {
+      "op": "create",
+      "urn": "urn:pulumi:dev::shop::random:index/randomPassword:RandomPassword::db",
+      "newState": {
+        "urn": "urn:pulumi:dev::shop::random:index/randomPassword:RandomPassword::db",
+        "custom": true,
+        "type": "random:index/randomPassword:RandomPassword",
+        "inputs": { "length": 32 }
+      },
+      "detailedDiff": null
+    }
+  ],
+  "changeSummary": { "create": 10, "same": 1 }
+}
