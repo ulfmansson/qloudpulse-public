@@ -478,21 +478,15 @@ fn a_referenced_resource_that_changes_is_sent_once() {
 }
 
 #[test]
-fn a_type_the_catalogue_does_not_list_is_counted_not_sent() {
-    let e = estimate(&ecs_preview("update"), &Options::default());
-    assert!(e.request.resources.is_empty());
-    let counted: Vec<(&str, u32)> = e
-        .request
-        .not_priced
-        .iter()
-        .map(|n| (n.type_token.as_str(), n.count))
-        .collect();
-    assert_eq!(
-        counted,
-        [
-            ("aws:ecs/service:Service", 1),
-            ("aws:ecs/taskDefinition:TaskDefinition", 1)
-        ]
+fn the_shipped_catalogue_sends_a_service_with_its_task_definition() {
+    let e = estimate(&ecs_preview("same"), &Options::default());
+    assert!(e.request.not_priced.is_empty(), "{:?}", e.request.not_priced);
+    let kinds: Vec<ChangeKind> = e.request.resources.iter().map(|r| r.change).collect();
+    assert_eq!(kinds, [ChangeKind::Update, ChangeKind::Same]);
+    let sent = serde_json::to_string(&e.request).unwrap();
+    assert!(
+        !sent.contains("hunter2") && !sent.contains("containerDefinitions"),
+        "{sent}"
     );
 }
 

@@ -143,8 +143,8 @@
               "attributes": {
                 "type": "array",
                 "uniqueItems": true,
-                "items": { "type": "string", "pattern": "^[^.]+(\\.[^.]+)?$" },
-                "description": "The paths that set its price: a.b takes b from the object a, or from every object in the list a."
+                "items": { "type": "string", "pattern": "^[^.]+(\\.[^.]+){0,3}$" },
+                "description": "The paths that set its price, up to four steps: a.b takes b from the object a, or from every object in the list a."
               },
               "references": {
                 "type": "array",

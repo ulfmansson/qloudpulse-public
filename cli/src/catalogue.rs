@@ -13,6 +13,9 @@ use serde::Deserialize;
 
 use crate::request::FORMAT_VERSION;
 
+/// How many steps an attribute path may take, such as MSK's `brokerNodeGroupInfo.storageInfo.ebsStorageInfo.volumeSize`.
+pub const MAX_DEPTH: usize = 4;
+
 /// The list as qloudpulse publishes it.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,9 +71,9 @@ impl Catalogue {
                 bail!("the catalogue lists {} twice", t.token);
             }
             for a in &t.attributes {
-                if a.is_empty() || a.split('.').count() > 2 {
+                if a.split('.').count() > MAX_DEPTH || a.split('.').any(str::is_empty) {
                     bail!(
-                        "the catalogue's attribute {a:?} of {} is empty or deeper than two",
+                        "the catalogue's attribute {a:?} of {} is empty or deeper than {MAX_DEPTH}",
                         t.token
                     );
                 }
@@ -124,7 +127,7 @@ mod tests {
     fn a_list_that_breaks_its_rules_is_refused() {
         let twice = r#"{"formatVersion": 1, "types": [{"type": "t", "label": "T"}, {"type": "t", "label": "T"}]}"#;
         assert!(Catalogue::parse(twice).unwrap_err().to_string().contains("twice"));
-        let deep = r#"{"formatVersion": 1, "types": [{"type": "t", "label": "T", "attributes": ["a.b.c"]}]}"#;
+        let deep = r#"{"formatVersion": 1, "types": [{"type": "t", "label": "T", "attributes": ["a.b.c.d.e"]}]}"#;
         assert!(Catalogue::parse(deep).unwrap_err().to_string().contains("deeper"));
         let newer = r#"{"formatVersion": 2, "types": []}"#;
         assert!(
