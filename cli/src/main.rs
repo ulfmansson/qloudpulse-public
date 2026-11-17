@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use qloudpulse_cli::catalogue::Catalogue;
 use qloudpulse_cli::pulumi::{self, Options};
 use qloudpulse_cli::request::{ChangeKind, FORMAT_VERSION, Response};
-use qloudpulse_cli::{render, send};
+use qloudpulse_cli::{render, send, version};
 
 #[derive(Parser)]
 #[command(name = "qloudpulse", version, about = "qloudpulse from the command line", after_help = CONNECT)]
@@ -115,6 +115,12 @@ fn estimate(args: &EstimateArgs) -> Result<()> {
         )?,
         None => send::fetch_catalogue(&args.endpoint)?,
     };
+    // Below the oldest client qloudpulse takes, stop before anything is sent; a newer release is said on stderr and
+    // under the comment, where a CI log nobody reads cannot hide it.
+    let newer = version::check(version::VERSION, catalogue.client.as_ref())?;
+    if let Some(line) = &newer {
+        eprintln!("qloudpulse: {line}");
+    }
     let estimate = pulumi::estimate(&preview, &catalogue, &options);
     let request = &estimate.request;
 
@@ -159,7 +165,12 @@ fn estimate(args: &EstimateArgs) -> Result<()> {
     };
 
     match args.format {
-        Format::Markdown => print!("{}", render::comment(&response, &estimate.locals, &request.not_priced)),
+        Format::Markdown => {
+            print!("{}", render::comment(&response, &estimate.locals, &request.not_priced));
+            if let Some(line) = &newer {
+                println!("\n<sub>{line}</sub>");
+            }
+        }
         Format::Json => println!("{}", serde_json::to_string_pretty(&response)?),
     }
     Ok(())

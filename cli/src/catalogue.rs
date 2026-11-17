@@ -21,6 +21,17 @@ pub struct Catalogue {
     #[serde(default)]
     pub providers: Vec<String>,
     pub types: Vec<CatalogueType>,
+    /// The client releases qloudpulse expects; absent from a catalogue saved before it named them.
+    #[serde(default)]
+    pub client: Option<ClientVersions>,
+}
+
+/// The newest client release, the oldest qloudpulse takes, and where to get the newest.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClientVersions {
+    pub latest: String,
+    pub minimum: String,
+    pub download: String,
 }
 
 /// One type qloudpulse prices.

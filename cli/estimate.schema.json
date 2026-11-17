@@ -105,6 +105,17 @@
           "items": { "type": "string", "minLength": 1 },
           "description": "Pulumi packages, such as aws, whose types outside the list are counted under notPriced."
         },
+        "client": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["latest", "minimum", "download"],
+          "description": "The qloudpulse CLI releases this install expects. An older client than latest says a newer one is out; the endpoint refuses one below minimum.",
+          "properties": {
+            "latest": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+            "minimum": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+            "download": { "type": "string", "pattern": "^https://" }
+          }
+        },
         "types": {
           "type": "array",
           "items": {

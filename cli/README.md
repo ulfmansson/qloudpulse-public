@@ -29,6 +29,13 @@ tar -xzf "qloudpulse-$VERSION-$TARGET.tar.gz"
 Or build it from this directory with Rust 1.88 or later: `cargo build --release --locked`. The binary is
 `target/release/qloudpulse`.
 
+### Updates
+
+The catalogue also names the newest client and the oldest one qloudpulse still takes. When a newer one is out, the
+client says so on stderr and under the pull request comment, and carries on. Below the oldest, it stops before sending
+anything and says which version to download; qloudpulse refuses such a client's request too, by its `User-Agent`. With
+`--catalogue`, a saved list without that part, only the refusal is left.
+
 ## Use
 
 ```bash
@@ -116,3 +123,7 @@ cli/release.sh --publish
 
 It needs Docker (the Linux builds), rustup (the macOS builds) and `gh` signed in with write access to this repository.
 To release a new version, raise `version` in `Cargo.toml` first. The release's tag is `qloudpulse-cli-<version>`.
+
+Clients hear about a release once qloudpulse says so: raise `estimates.client.latest` in the report service's
+`application.yml` to the new version (`ESTIMATES_CLIENT_LATEST` on an install), and `estimates.client.minimum` only
+when older clients must stop.

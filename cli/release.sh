@@ -189,3 +189,6 @@ read -r answer
 gh release create "$TAG" -R "$REPO" --target "$COMMIT" --latest=false \
   --title "qloudpulse client $VERSION" --notes-file "$OUT/notes.md" \
   "$OUT"/qloudpulse-*.tar.gz "$OUT/SHA256SUMS"
+
+printf '\nReleased. Clients are told once qloudpulse names it: set estimates.client.latest to %s in the report\n' "$VERSION"
+printf "service's application.yml (ESTIMATES_CLIENT_LATEST on an install), and deploy.\n"

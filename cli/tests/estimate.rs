@@ -522,3 +522,39 @@ fn without_a_catalogue_file_it_is_read_from_the_endpoint() {
         "{err}"
     );
 }
+
+fn catalogue_with_client(latest: &str, minimum: &str) -> String {
+    let mut c: Value = serde_json::from_str(CATALOGUE).unwrap();
+    c["client"] = json!({"latest": latest, "minimum": minimum, "download": "https://example.com/get"});
+    let path = std::env::temp_dir().join(format!(
+        "qloudpulse-catalogue-{latest}-{minimum}-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(&path, c.to_string()).unwrap();
+    path.to_string_lossy().into_owned()
+}
+
+#[test]
+fn a_newer_client_is_said_and_one_below_the_minimum_stops() {
+    let newer = catalogue_with_client("99.0.0", "0.0.1");
+    let (ok, stdout, stderr) = run(&["estimate", "--dry-run", "--catalogue", &newer], UPDATE, None);
+    assert!(ok, "{stderr}");
+    assert!(stderr.contains("qloudpulse CLI 99.0.0 is out (this is "), "{stderr}");
+    assert!(
+        serde_json::from_str::<Value>(&stdout).is_ok(),
+        "the request is still printed"
+    );
+
+    let too_old = catalogue_with_client("99.0.0", "98.0.0");
+    let (ok, stdout, stderr) = run(&["estimate", "--dry-run", "--catalogue", &too_old], UPDATE, None);
+    assert!(!ok);
+    assert!(stdout.is_empty());
+    assert!(
+        stderr.contains("qloudpulse takes 98.0.0 or later. Download 99.0.0 from https://example.com/get"),
+        "{stderr}"
+    );
+
+    let current = catalogue_with_client(qloudpulse_cli::version::VERSION, qloudpulse_cli::version::VERSION);
+    let (ok, _, stderr) = run(&["estimate", "--dry-run", "--catalogue", &current], UPDATE, None);
+    assert!(ok && !stderr.contains("is out"), "{stderr}");
+}
