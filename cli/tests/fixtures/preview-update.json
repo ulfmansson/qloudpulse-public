@@ -1,0 +1,140 @@
+{
+  "config": { "aws:region": "eu-west-1" },
+  "steps": [
+    {
+      "op": "update",
+      "urn": "urn:pulumi:prod::shop::aws:rds/instance:Instance::orders",
+      "provider": "urn:pulumi:prod::shop::pulumi:providers:aws::default_7_10_0::8d3f1c2e-0000-4000-8000-000000000001",
+      "oldState": {
+        "urn": "urn:pulumi:prod::shop::aws:rds/instance:Instance::orders",
+        "custom": true,
+        "id": "orders-db-7f3a",
+        "type": "aws:rds/instance:Instance",
+        "inputs": { "allocatedStorage": 100, "engine": "postgres", "instanceClass": "db.r6i.xlarge", "multiAz": true, "storageType": "gp3", "username": "app" },
+        "provider": "urn:pulumi:prod::shop::pulumi:providers:aws::default_7_10_0::8d3f1c2e-0000-4000-8000-000000000001"
+      },
+      "newState": {
+        "urn": "urn:pulumi:prod::shop::aws:rds/instance:Instance::orders",
+        "custom": true,
+        "id": "orders-db-7f3a",
+        "type": "aws:rds/instance:Instance",
+        "inputs": { "allocatedStorage": 100, "engine": "postgres", "instanceClass": "db.r6i.2xlarge", "multiAz": true, "storageType": "gp3", "username": "app" },
+        "provider": "urn:pulumi:prod::shop::pulumi:providers:aws::default_7_10_0::8d3f1c2e-0000-4000-8000-000000000001"
+      },
+      "diffReasons": ["instanceClass"],
+      "detailedDiff": { "instanceClass": { "kind": "update", "inputDiff": true } }
+    },
+    {
+      "op": "create-replacement",
+      "urn": "urn:pulumi:prod::shop::aws:ebs/volume:Volume::data",
+      "oldState": {
+        "urn": "urn:pulumi:prod::shop::aws:ebs/volume:Volume::data",
+        "custom": true,
+        "id": "vol-0abc1234def567890",
+        "type": "aws:ebs/volume:Volume",
+        "inputs": { "availabilityZone": "eu-west-1a", "size": 100, "type": "gp2" }
+      },
+      "newState": {
+        "urn": "urn:pulumi:prod::shop::aws:ebs/volume:Volume::data",
+        "custom": true,
+        "type": "aws:ebs/volume:Volume",
+        "inputs": { "availabilityZone": "eu-west-1b", "size": 200, "type": "gp3" }
+      },
+      "replaceReasons": ["availabilityZone"],
+      "detailedDiff": null
+    },
+    {
+      "op": "replace",
+      "urn": "urn:pulumi:prod::shop::aws:ebs/volume:Volume::data",
+      "oldState": {
+        "urn": "urn:pulumi:prod::shop::aws:ebs/volume:Volume::data",
+        "custom": true,
+        "id": "vol-0abc1234def567890",
+        "type": "aws:ebs/volume:Volume",
+        "inputs": { "availabilityZone": "eu-west-1a", "size": 100, "type": "gp2" }
+      },
+      "newState": {
+        "urn": "urn:pulumi:prod::shop::aws:ebs/volume:Volume::data",
+        "custom": true,
+        "type": "aws:ebs/volume:Volume",
+        "inputs": { "availabilityZone": "eu-west-1b", "size": 200, "type": "gp3" }
+      },
+      "detailedDiff": null
+    },
+    {
+      "op": "delete-replaced",
+      "urn": "urn:pulumi:prod::shop::aws:ebs/volume:Volume::data",
+      "oldState": {
+        "urn": "urn:pulumi:prod::shop::aws:ebs/volume:Volume::data",
+        "custom": true,
+        "id": "vol-0abc1234def567890",
+        "type": "aws:ebs/volume:Volume",
+        "inputs": { "availabilityZone": "eu-west-1a", "size": 100, "type": "gp2" }
+      },
+      "detailedDiff": null
+    },
+    {
+      "op": "delete",
+      "urn": "urn:pulumi:prod::shop::aws:ec2/natGateway:NatGateway::egress",
+      "oldState": {
+        "urn": "urn:pulumi:prod::shop::aws:ec2/natGateway:NatGateway::egress",
+        "custom": true,
+        "id": "nat-0123456789abcdef0",
+        "type": "aws:ec2/natGateway:NatGateway",
+        "inputs": { "connectivityType": "public", "subnetId": "subnet-0aa" }
+      },
+      "detailedDiff": null
+    },
+    {
+      "op": "same",
+      "urn": "urn:pulumi:prod::shop::aws:ec2/instance:Instance::web",
+      "oldState": {
+        "urn": "urn:pulumi:prod::shop::aws:ec2/instance:Instance::web",
+        "custom": true,
+        "id": "i-0abc",
+        "type": "aws:ec2/instance:Instance",
+        "inputs": { "instanceType": "m5.large" }
+      },
+      "newState": {
+        "urn": "urn:pulumi:prod::shop::aws:ec2/instance:Instance::web",
+        "custom": true,
+        "id": "i-0abc",
+        "type": "aws:ec2/instance:Instance",
+        "inputs": { "instanceType": "m5.large" }
+      },
+      "detailedDiff": null
+    },
+    {
+      "op": "update",
+      "urn": "urn:pulumi:prod::shop::aws:s3/bucket:Bucket::assets",
+      "oldState": {
+        "urn": "urn:pulumi:prod::shop::aws:s3/bucket:Bucket::assets",
+        "custom": true,
+        "id": "shop-assets-prod",
+        "type": "aws:s3/bucket:Bucket",
+        "inputs": { "tags": { "team": "web" } }
+      },
+      "newState": {
+        "urn": "urn:pulumi:prod::shop::aws:s3/bucket:Bucket::assets",
+        "custom": true,
+        "id": "shop-assets-prod",
+        "type": "aws:s3/bucket:Bucket",
+        "inputs": { "tags": { "team": "storefront" } }
+      },
+      "diffReasons": ["tags"],
+      "detailedDiff": null
+    },
+    {
+      "op": "read",
+      "urn": "urn:pulumi:prod::shop::aws:ec2/getAmi:getAmi::base",
+      "newState": {
+        "urn": "urn:pulumi:prod::shop::aws:ec2/getAmi:getAmi::base",
+        "custom": true,
+        "type": "aws:ec2/getAmi:getAmi",
+        "inputs": {}
+      },
+      "detailedDiff": null
+    }
+  ],
+  "changeSummary": { "update": 2, "replace": 1, "delete": 1, "same": 1 }
+}
