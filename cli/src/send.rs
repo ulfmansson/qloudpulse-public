@@ -1,5 +1,5 @@
-//! Asks qloudpulse what to send for the types a preview holds (`POST /v1/estimates/catalogue`), and sends it the
-//! request (`POST /v1/estimates`), on `api.qloudpulse.com`, the host for machines (qloudpulse's ADR 0127).
+//! Asks qloudpulse what to send for the types a preview holds (`POST …/estimates/catalogue`), and sends it the
+//! request (`POST …/estimates`).
 
 use std::time::Duration;
 
@@ -8,9 +8,9 @@ use anyhow::{Context, Result, bail};
 use crate::catalogue::Catalogue;
 use crate::request::{FORMAT_VERSION, Request, Response};
 
-/// Where the hosted service answers. Client 0.1.0 used `https://app.qloudpulse.com/api/report/public/estimates`,
-/// which keeps answering.
-pub const DEFAULT_ENDPOINT: &str = "https://api.qloudpulse.com/v1/estimates";
+/// Where the hosted service answers. A later release moves this to `https://api.qloudpulse.com/v1/estimates`, the host
+/// for machines (qloudpulse's ADR 0127), once that host is live; `--endpoint` reaches it before then.
+pub const DEFAULT_ENDPOINT: &str = "https://app.qloudpulse.com/api/report/public/estimates";
 
 const USER_AGENT: &str = concat!("qloudpulse-cli/", env!("CARGO_PKG_VERSION"));
 
@@ -120,7 +120,7 @@ mod tests {
     fn the_catalogue_is_next_to_the_endpoint() {
         assert_eq!(
             catalogue_url(DEFAULT_ENDPOINT),
-            "https://api.qloudpulse.com/v1/estimates/catalogue"
+            "https://app.qloudpulse.com/api/report/public/estimates/catalogue"
         );
         assert_eq!(
             catalogue_url("http://localhost:8080/e/"),
