@@ -10,18 +10,38 @@ use qloudpulse_cli::request::{FORMAT_VERSION, Response};
 use qloudpulse_cli::{render, send};
 
 #[derive(Parser)]
-#[command(name = "qloudpulse", version, about = "qloudpulse from the command line")]
+#[command(name = "qloudpulse", version, about = "qloudpulse from the command line", after_help = CONNECT)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
 }
 
+/// How the client reaches a company, shown under every help text.
+const CONNECT: &str = "\
+Connecting to your company:
+  An admin in qloudpulse opens Settings, Events, adds a source and copies its token (qpev_...).
+  Put the token in QLOUDPULSE_TOKEN, for example from a CI secret. It is read from there only,
+  never from an option, so it stays out of logs and shell history.
+
+  Prices are your company's own when its AWS bill is connected in qloudpulse (/account/aws);
+  otherwise they are list prices.";
+
+/// The environment `estimate` reads, shown under its help.
+const ESTIMATE_ENVIRONMENT: &str = "\
+Environment:
+  QLOUDPULSE_TOKEN     A change-event source's token (qpev_...), from Settings, Events in
+                       qloudpulse. Needed unless --dry-run
+  QLOUDPULSE_ENDPOINT  The same as --endpoint
+
+Example:
+  pulumi preview --json -s prod | qloudpulse estimate > comment.md";
+
 #[derive(Subcommand)]
 enum Command {
     /// Price an infrastructure change before it is applied, from `pulumi preview --json`.
     ///
-    /// Prints a Markdown comment for the pull request. The token is read from QLOUDPULSE_TOKEN: a change-event
-    /// source's token from Settings, Events.
+    /// Prints a Markdown comment for the pull request.
+    #[command(after_help = format!("{ESTIMATE_ENVIRONMENT}\n\n{CONNECT}"))]
     Estimate(EstimateArgs),
 }
 
@@ -109,7 +129,10 @@ fn estimate(args: &EstimateArgs) -> Result<()> {
         let token = std::env::var("QLOUDPULSE_TOKEN")
             .ok()
             .filter(|t| !t.trim().is_empty())
-            .context("set QLOUDPULSE_TOKEN to a change-event source's token, or use --dry-run")?;
+            .context(
+                "set QLOUDPULSE_TOKEN to a change-event source's token (qpev_...), from Settings, Events in \
+                 qloudpulse, or use --dry-run",
+            )?;
         send::send(&args.endpoint, token.trim(), request)?
     };
 
