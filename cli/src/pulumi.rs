@@ -219,6 +219,20 @@ impl Gathered {
     }
 }
 
+/// The resource types a preview holds, each once, to ask qloudpulse which it prices: of every resource the preview
+/// lists, changed or not, that is a cloud resource and not one of Pulumi's own.
+pub fn found_types(preview: &Preview) -> Vec<String> {
+    let found: BTreeSet<&str> = preview
+        .steps
+        .iter()
+        .flat_map(|step| [&step.new_state, &step.old_state])
+        .flatten()
+        .filter(|state| state.custom && !state.type_token.starts_with("pulumi:"))
+        .map(|state| state.type_token.as_str())
+        .collect();
+    found.into_iter().map(str::to_string).collect()
+}
+
 /// The keys of the resources a state's references name, from the inputs' dependencies; the URNs go into `referred`.
 fn references_of<'a>(
     state: Option<&'a State>,

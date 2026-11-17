@@ -41,8 +41,9 @@ Example:
 enum Command {
     /// Price an infrastructure change before it is applied, from `pulumi preview --json`.
     ///
-    /// Prints a Markdown comment for the pull request. Which resource types and attributes are sent is qloudpulse's
-    /// catalogue, read from the endpoint on every run (no token needed), or from --catalogue.
+    /// Prints a Markdown comment for the pull request. Which resource types and attributes are sent is qloudpulse's:
+    /// the client sends it the types the preview holds (no token needed) and sends what it answers, or reads
+    /// --catalogue.
     #[command(after_help = format!("{ESTIMATE_ENVIRONMENT}\n\n{CONNECT}"))]
     Estimate(EstimateArgs),
 }
@@ -56,11 +57,12 @@ struct EstimateArgs {
     #[arg(long)]
     dry_run: bool,
 
-    /// Where to send the request. Its catalogue is read from this address and /catalogue.
+    /// Where to send the request. The types are asked about at this address and /catalogue.
     #[arg(long, env = "QLOUDPULSE_ENDPOINT", default_value = send::DEFAULT_ENDPOINT)]
     endpoint: String,
 
-    /// Read the catalogue of priced types from this file instead of the endpoint, such as one saved with curl.
+    /// Read the catalogue of priced types from this file instead of asking the endpoint: a saved answer, to pin what is
+    /// sent.
     #[arg(long, env = "QLOUDPULSE_CATALOGUE")]
     catalogue: Option<PathBuf>,
 
@@ -113,7 +115,7 @@ fn estimate(args: &EstimateArgs) -> Result<()> {
         Some(path) => Catalogue::parse(
             &std::fs::read_to_string(path).with_context(|| format!("could not read {}", path.display()))?,
         )?,
-        None => send::fetch_catalogue(&args.endpoint)?,
+        None => send::fetch_catalogue(&args.endpoint, &pulumi::found_types(&preview))?,
     };
     // Below the oldest client qloudpulse takes, stop before anything is sent; a newer release is said on stderr and
     // under the comment, where a CI log nobody reads cannot hide it.

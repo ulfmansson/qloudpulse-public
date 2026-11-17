@@ -558,3 +558,15 @@ fn a_newer_client_is_said_and_one_below_the_minimum_stops() {
     let (ok, _, stderr) = run(&["estimate", "--dry-run", "--catalogue", &current], UPDATE, None);
     assert!(ok && !stderr.contains("is out"), "{stderr}");
 }
+
+#[test]
+fn the_types_asked_about_are_every_cloud_resource_in_the_preview_once() {
+    let preview = pulumi::parse(&ecs_preview("same")).unwrap();
+    assert_eq!(
+        pulumi::found_types(&preview),
+        ["aws:ecs/service:Service", "aws:ecs/taskDefinition:TaskDefinition"]
+    );
+    let update = pulumi::found_types(&pulumi::parse(UPDATE).unwrap());
+    assert!(update.iter().all(|t| !t.starts_with("pulumi:")), "{update:?}");
+    assert!(update.contains(&"aws:rds/instance:Instance".to_string()), "{update:?}");
+}

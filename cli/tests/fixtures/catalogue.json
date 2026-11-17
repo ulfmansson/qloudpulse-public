@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "description": "What qloudpulse estimate sends for each resource type (docs/adr/0123). The client reads this list from GET /api/report/public/estimates/catalogue and sends only these attributes; the endpoint keeps only these too. A path a.b takes b from the object a, or from every object in the list a. references names attributes whose value is another resource, sent as that resource's key.",
+  "description": "What qloudpulse estimate sends for each resource type (docs/adr/0123). Never served whole: the client sends the types it found to POST /api/report/public/estimates/catalogue and gets back these entries for those types; the endpoint keeps only these attributes too. A path a.b takes b from the object a, or from every object in the list a. references names attributes whose value is another resource, sent as that resource's key.",
   "providers": ["aws"],
   "types": [
     {"type": "aws:ec2/instance:Instance", "label": "EC2 instance",

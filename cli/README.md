@@ -7,9 +7,10 @@ plans come next.
 It sends the attributes that set each resource's price to qloudpulse (`POST /api/report/public/estimates`). Names,
 tags, config and secrets stay in your CI. [What it sends](#what-it-sends) lists exactly what goes.
 
-Which resource types are priced, and which of their attributes are sent, is qloudpulse's **catalogue**. The client
-reads it on every run from `GET /api/report/public/estimates/catalogue` (open, no token), so when qloudpulse prices a
-new type, the client you already have sends it.
+Which resource types are priced, and which of their attributes are sent, is qloudpulse's **catalogue**. On every
+run the client sends qloudpulse the resource types it found in the preview, type tokens only, to
+`POST /api/report/public/estimates/catalogue` (open, no token), and gets back what to send for those qloudpulse
+prices. So when qloudpulse prices a new type, the client you already have sends it.
 
 ## Install
 
@@ -34,7 +35,7 @@ Or build it from this directory with Rust 1.88 or later: `cargo build --release 
 The catalogue also names the newest client and the oldest one qloudpulse still takes. When a newer one is out, the
 client says so on stderr and under the pull request comment, and carries on. Below the oldest, it stops before sending
 anything and says which version to download; qloudpulse refuses such a client's request too, by its `User-Agent`. With
-`--catalogue`, a saved list without that part, only the refusal is left.
+`--catalogue`, a saved answer, the client goes by the versions in it; qloudpulse's refusal still holds.
 
 ## Use
 
@@ -49,8 +50,8 @@ pulumi preview --json --show-sames -s payments-prod | qloudpulse estimate > comm
 | `--region <region>` | The region of resources whose provider and stack name none |
 | `--with-resource-ids` | Send the cloud ID of each resource that exists before the change, so its usage comes from what it really used |
 | `--format json` | Print qloudpulse's answer as JSON instead of the comment |
-| `--endpoint <url>` | Another address, such as your own qloudpulse install, also `QLOUDPULSE_ENDPOINT`. https only; http only to localhost. The catalogue is read from this address and `/catalogue` |
-| `--catalogue <file>` | Read the catalogue from a file instead, also `QLOUDPULSE_CATALOGUE`: to pin what is sent, or where CI reaches nothing but the endpoint's POST. `curl -fsS https://app.qloudpulse.com/api/report/public/estimates/catalogue > catalogue.json` saves it |
+| `--endpoint <url>` | Another address, such as your own qloudpulse install, also `QLOUDPULSE_ENDPOINT`. https only; http only to localhost. The types are asked about at this address and `/catalogue` |
+| `--catalogue <file>` | Read the answer from a file instead of asking, also `QLOUDPULSE_CATALOGUE`, to pin what is sent. `qloudpulse estimate --dry-run` shows the types; `curl -fsS -H 'Content-Type: application/json' -d '{"formatVersion": 1, "types": ["aws:rds/instance:Instance"]}' https://app.qloudpulse.com/api/report/public/estimates/catalogue > catalogue.json` saves an answer |
 
 The token is read from `QLOUDPULSE_TOKEN` only, never from an option: a change-event source's token (`qpev_…`), from
 Settings, Events in qloudpulse. The same source can send the change event after `pulumi up`.

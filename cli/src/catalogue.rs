@@ -1,5 +1,6 @@
-//! The resource types qloudpulse prices and the attributes the client sends for each: the catalogue, which the client
-//! reads from qloudpulse (`GET …/estimates/catalogue`) on every run, or from `--catalogue FILE`.
+//! The resource types qloudpulse prices and the attributes the client sends for each: the catalogue. On every run the
+//! client sends qloudpulse the types it found in the preview (`POST …/estimates/catalogue`, type tokens only) and gets
+//! back the entries of those it prices; `--catalogue FILE` reads a saved answer, or the whole list, instead.
 //!
 //! The list lives with the pricing, so qloudpulse prices a new type without a new client. Nothing outside it is read
 //! from a resource: an attribute that does not set a price stays in CI. A path `a.b` takes `b` from the object `a`,

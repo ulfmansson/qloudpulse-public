@@ -1,5 +1,5 @@
-//! Reads the catalogue from qloudpulse (`GET /api/report/public/estimates/catalogue`) and sends it a request
-//! (`POST /api/report/public/estimates`).
+//! Asks qloudpulse what to send for the types a preview holds (`POST /api/report/public/estimates/catalogue`), and
+//! sends it the request (`POST /api/report/public/estimates`).
 
 use std::time::Duration;
 
@@ -42,16 +42,19 @@ fn agent() -> ureq::Agent {
         .into()
 }
 
-/// Reads the endpoint's catalogue. It takes no token, so a dry run needs none.
-pub fn fetch_catalogue(endpoint: &str) -> Result<Catalogue> {
+/// Asks the endpoint what to send for these resource types: it answers with the entries of those it prices. Only the
+/// type tokens go, and no token, so a dry run needs none.
+pub fn fetch_catalogue(endpoint: &str, types: &[String]) -> Result<Catalogue> {
     check_endpoint(endpoint)?;
     let url = catalogue_url(endpoint);
+    let question = serde_json::json!({"formatVersion": FORMAT_VERSION, "types": types});
     let mut answer = agent()
-        .get(&url)
-        .call()
+        .post(&url)
+        .send_json(&question)
         .with_context(|| format!("could not reach qloudpulse for its catalogue ({url})"))?;
     match answer.status().as_u16() {
         200 => {}
+        400 => bail!("qloudpulse refused the catalogue question (400): update the client"),
         404 => bail!("no catalogue at {url} (404): this qloudpulse is older than the client, or the address is wrong"),
         s => bail!("qloudpulse answered {s} for its catalogue ({url})"),
     }
