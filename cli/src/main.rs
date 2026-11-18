@@ -35,7 +35,7 @@ Environment:
   QLOUDPULSE_ENDPOINT  The same as --endpoint
 
 Example:
-  pulumi preview --json -s prod | qloudpulse estimate > comment.md";
+  pulumi preview --json --show-sames -s prod | qloudpulse estimate > comment.md";
 
 #[derive(Subcommand)]
 enum Command {
