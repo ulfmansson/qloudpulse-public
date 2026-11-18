@@ -62,6 +62,12 @@ if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
 fi
 if [ $PUBLISH -eq 1 ]; then
   command -v gh >/dev/null || fail "--publish needs gh"
+  # The client's default address has to answer before a release names it (qloudpulse's ADR 0127).
+  DEFAULT=$(sed -n 's/^pub const DEFAULT_ENDPOINT: &str = "\(.*\)";$/\1/p' "$CLI/src/send.rs")
+  [ -n "$DEFAULT" ] || fail "no DEFAULT_ENDPOINT in cli/src/send.rs"
+  STATUS=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
+    -d '{"formatVersion": 1, "types": []}' "$DEFAULT/catalogue" || true)
+  [ "$STATUS" = 200 ] || fail "$DEFAULT/catalogue answers $STATUS, not 200; release once it is live"
   git -C "$ROOT" fetch -q origin main
   [ "$COMMIT" = "$(git -C "$ROOT" rev-parse origin/main)" ] \
     || fail "HEAD is not origin/main; release only what main has (git switch main && git pull)"
@@ -189,3 +195,6 @@ read -r answer
 gh release create "$TAG" -R "$REPO" --target "$COMMIT" --latest=false \
   --title "qloudpulse client $VERSION" --notes-file "$OUT/notes.md" \
   "$OUT"/qloudpulse-*.tar.gz "$OUT/SHA256SUMS"
+
+printf '\nReleased. Clients are told once qloudpulse names it: set estimates.client.latest to %s in the report\n' "$VERSION"
+printf "service's application.yml (ESTIMATES_CLIENT_LATEST on an install), and deploy.\n"

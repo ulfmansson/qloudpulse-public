@@ -2,8 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/ulfmansson/qloudpulse-public/main/cli/estimate.schema.json",
   "title": "Estimate of an infrastructure change",
-  "description": "What `qloudpulse estimate` sends to POST /api/report/public/estimates, and what qloudpulse answers. The request carries only what sets a price: resource names stay in CI, and each resource is named by a key the client derives from it.",
-  "oneOf": [{ "$ref": "#/$defs/request" }, { "$ref": "#/$defs/response" }],
+  "description": "What `qloudpulse estimate` sends to POST https://api.qloudpulse.com/v1/estimates (formerly /api/report/public/estimates on app.qloudpulse.com), and what qloudpulse answers. The request carries only what sets a price: resource names stay in CI, and each resource is named by a key the client derives from it.",
+  "oneOf": [{ "$ref": "#/$defs/request" }, { "$ref": "#/$defs/response" }, { "$ref": "#/$defs/catalogueQuestion" }, { "$ref": "#/$defs/catalogue" }],
   "$defs": {
     "request": {
       "type": "object",
@@ -21,12 +21,12 @@
         "resources": {
           "type": "array",
           "maxItems": 5000,
-          "description": "The resources the change creates, updates, replaces or deletes, of the types the client prices.",
+          "description": "The resources the change creates, updates, replaces or deletes, of the catalogue's types, and those it leaves the same that one of them refers to.",
           "items": { "$ref": "#/$defs/resourceChange" }
         },
         "notPriced": {
           "type": "array",
-          "description": "AWS resource types in the change that the client does not price, with how many of each.",
+          "description": "Resource types in the change of the catalogue's providers but not in its types, with how many of each.",
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -49,7 +49,10 @@
           "pattern": "^r[0-9a-f]{16}$",
           "description": "r + the first 16 hex digits of the SHA-256 of the resource's Pulumi URN. The answer names the resource by it."
         },
-        "change": { "enum": ["create", "update", "replace", "delete"] },
+        "change": {
+          "enum": ["create", "update", "replace", "delete", "same"],
+          "description": "same: left as it is, and sent because a changed resource refers to it; it is not answered on its own."
+        },
         "type": {
           "type": "string",
           "minLength": 1,
@@ -80,6 +83,77 @@
           "minLength": 1,
           "maxLength": 2048,
           "description": "The cloud ID of a resource that exists before the change. Sent only with --with-resource-ids."
+        },
+        "references": {
+          "type": "object",
+          "maxProperties": 20,
+          "additionalProperties": { "type": "string", "pattern": "^r[0-9a-f]{16}$" },
+          "description": "For each of the catalogue's references of this type, the key of the resource it names, such as an ECS service's task definition."
+        }
+      }
+    },
+    "catalogueQuestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["formatVersion", "types"],
+      "description": "POST /v1/estimates/catalogue (formerly /api/report/public/estimates/catalogue): the resource types the client found in a preview, type tokens only. Open without a token.",
+      "properties": {
+        "formatVersion": { "const": 1 },
+        "types": {
+          "type": "array",
+          "maxItems": 2000,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+        }
+      }
+    },
+    "catalogue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["formatVersion", "providers", "types"],
+      "description": "The answer to a catalogueQuestion: of the types asked, those the endpoint prices and the attributes the client sends for each, the providers whose other types are counted as not priced, and the client versions. Also what --catalogue reads from a file.",
+      "properties": {
+        "formatVersion": { "const": 1 },
+        "description": { "type": "string" },
+        "providers": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Pulumi packages, such as aws, whose types outside the list are counted under notPriced."
+        },
+        "client": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["latest", "minimum", "download"],
+          "description": "The qloudpulse CLI releases this install expects. An older client than latest says a newer one is out; the endpoint refuses one below minimum.",
+          "properties": {
+            "latest": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+            "minimum": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+            "download": { "type": "string", "pattern": "^https://" }
+          }
+        },
+        "types": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "label", "attributes"],
+            "properties": {
+              "type": { "type": "string", "minLength": 1, "maxLength": 200 },
+              "label": { "type": "string", "minLength": 1, "description": "What the comment calls it." },
+              "attributes": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": { "type": "string", "pattern": "^[^.]+(\\.[^.]+){0,3}$" },
+                "description": "The paths that set its price, up to four steps: a.b takes b from the object a, or from every object in the list a."
+              },
+              "references": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": { "type": "string", "pattern": "^[^.]+$" },
+                "description": "Attributes whose value is another resource, sent as that resource's key under references."
+              }
+            }
+          }
         }
       }
     },

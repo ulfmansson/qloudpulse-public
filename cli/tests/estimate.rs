@@ -3,6 +3,7 @@
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
+use qloudpulse_cli::catalogue::Catalogue;
 use qloudpulse_cli::pulumi::{self, Options, key};
 use qloudpulse_cli::render;
 use qloudpulse_cli::request::{ChangeKind, Response};
@@ -11,8 +12,19 @@ use serde_json::{Value, json};
 const CREATE: &str = include_str!("fixtures/preview-create.json");
 const UPDATE: &str = include_str!("fixtures/preview-update.json");
 
+const CATALOGUE: &str = include_str!("fixtures/catalogue.json");
+const CATALOGUE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/catalogue.json");
+
 fn estimate(json: &str, options: &Options) -> pulumi::Estimate {
-    pulumi::estimate(&pulumi::parse(json).unwrap(), options)
+    estimate_with(json, CATALOGUE, options)
+}
+
+fn estimate_with(json: &str, catalogue: &str, options: &Options) -> pulumi::Estimate {
+    pulumi::estimate(
+        &pulumi::parse(json).unwrap(),
+        &Catalogue::parse(catalogue).unwrap(),
+        options,
+    )
 }
 
 fn resource<'a>(e: &'a pulumi::Estimate, urn: &str) -> &'a qloudpulse_cli::request::ResourceChange {
@@ -306,6 +318,8 @@ fn run(args: &[&str], stdin: &str, token: Option<&str>) -> (bool, String, String
     cmd.args(args)
         .env_remove("QLOUDPULSE_TOKEN")
         .env_remove("QLOUDPULSE_ENDPOINT")
+        // The shipped list, so the tests reach no network; a test can still name another with --catalogue.
+        .env("QLOUDPULSE_CATALOGUE", CATALOGUE_PATH)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -388,4 +402,165 @@ fn region_flag_must_be_a_region() {
     let (ok, _, stderr) = run(&["estimate", "--dry-run", "--region", "europe"], UPDATE, None);
     assert!(!ok);
     assert!(stderr.contains("--region takes an AWS region name"), "{stderr}");
+}
+
+/// A service and its task definition, as Pulumi writes them: the service's `taskDefinition` comes from the task
+/// definition, which `propertyDependencies` names.
+const ECS_CATALOGUE: &str = r#"{"formatVersion": 1, "providers": ["aws"], "types": [
+    {"type": "aws:ecs/service:Service", "label": "ECS service", "attributes": ["desiredCount", "launchType"],
+     "references": ["taskDefinition"]},
+    {"type": "aws:ecs/taskDefinition:TaskDefinition", "label": "ECS task definition",
+     "attributes": ["cpu", "memory", "runtimePlatform.cpuArchitecture"]}]}"#;
+
+fn ecs_preview(task_op: &str) -> String {
+    let task = "urn:pulumi:prod::shop::aws:ecs/taskDefinition:TaskDefinition::api";
+    let state = |count: u32| {
+        json!({"type": "aws:ecs/service:Service", "custom": true, "id": "arn:aws:ecs:eu-west-1:1:service/c/api",
+               "inputs": {"desiredCount": count, "launchType": "FARGATE", "name": "api",
+                          "taskDefinition": "arn:aws:ecs:eu-west-1:1:task-definition/api:7"},
+               "propertyDependencies": {"taskDefinition": [task], "cluster": ["urn:pulumi:prod::shop::aws:ecs/cluster:Cluster::c"]}})
+    };
+    let task_state = json!({"type": "aws:ecs/taskDefinition:TaskDefinition", "custom": true,
+        "inputs": {"cpu": "512", "memory": "1024", "family": "api",
+                   "containerDefinitions": "[{\"environment\":[{\"name\":\"DB_PASSWORD\",\"value\":\"hunter2\"}]}]",
+                   "runtimePlatform": {"cpuArchitecture": "ARM64", "operatingSystemFamily": "LINUX"}}});
+    json!({"config": {"aws:region": "eu-west-1"}, "steps": [
+        {"op": "update", "urn": "urn:pulumi:prod::shop::aws:ecs/service:Service::api",
+         "oldState": state(2), "newState": state(4)},
+        {"op": task_op, "urn": task, "oldState": task_state, "newState": task_state}
+    ]})
+    .to_string()
+}
+
+#[test]
+fn a_reference_names_the_resource_by_key_and_an_unchanged_one_goes_too() {
+    let e = estimate_with(&ecs_preview("same"), ECS_CATALOGUE, &Options::default());
+    let task = "urn:pulumi:prod::shop::aws:ecs/taskDefinition:TaskDefinition::api";
+
+    let service = resource(&e, "urn:pulumi:prod::shop::aws:ecs/service:Service::api");
+    assert_eq!(service.change, ChangeKind::Update);
+    assert_eq!(
+        service.references.as_ref().unwrap().get("taskDefinition"),
+        Some(&key(task))
+    );
+    assert_eq!(
+        service.references.as_ref().unwrap().len(),
+        1,
+        "only the catalogue's references"
+    );
+    assert_eq!(
+        Value::Object(service.after.clone().unwrap()),
+        json!({"desiredCount": 4, "launchType": "FARGATE"})
+    );
+
+    let definition = resource(&e, task);
+    assert_eq!(definition.change, ChangeKind::Same);
+    assert!(definition.before.is_none());
+    assert_eq!(
+        Value::Object(definition.after.clone().unwrap()),
+        json!({"cpu": "512", "memory": "1024", "runtimePlatform": {"cpuArchitecture": "ARM64"}})
+    );
+    // An unchanged resource gets no line in the comment, and nothing else of it is sent.
+    assert_eq!(e.locals.len(), 1);
+    let sent = serde_json::to_string(&e.request).unwrap();
+    assert!(
+        !sent.contains("hunter2") && !sent.contains("DB_PASSWORD") && !sent.contains("arn:aws"),
+        "{sent}"
+    );
+}
+
+#[test]
+fn a_referenced_resource_that_changes_is_sent_once() {
+    let e = estimate_with(&ecs_preview("update"), ECS_CATALOGUE, &Options::default());
+    assert_eq!(e.request.resources.len(), 2);
+    assert!(e.request.resources.iter().all(|r| r.change == ChangeKind::Update));
+    assert_eq!(e.locals.len(), 2);
+}
+
+#[test]
+fn the_shipped_catalogue_sends_a_service_with_its_task_definition() {
+    let e = estimate(&ecs_preview("same"), &Options::default());
+    assert!(e.request.not_priced.is_empty(), "{:?}", e.request.not_priced);
+    let kinds: Vec<ChangeKind> = e.request.resources.iter().map(|r| r.change).collect();
+    assert_eq!(kinds, [ChangeKind::Update, ChangeKind::Same]);
+    let sent = serde_json::to_string(&e.request).unwrap();
+    assert!(
+        !sent.contains("hunter2") && !sent.contains("containerDefinitions"),
+        "{sent}"
+    );
+}
+
+#[test]
+fn without_a_catalogue_file_it_is_read_from_the_endpoint() {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_qloudpulse"));
+    let out = cmd
+        .args([
+            "estimate",
+            "--dry-run",
+            "--endpoint",
+            "http://127.0.0.1:9/api/report/public/estimates",
+        ])
+        .env_remove("QLOUDPULSE_CATALOGUE")
+        .env_remove("QLOUDPULSE_ENDPOINT")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    out.stdin.as_ref().unwrap().write_all(UPDATE.as_bytes()).unwrap();
+    let out = out.wait_with_output().unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        err.contains("http://127.0.0.1:9/api/report/public/estimates/catalogue"),
+        "{err}"
+    );
+}
+
+fn catalogue_with_client(latest: &str, minimum: &str) -> String {
+    let mut c: Value = serde_json::from_str(CATALOGUE).unwrap();
+    c["client"] = json!({"latest": latest, "minimum": minimum, "download": "https://example.com/get"});
+    let path = std::env::temp_dir().join(format!(
+        "qloudpulse-catalogue-{latest}-{minimum}-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(&path, c.to_string()).unwrap();
+    path.to_string_lossy().into_owned()
+}
+
+#[test]
+fn a_newer_client_is_said_and_one_below_the_minimum_stops() {
+    let newer = catalogue_with_client("99.0.0", "0.0.1");
+    let (ok, stdout, stderr) = run(&["estimate", "--dry-run", "--catalogue", &newer], UPDATE, None);
+    assert!(ok, "{stderr}");
+    assert!(stderr.contains("qloudpulse CLI 99.0.0 is out (this is "), "{stderr}");
+    assert!(
+        serde_json::from_str::<Value>(&stdout).is_ok(),
+        "the request is still printed"
+    );
+
+    let too_old = catalogue_with_client("99.0.0", "98.0.0");
+    let (ok, stdout, stderr) = run(&["estimate", "--dry-run", "--catalogue", &too_old], UPDATE, None);
+    assert!(!ok);
+    assert!(stdout.is_empty());
+    assert!(
+        stderr.contains("qloudpulse takes 98.0.0 or later. Download 99.0.0 from https://example.com/get"),
+        "{stderr}"
+    );
+
+    let current = catalogue_with_client(qloudpulse_cli::version::VERSION, qloudpulse_cli::version::VERSION);
+    let (ok, _, stderr) = run(&["estimate", "--dry-run", "--catalogue", &current], UPDATE, None);
+    assert!(ok && !stderr.contains("is out"), "{stderr}");
+}
+
+#[test]
+fn the_types_asked_about_are_every_cloud_resource_in_the_preview_once() {
+    let preview = pulumi::parse(&ecs_preview("same")).unwrap();
+    assert_eq!(
+        pulumi::found_types(&preview),
+        ["aws:ecs/service:Service", "aws:ecs/taskDefinition:TaskDefinition"]
+    );
+    let update = pulumi::found_types(&pulumi::parse(UPDATE).unwrap());
+    assert!(update.iter().all(|t| !t.starts_with("pulumi:")), "{update:?}");
+    assert!(update.contains(&"aws:rds/instance:Instance".to_string()), "{update:?}");
 }
