@@ -32,6 +32,11 @@ fn without_a_token_it_says_where_to_get_one() {
     let out = Command::new(env!("CARGO_BIN_EXE_qloudpulse"))
         .args(["estimate", "tests/fixtures/preview-update.json"])
         .env_remove("QLOUDPULSE_TOKEN")
+        // The shipped list, so the test reaches no network before the token is asked for.
+        .env(
+            "QLOUDPULSE_CATALOGUE",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/catalogue.json"),
+        )
         .output()
         .unwrap();
     assert!(!out.status.success());

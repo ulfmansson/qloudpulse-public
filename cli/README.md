@@ -14,10 +14,11 @@ prices. So when qloudpulse prices a new type, the client you already have sends 
 
 ## Install
 
-Each release has a static binary for Linux (x86_64 and arm64) and binaries for macOS, with their SHA-256 sums:
+Each release has a static binary for Linux (x86_64 and arm64), binaries for macOS, and one for Windows (x86_64), with
+their SHA-256 sums:
 
 ```bash
-VERSION=0.1.0
+VERSION=0.2.0
 TARGET=x86_64-unknown-linux-musl   # aarch64-unknown-linux-musl, aarch64-apple-darwin, x86_64-apple-darwin
 BASE=https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-cli-$VERSION
 curl -fsSLO "$BASE/qloudpulse-$VERSION-$TARGET.tar.gz"
@@ -26,6 +27,23 @@ sha256sum -c --ignore-missing SHA256SUMS   # on macOS: shasum -a 256 -c --ignore
 tar -xzf "qloudpulse-$VERSION-$TARGET.tar.gz"
 ./qloudpulse --version
 ```
+
+On Windows, in PowerShell:
+
+```powershell
+$Version = "0.2.0"
+$Base = "https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-cli-$Version"
+$Zip = "qloudpulse-$Version-x86_64-pc-windows-gnu.zip"
+Invoke-WebRequest "$Base/$Zip" -OutFile $Zip
+Invoke-WebRequest "$Base/SHA256SUMS" -OutFile SHA256SUMS
+$Want = (Select-String -Path SHA256SUMS -Pattern ([regex]::Escape($Zip))).Line.Split(" ")[0]
+if ((Get-FileHash $Zip -Algorithm SHA256).Hash -ne $Want.ToUpper()) { throw "checksum mismatch" }
+Expand-Archive $Zip -DestinationPath .
+.\qloudpulse.exe --version
+```
+
+The token goes in the same variable: `$env:QLOUDPULSE_TOKEN`, set from a secret in the pipeline. On a GitHub
+`windows-latest` runner the bash steps below work as they are, in Git Bash.
 
 Or build it from this directory with Rust 1.88 or later: `cargo build --release --locked`. The binary is
 `target/release/qloudpulse`.
@@ -126,7 +144,10 @@ cli/release.sh
 cli/release.sh --publish
 ```
 
-It needs Docker (the Linux builds), rustup (the macOS builds) and `gh` signed in with write access to this repository.
+It needs Docker (the Linux and Windows builds), rustup (the macOS builds) and `gh` signed in with write access to this
+repository. The Windows `.exe` is cross-built with mingw-w64 and cannot run on the Mac that builds it: the script checks
+that it is an x86-64 Windows program that needs only DLLs every Windows has, and that it names its version. The first
+run of each release on Windows is the real test of it.
 To release a new version, raise `version` in `Cargo.toml` first. The release's tag is `qloudpulse-cli-<version>`.
 
 Clients hear about a release once qloudpulse says so: raise `estimates.client.latest` in the report service's
