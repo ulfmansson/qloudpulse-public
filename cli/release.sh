@@ -13,6 +13,7 @@ usage() {
 Usage: cli/release.sh [--targets "<target> ..."] [--out <dir>] [--skip-tests]
        cli/release.sh --publish
        cli/release.sh --finish <dir>
+       cli/release.sh --check-changelog
 
   --targets     build only these targets (default: all six below)
   --out         where the files go (default: cli/target/dist/<version>)
@@ -21,6 +22,9 @@ Usage: cli/release.sh [--targets "<target> ..."] [--out <dir>] [--skip-tests]
                 starts the release workflow on GitHub. The workflow builds, attests and publishes
   --finish      write SHA256SUMS and notes.md for the archives already in <dir> (the release workflow, once every
                 target is built)
+  --check-changelog
+                check that CHANGELOG.md has a dated section for this version and nothing left under Unreleased,
+                as a release needs; --publish and --finish check it too
 
 Targets:
   x86_64-unknown-linux-musl  aarch64-unknown-linux-musl   static, built in Docker
@@ -43,6 +47,7 @@ ALL_TARGETS="x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-
 TARGETS=$ALL_TARGETS
 PUBLISH=0
 FINISH=""
+CHECK_CHANGELOG=0
 SKIP_TESTS=0
 OUT=""
 RUST_IMAGE=${RUST_IMAGE:-rust:1.88-alpine@sha256:9dfaae478ecd298b6b5a039e1f2cc4fc040fc818a2de9aa78fa714dea036574d}
@@ -56,6 +61,7 @@ while [ $# -gt 0 ]; do
     --publish) PUBLISH=1 ;;
     --finish) FINISH=${2:?--finish needs a directory}; shift ;;
     --skip-tests) SKIP_TESTS=1 ;;
+    --check-changelog) CHECK_CHANGELOG=1 ;;
     --targets) TARGETS=${2:?--targets needs a list}; shift ;;
     --out) OUT=${2:?--out needs a directory}; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -95,10 +101,39 @@ write_sums() { # dir
   [ -s "$1/SHA256SUMS" ] || fail "nothing was packed"
 }
 
+CHANGELOG="$CLI/CHANGELOG.md"
+
+changelog_section() { # version: the lines under its "## [<version>]" heading, up to the next "## "
+  awk -v v="$1" '
+    index($0, "## [" v "]") == 1 { on = 1; next }
+    on && (/^## / || /^\[[^]]*\]: /) { exit }
+    on { print }
+  ' "$CHANGELOG" | sed -e '/./,$!d'
+}
+
+check_changelog() { # a release needs its version's section, dated, and nothing left under Unreleased
+  [ -f "$CHANGELOG" ] || fail "no $CHANGELOG"
+  grep -Eq "^## \[${VERSION//./\\.}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}\$" "$CHANGELOG" \
+    || fail "CHANGELOG.md has no dated section for $VERSION: its heading must be '## [$VERSION] - YYYY-MM-DD'"
+  # Not a pipe into grep -q: see check_binary.
+  local unreleased
+  unreleased=$(changelog_section Unreleased)
+  case "$unreleased" in
+    *"- "*) fail "CHANGELOG.md still has lines under Unreleased; move them into $VERSION's section first" ;;
+  esac
+}
+
 write_notes() { # dir built-by
+  local changes
+  changes=$(changelog_section "$VERSION")
+  [ -n "$changes" ] || changes="(CHANGELOG.md has no section for $VERSION.)"
   cat >"$1/notes.md" <<EOF
 The qloudpulse client $VERSION: \`qloudpulse estimate\` prices a Pulumi change before it is applied.
 Built from $COMMIT $2.
+
+$changes
+
+## Install
 
 \`\`\`bash
 VERSION=$VERSION
@@ -133,8 +168,15 @@ it from source, and run it in CI without cloud credentials:
 EOF
 }
 
+if [ $CHECK_CHANGELOG -eq 1 ]; then
+  check_changelog
+  echo "CHANGELOG.md has $VERSION's section, dated, and nothing under Unreleased."
+  exit 0
+fi
+
 if [ -n "$FINISH" ]; then
   [ -d "$FINISH" ] || fail "$FINISH is not a directory"
+  check_changelog
   # A release has every target or none.
   for t in $ALL_TARGETS; do
     case "$t" in *-windows-*) f="qloudpulse-$VERSION-$t.zip" ;; *) f="qloudpulse-$VERSION-$t.tar.gz" ;; esac
@@ -154,6 +196,7 @@ if [ $PUBLISH -eq 1 ]; then
   [ "$TARGETS" = "$ALL_TARGETS" ] && [ -z "$OUT" ] && [ $SKIP_TESTS -eq 0 ] \
     || fail "--publish builds nothing, so it takes no --targets, --out or --skip-tests"
   command -v gh >/dev/null || fail "--publish needs gh"
+  check_changelog
   # The client's default address has to answer before a release names it (qloudpulse's ADR 0127). The workflow
   # asks again before it publishes.
   DEFAULT=$(sed -n 's/^pub const DEFAULT_ENDPOINT: &str = "\(.*\)";$/\1/p' "$CLI/src/send.rs")

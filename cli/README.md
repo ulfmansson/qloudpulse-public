@@ -12,6 +12,8 @@ run the client sends qloudpulse the resource types it found in the preview, type
 `POST https://api.qloudpulse.com/v1/estimates/catalogue` (open, no token), and gets back what to send for those qloudpulse
 prices. So when qloudpulse prices a new type, the client you already have sends it.
 
+What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+
 ## Install
 
 Each release has a static binary for Linux (x86_64 and arm64), binaries for macOS, and binaries for Windows (x86_64
@@ -274,7 +276,9 @@ The request is what [What it sends](#what-it-sends) describes, in the format of
 cargo test --locked
 ```
 
-Before a commit, `cargo fmt` and `cargo clippy --all-targets -- -D warnings`. Pull requests also run `cargo deny check
+Before a commit, `cargo fmt` and `cargo clippy --all-targets -- -D warnings`. A change users would notice adds a line
+under Unreleased in [CHANGELOG.md](CHANGELOG.md); a pull request that changes `src/` without one gets a warning.
+Pull requests also run `cargo deny check
 advisories licenses sources` and `cargo audit`; a new dependency under a licence [`deny.toml`](deny.toml) does not
 allow fails until it is read and added there.
 
@@ -291,13 +295,16 @@ format.
 
 Releases are built on GitHub's runners by [`.github/workflows/cli-release.yml`](../.github/workflows/cli-release.yml),
 never on a laptop, so that each archive's provenance names a public workflow and commit. To release, raise `version`
-in `Cargo.toml`, merge, and from an up-to-date `main`:
+in `Cargo.toml`, and in [CHANGELOG.md](CHANGELOG.md) move the lines under Unreleased into that version's section and
+date it (`## [<version>] - YYYY-MM-DD`). That section becomes the release's notes on GitHub. Merge, and from an
+up-to-date `main`:
 
 ```bash
 cli/release.sh --publish
 ```
 
-That builds nothing. It checks that `HEAD` is `origin/main`, that the version is not released yet, and that the
+That builds nothing. It checks that `HEAD` is `origin/main`, that the changelog has the version's section, dated,
+and nothing left under Unreleased, that the version is not released yet, and that the
 default address's catalogue answers 200 (`https://api.qloudpulse.com/v1/estimates`, qloudpulse's host for machines,
 ADR 0127; client 0.1.0 used `https://app.qloudpulse.com/api/report/public/estimates`, which keeps answering). Then it
 pushes the tag `qloudpulse-cli-<version>`. The tag starts the workflow, which checks the same again, runs
