@@ -61,6 +61,17 @@ for t in $TARGETS; do
   case " $ALL_TARGETS " in *" $t "*) ;; *) fail "unknown target $t" ;; esac
 done
 
+# Archives are owned by root:0, whichever tar is first on PATH: bsdtar (macOS's /usr/bin/tar) and GNU tar (a devbox
+# or Linux shell) spell it differently. COPYFILE_DISABLE=1 keeps bsdtar from adding AppleDouble (._*) files and
+# --no-xattrs keeps out macOS attributes such as com.apple.provenance, which GNU tar warns about on extract; GNU tar
+# stores neither unless asked.
+TAR_VERSION=$(tar --version 2>/dev/null || true)
+case "$TAR_VERSION" in
+  *"GNU tar"*) TAR_OWNER="--owner=root:0 --group=root:0" ;;
+  *bsdtar*) TAR_OWNER="--uid 0 --gid 0 --uname root --gname root --no-xattrs --no-mac-metadata" ;;
+  *) fail "tar is neither GNU tar nor bsdtar: $(echo "$TAR_VERSION" | head -1)" ;;
+esac
+
 # A release is built from a commit everyone can see, so its source is the tag's.
 if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
   [ $PUBLISH -eq 0 ] || fail "the checkout has changes; commit or remove them before --publish"
@@ -243,8 +254,7 @@ for t in $TARGETS; do
       echo "  qloudpulse-$VERSION-$t.zip"
       ;;
     *)
-      COPYFILE_DISABLE=1 tar -czf "$OUT/qloudpulse-$VERSION-$t.tar.gz" \
-        --uid 0 --gid 0 --uname root --gname root -C "$BUILD/$t" "$exe"
+      COPYFILE_DISABLE=1 tar -czf "$OUT/qloudpulse-$VERSION-$t.tar.gz" $TAR_OWNER -C "$BUILD/$t" "$exe"
       echo "  qloudpulse-$VERSION-$t.tar.gz"
       ;;
   esac
