@@ -18,10 +18,37 @@ What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 ## Install
 
 Each release has a static binary for Linux (x86_64 and arm64), binaries for macOS, and binaries for Windows (x86_64
-and arm64), with their SHA-256 sums:
+and arm64), with their SHA-256 sums, and an install script that picks the one for your machine. From 0.3.0:
 
 ```bash
-VERSION=0.2.0
+curl -fsSL https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-cli-0.3.0/install.sh | sh
+```
+
+```powershell
+irm https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-cli-0.3.0/install.ps1 | iex
+```
+
+Each script installs the release it came from: the version is in the URL, so a pipeline gets the same client every
+run until you change it. It downloads the archive and the release's `SHA256SUMS`, stops unless the sum matches, and
+puts the binary in `~/.local/bin`, or on Windows in `%LOCALAPPDATA%\Programs\qloudpulse`, which it adds to your
+PATH. On a GitHub Actions runner it adds the directory to `$GITHUB_PATH` instead, so the next steps find
+`qloudpulse`. A Windows on ARM machine gets the ARM64 build, even from an x64 PowerShell.
+
+| `install.sh` | `install.ps1` (or its variable, as `iex` takes no options) | |
+|---|---|---|
+| `--dir <dir>` | `-Dir`, `$env:QLOUDPULSE_INSTALL_DIR` | where the binary goes |
+| `--attest` | `-Attest` | also check its signed build provenance with `gh`, as below |
+| `--base <url or dir>` | `-Base`, `$env:QLOUDPULSE_DOWNLOAD_BASE` | a mirror of the release's files |
+| | `-NoModifyPath`, `$env:QLOUDPULSE_NO_MODIFY_PATH` | leave PATH alone |
+
+Pass `install.sh` options after `sh -s --`, e.g. `curl -fsSL <url> | sh -s -- --dir /usr/local/bin --attest`. The
+scripts are in `SHA256SUMS` too, and attested with the archives, so you can check one before running it: download it
+and run `gh attestation verify install.sh` as in [Verify what you run](#verify-what-you-run).
+
+Or by hand:
+
+```bash
+VERSION=0.3.0
 TARGET=x86_64-unknown-linux-musl   # aarch64-unknown-linux-musl, aarch64-apple-darwin, x86_64-apple-darwin
 BASE=https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-cli-$VERSION
 curl -fsSLO "$BASE/qloudpulse-$VERSION-$TARGET.tar.gz"
@@ -34,7 +61,7 @@ tar -xzf "qloudpulse-$VERSION-$TARGET.tar.gz"
 On Windows, in PowerShell:
 
 ```powershell
-$Version = "0.2.0"
+$Version = "0.3.0"
 $Base = "https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-cli-$Version"
 $Zip = "qloudpulse-$Version-x86_64-pc-windows-gnu.zip"   # on Windows on ARM: aarch64-pc-windows-gnullvm
 Invoke-WebRequest "$Base/$Zip" -OutFile $Zip
