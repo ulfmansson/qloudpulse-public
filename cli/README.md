@@ -2,7 +2,8 @@
 
 `qloudpulse estimate` tells you what an infrastructure change will cost before you apply it, priced at your company's
 own rates, and prints a comment for the pull request. This first version reads Pulumi previews. Terraform and OpenTofu
-plans come next.
+plans come next. `qloudpulse pulumi preview` and `qloudpulse pulumi up` run Pulumi for you and price the change on the
+way, so every preview and update on your own machine shows its cost.
 
 It sends the attributes that set each resource's price to qloudpulse (`POST https://api.qloudpulse.com/v1/estimates`). Names,
 tags, config and secrets stay in your CI. [What it sends](#what-it-sends) lists exactly what goes.
@@ -61,23 +62,54 @@ anything and says which version to download; qloudpulse refuses such a client's 
 pulumi preview --json --show-sames -s payments-prod | qloudpulse estimate > comment.md
 ```
 
+Or let the client run Pulumi:
+
+```bash
+qloudpulse pulumi preview -s payments-prod
+```
+
+```bash
+qloudpulse pulumi up -s payments-prod
+```
+
+| Command | |
+|---|---|
+| `qloudpulse estimate [FILE]` | Prices the JSON of `pulumi preview --json`, from `FILE` or stdin, and prints the comment |
+| `qloudpulse pulumi preview [PULUMI_ARGS...]` | Runs `pulumi preview` with your arguments, its usual diff on your terminal, then `pulumi preview --json --show-sames` with the same arguments, and prints the estimate after the diff. Pulumi prints its diff or its JSON, never both, so the stack is previewed twice. A preview that fails ends with Pulumi's exit code; an estimate that fails exits 1, after the diff |
+| `qloudpulse pulumi up [PULUMI_ARGS...]` | Runs `pulumi preview --json --show-sames` with your arguments, less those only `up` takes (`-y`/`--yes`, `-f`/`--skip-preview`, `--continue-on-error`, `--strict`, `--plan`, `--secrets-provider`, `--expect-no-changes`), prints the estimate, then runs `pulumi up` with your arguments as they are, on your terminal: its own preview, diff and "Do you want to perform this update?" as usual, so the stack is previewed twice. Ends with Pulumi's exit code. With `--yes` the estimate is printed and the update goes ahead without a pause; with `--skip-preview` nothing is priced. An estimate that fails (no token, the network, a refused version) is one line on stderr, and the update goes on |
+
 | Option | |
 |---|---|
-| `FILE` | The JSON of `pulumi preview --json`. Without it, or with `-`, stdin |
+| `FILE` | `estimate` only. The JSON of `pulumi preview --json`. Without it, or with `-`, stdin |
 | `--dry-run` | Print the request that would be sent, and send nothing. The only run that needs no token |
 | `--region <region>` | The region of resources whose provider and stack name none |
 | `--with-resource-ids` | Send the cloud ID of each resource that exists before the change, so its usage comes from what it really used |
 | `--format json` | Print qloudpulse's answer as JSON instead of the comment |
 | `--endpoint <url>` | Another address, such as your own qloudpulse install, also `QLOUDPULSE_ENDPOINT`. https only; http only to localhost. The types are asked about at this address and `/catalogue` |
 | `--catalogue <file>` | Read the answer from a file instead of asking, also `QLOUDPULSE_CATALOGUE`, to pin what is sent. `qloudpulse estimate --dry-run` shows the types; `curl -fsS -H 'Content-Type: application/json' -d '{"formatVersion": 1, "types": ["aws:rds/instance:Instance"]}' https://api.qloudpulse.com/v1/estimates/catalogue > catalogue.json` saves an answer |
+| `--require-estimate` | `pulumi up` only. Stop, and do not run `pulumi up`, when the change cannot be priced |
+
+With `qloudpulse pulumi preview` and `qloudpulse pulumi up`, qloudpulse's options come first. From the first word it
+does not know, everything goes to Pulumi as it is: `qloudpulse pulumi preview -s prod --format json` hands `--format`
+to Pulumi. A `--` in front of Pulumi's arguments makes the split plain:
+`qloudpulse pulumi up --require-estimate -- -s prod --yes`. Pulumi's flags are read as words of their own (`-y`, not
+`-yf`). Pulumi's `--json` is refused, as the estimate is printed on the same stdout; for JSON, pipe
+`pulumi preview --json --show-sames` into `qloudpulse estimate`. The priced preview has no terminal to prompt on, so a
+stack with a passphrase needs `PULUMI_CONFIG_PASSPHRASE` or `PULUMI_CONFIG_PASSPHRASE_FILE`. `pulumi` is looked up on
+`PATH`.
+
+Pulumi's `--event-log` cannot spare the second preview: it is there only with `PULUMI_DEBUG_COMMANDS`, and its
+resource states (`apitype.StepEventStateMetadata`) carry no `propertyDependencies` and no stack config, which the
+estimate needs for references and regions.
 
 The token is read from `QLOUDPULSE_TOKEN` only, never from an option: a token of your own (`qpev_…`), which anyone in
 the company, a viewer too, makes under Your tokens, under their name in qloudpulse (on hosted qloudpulse,
 [app.qloudpulse.com/ui/?profile#my-tokens](https://app.qloudpulse.com/ui/?profile#my-tokens)). It lasts 30, 90 or 365
 days, as you choose. An admin's event-source token from Settings, Events works too, and that source can send the
 change event after `pulumi up`. Every run but
-`--dry-run` needs it, even one whose preview holds nothing to price: without it the client stops with an error before
-it reads the preview or asks for the catalogue.
+`--dry-run` needs it, even one whose preview holds nothing to price: without it `estimate` stops with an error before
+it reads the preview or asks for the catalogue, `pulumi preview` exits 1 after the diff without previewing again, and
+`pulumi up` says so in a line on stderr and goes on with the update (with `--require-estimate`, stops).
 
 In GitHub Actions:
 
