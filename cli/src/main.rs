@@ -1,5 +1,5 @@
 use std::fmt::Write as _;
-use std::io::Read as _;
+use std::io::{IsTerminal as _, Read as _};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -8,8 +8,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use qloudpulse_cli::catalogue::Catalogue;
 use qloudpulse_cli::pulumi::{self, Options};
+use qloudpulse_cli::render::{self, Style};
 use qloudpulse_cli::request::{ChangeKind, FORMAT_VERSION, MAX_RESOURCES, Response};
-use qloudpulse_cli::{render, send, token, version};
+use qloudpulse_cli::{send, token, version};
 
 #[derive(Parser)]
 #[command(name = "qloudpulse", version, about = "qloudpulse from the command line", after_help = CONNECT)]
@@ -80,15 +81,27 @@ struct EstimateArgs {
     #[arg(long)]
     with_resource_ids: bool,
 
-    /// What to print: the comment, or the answer as JSON.
-    #[arg(long, value_enum, default_value_t = Format::Markdown)]
-    format: Format,
+    /// What to print: the comment in Markdown, for a pull request, or as plain text, or the answer as JSON. Without
+    /// it: text when stdout is a terminal, Markdown when it is piped or redirected (`> comment.md`).
+    #[arg(long, value_enum)]
+    format: Option<Format>,
 }
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Format {
     Markdown,
+    Text,
     Json,
+}
+
+/// The format a run prints: the one asked for, else text for a person at a terminal and Markdown for a file or a pipe,
+/// so CI's `> comment.md` keeps Markdown.
+fn format(asked: Option<Format>, stdout_is_terminal: bool) -> Format {
+    asked.unwrap_or(if stdout_is_terminal {
+        Format::Text
+    } else {
+        Format::Markdown
+    })
 }
 
 fn read_input(file: Option<&PathBuf>) -> Result<String> {
@@ -194,14 +207,17 @@ fn estimate(args: &EstimateArgs) -> Result<()> {
         send::send(&args.endpoint, &token, request)?
     };
 
-    match args.format {
-        Format::Markdown => {
-            print!("{}", render::comment(&response, &estimate));
-            if let Some(line) = &newer {
-                println!("\n<sub>{line}</sub>");
-            }
+    let style = match format(args.format, std::io::stdout().is_terminal()) {
+        Format::Json => {
+            println!("{}", serde_json::to_string_pretty(&response)?);
+            return Ok(());
         }
-        Format::Json => println!("{}", serde_json::to_string_pretty(&response)?),
+        Format::Markdown => Style::Markdown,
+        Format::Text => Style::Text,
+    };
+    print!("{}", render::render(&response, &estimate, style));
+    if let Some(line) = &newer {
+        println!("\n{}", style.small(line));
     }
     Ok(())
 }
@@ -216,6 +232,21 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("qloudpulse: {e:#}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn without_format_a_terminal_gets_text_and_a_file_or_pipe_markdown() {
+        assert_eq!(format(None, true), Format::Text);
+        assert_eq!(format(None, false), Format::Markdown);
+        for asked in [Format::Markdown, Format::Text, Format::Json] {
+            assert_eq!(format(Some(asked), true), asked);
+            assert_eq!(format(Some(asked), false), asked);
         }
     }
 }

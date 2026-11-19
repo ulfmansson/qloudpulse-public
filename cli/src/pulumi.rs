@@ -82,7 +82,8 @@ pub struct Estimate {
     pub request: Request,
     /// One for each resource sent, those left the same included.
     pub locals: Vec<Local>,
-    /// Whether the preview listed any step left the same, as `pulumi preview --json --show-sames` does.
+    /// Whether the preview listed a cloud resource left the same, as `pulumi preview --json --show-sames` does. The
+    /// stack and its providers, which Pulumi lists as the same without it too, do not count.
     pub stack_listed: bool,
     /// The stack's unchanged resources of the catalogue's providers whose type it does not price.
     pub stack_not_priced: u32,
@@ -398,11 +399,16 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
         if !g.ops.contains("same") {
             continue;
         }
-        stack_listed = true;
         let Some(state) = g.new.as_ref().or(g.old.as_ref()) else {
             continue;
         };
-        if !state.custom || state.type_token.starts_with("pulumi:") || sent.contains(urn) {
+        // Pulumi lists the stack and its providers as the same without `--show-sames` too: only a cloud resource
+        // left the same says the preview lists the stack.
+        if !state.custom || state.type_token.starts_with("pulumi:") {
+            continue;
+        }
+        stack_listed = true;
+        if sent.contains(urn) {
             continue;
         }
         if catalogue.priced(&state.type_token).is_some() {

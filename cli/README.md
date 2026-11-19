@@ -67,7 +67,7 @@ pulumi preview --json --show-sames -s payments-prod | qloudpulse estimate > comm
 | `--dry-run` | Print the request that would be sent, and send nothing. The only run that needs no token |
 | `--region <region>` | The region of resources whose provider and stack name none |
 | `--with-resource-ids` | Send the cloud ID of each resource that exists before the change, so its usage comes from what it really used |
-| `--format json` | Print qloudpulse's answer as JSON instead of the comment |
+| `--format <markdown\|text\|json>` | The comment in Markdown, for a pull request, or as plain text, or qloudpulse's answer as JSON. Without it: text when stdout is a terminal, Markdown when it is piped or redirected, as in `> comment.md` |
 | `--endpoint <url>` | Another address, such as your own qloudpulse install, also `QLOUDPULSE_ENDPOINT`. https only; http only to localhost. The types are asked about at this address and `/catalogue` |
 | `--catalogue <file>` | Read the answer from a file instead of asking, also `QLOUDPULSE_CATALOGUE`, to pin what is sent. `qloudpulse estimate --dry-run` shows the types; `curl -fsS -H 'Content-Type: application/json' -d '{"formatVersion": 1, "types": ["aws:rds/instance:Instance"]}' https://api.qloudpulse.com/v1/estimates/catalogue > catalogue.json` saves an answer |
 
