@@ -1,4 +1,5 @@
-//! The help texts say how to give the client its token, short and long, at the top and under `estimate`.
+//! The help texts say how to give the client its token, short and long, at the top and under every command, and the
+//! Pulumi commands say how they run Pulumi.
 
 use std::process::Command;
 
@@ -13,7 +14,15 @@ fn help(args: &[&str]) -> String {
 
 #[test]
 fn every_help_names_the_token_and_where_it_is_made() {
-    for args in [&["--help"][..], &["-h"], &["estimate", "--help"], &["estimate", "-h"]] {
+    for args in [
+        &["--help"][..],
+        &["-h"],
+        &["estimate", "--help"],
+        &["estimate", "-h"],
+        &["pulumi", "--help"],
+        &["pulumi", "preview", "--help"],
+        &["pulumi", "up", "-h"],
+    ] {
         let text = help(args);
         assert!(
             text.contains("QLOUDPULSE_TOKEN"),
@@ -29,6 +38,25 @@ fn every_help_names_the_token_and_where_it_is_made() {
         );
     }
     assert!(help(&["estimate", "-h"]).contains("QLOUDPULSE_ENDPOINT"));
+}
+
+#[test]
+fn the_pulumi_helps_say_how_they_run() {
+    let preview = help(&["pulumi", "preview", "--help"]);
+    assert!(preview.contains("previewed twice"), "{preview}");
+    let up = help(&["pulumi", "up", "--help"]);
+    for said in [
+        "previewed twice",
+        "-y/--yes",
+        "without a pause",
+        "--require-estimate",
+        "-f/--skip-preview",
+    ] {
+        assert!(up.contains(said), "pulumi up --help does not say {said:?}:\n{up}");
+    }
+    for text in [&preview, &up] {
+        assert!(text.contains("qloudpulse's options come first"), "{text}");
+    }
 }
 
 #[test]

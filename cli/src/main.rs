@@ -1,16 +1,17 @@
+use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::io::{IsTerminal as _, Read as _};
-use std::path::PathBuf;
-use std::process::ExitCode;
+use std::path::{Path, PathBuf};
+use std::process::{Command as Process, ExitCode, ExitStatus, Stdio};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 
 use qloudpulse_cli::catalogue::Catalogue;
 use qloudpulse_cli::pulumi::{self, Options};
 use qloudpulse_cli::render::{self, Style};
 use qloudpulse_cli::request::{ChangeKind, FORMAT_VERSION, MAX_RESOURCES, Response};
-use qloudpulse_cli::{send, token, version};
+use qloudpulse_cli::{send, token, version, wrap};
 
 #[derive(Parser)]
 #[command(name = "qloudpulse", version, about = "qloudpulse from the command line", after_help = CONNECT)]
@@ -32,17 +33,67 @@ Connecting to your company:
   Prices are your company's own when its AWS bill is connected in qloudpulse (/account/aws);
   otherwise they are list prices.";
 
-/// The environment `estimate` reads, shown under its help.
-const ESTIMATE_ENVIRONMENT: &str = "\
+/// The environment the commands that price read, shown under their help.
+const ENVIRONMENT: &str = "\
 Environment:
-  QLOUDPULSE_TOKEN     A token of your own (qpev_...), from Your tokens under your name in
-                       qloudpulse. Needed on every run but --dry-run, even one with nothing
-                       to price. Unset at a terminal, it is asked for, hidden, for that run
-                       only; in CI or without a terminal the run stops
-  QLOUDPULSE_ENDPOINT  The same as --endpoint
+  QLOUDPULSE_TOKEN      A token of your own (qpev_...), from Your tokens under your name in
+                        qloudpulse. Needed on every run but --dry-run, even one with nothing
+                        to price. Unset at a terminal, it is asked for, hidden, for that run
+                        only; in CI or without a terminal the run stops
+  QLOUDPULSE_ENDPOINT   The same as --endpoint
+  QLOUDPULSE_CATALOGUE  The same as --catalogue";
 
+/// How `estimate` is used, shown under its help.
+const ESTIMATE_EXAMPLE: &str = "\
 Example:
   pulumi preview --json --show-sames -s prod | qloudpulse estimate > comment.md";
+
+/// Where Pulumi's arguments start, shown under `pulumi preview` and `pulumi up`.
+const PULUMI_ARGS: &str = "\
+Pulumi's arguments:
+  qloudpulse's options come first. From the first word it does not know, everything goes to
+  Pulumi as it is, so `qloudpulse pulumi preview -s prod --format json` hands --format to
+  Pulumi. A -- in front of Pulumi's arguments makes the split plain. Pulumi's --json is
+  refused, as the estimate is printed on the same stdout; for JSON, run
+  `pulumi preview --json --show-sames | qloudpulse estimate`. Pulumi's flags are read as words of
+  their own: -y, not -yf.
+
+  The priced preview has no terminal to prompt on: a stack with a passphrase needs
+  PULUMI_CONFIG_PASSPHRASE or PULUMI_CONFIG_PASSPHRASE_FILE.";
+
+/// How `pulumi preview` runs, shown under its help.
+const PULUMI_PREVIEW: &str = "\
+How it runs:
+  `pulumi preview` runs with your arguments and shows its usual diff, then
+  `pulumi preview --json --show-sames` runs with the same arguments and is priced: Pulumi prints
+  its diff or its JSON, never both, so the stack is previewed twice. The estimate follows the
+  diff on stdout. A preview that fails ends the run with Pulumi's exit code. An estimate that
+  fails (no token, the network, a refused version) exits 1, after the diff.
+
+Examples:
+  qloudpulse pulumi preview -s payments-prod
+  qloudpulse pulumi preview --format json -- -s payments-prod --diff";
+
+/// How `pulumi up` runs, shown under its help.
+const PULUMI_UP: &str = "\
+How it runs:
+  First `pulumi preview --json --show-sames` runs with your arguments, less those only
+  `pulumi up` takes (-y/--yes, -f/--skip-preview, --continue-on-error, --strict, --plan,
+  --secrets-provider, --expect-no-changes), and the estimate is printed. Then `pulumi up` runs
+  with your arguments as they are, on your terminal: its own preview and diff, and its prompt
+  \"Do you want to perform this update?\", so the stack is previewed twice. The run ends with Pulumi's
+  exit code.
+
+  With -y/--yes the estimate is printed and the update goes ahead without a pause: it is in the
+  log, not a question. With -f/--skip-preview nothing is priced.
+
+  An estimate that fails (no token, the network, a refused version) does not stop the update:
+  one line on stderr says why, and pulumi up runs. With --require-estimate it stops there
+  instead, and pulumi up does not run.
+
+Examples:
+  qloudpulse pulumi up -s payments-prod
+  qloudpulse pulumi up --require-estimate -- -s payments-prod --yes";
 
 #[derive(Subcommand)]
 enum Command {
@@ -51,8 +102,29 @@ enum Command {
     /// Prints a Markdown comment for the pull request. Which resource types and attributes are sent is qloudpulse's:
     /// the client sends it the types the preview holds (no token needed) and sends what it answers, or reads
     /// --catalogue.
-    #[command(after_help = format!("{ESTIMATE_ENVIRONMENT}\n\n{CONNECT}"))]
+    #[command(after_help = format!("{ENVIRONMENT}\n\n{ESTIMATE_EXAMPLE}\n\n{CONNECT}"))]
     Estimate(EstimateArgs),
+
+    /// Run `pulumi preview` or `pulumi up` with your own arguments, and price the change on the way.
+    #[command(subcommand, after_help = CONNECT)]
+    Pulumi(PulumiCommand),
+}
+
+#[derive(Subcommand)]
+enum PulumiCommand {
+    /// `pulumi preview` with its usual diff, then the estimate of the change.
+    ///
+    /// Prints Pulumi's diff, then the comment `qloudpulse estimate` prints: text at a terminal, Markdown piped, or with
+    /// --format json its answer.
+    #[command(after_help = format!("{PULUMI_PREVIEW}\n\n{PULUMI_ARGS}\n\n{ENVIRONMENT}\n\n{CONNECT}"))]
+    Preview(PreviewArgs),
+
+    /// The estimate of the change, then `pulumi up` as you would run it.
+    ///
+    /// Prices the change first, then runs `pulumi up` on your terminal, its diff and its prompt as usual, and ends
+    /// with its exit code.
+    #[command(after_help = format!("{PULUMI_UP}\n\n{PULUMI_ARGS}\n\n{ENVIRONMENT}\n\n{CONNECT}"))]
+    Up(UpArgs),
 }
 
 #[derive(clap::Args)]
@@ -60,6 +132,13 @@ struct EstimateArgs {
     /// The JSON of `pulumi preview --json`. Without it, or with -, it is read from stdin.
     file: Option<PathBuf>,
 
+    #[command(flatten)]
+    price: PriceArgs,
+}
+
+/// What every command that prices takes.
+#[derive(clap::Args)]
+struct PriceArgs {
     /// Print the request that would be sent, and send nothing. The only run that needs no token.
     #[arg(long)]
     dry_run: bool,
@@ -85,6 +164,31 @@ struct EstimateArgs {
     /// it: text when stdout is a terminal, Markdown when it is piped or redirected (`> comment.md`).
     #[arg(long, value_enum)]
     format: Option<Format>,
+}
+
+#[derive(clap::Args)]
+struct PreviewArgs {
+    #[command(flatten)]
+    price: PriceArgs,
+
+    /// The arguments of `pulumi preview`, such as -s payments-prod --diff. They follow qloudpulse's options.
+    #[arg(value_name = "PULUMI_ARGS", trailing_var_arg = true, allow_hyphen_values = true)]
+    pulumi_args: Vec<OsString>,
+}
+
+#[derive(clap::Args)]
+struct UpArgs {
+    #[command(flatten)]
+    price: PriceArgs,
+
+    /// Stop, and do not run pulumi up, when the change cannot be priced. Without it a failed estimate is a line on
+    /// stderr, and the update goes on.
+    #[arg(long)]
+    require_estimate: bool,
+
+    /// The arguments of `pulumi up`, such as -s payments-prod --yes. They follow qloudpulse's options.
+    #[arg(value_name = "PULUMI_ARGS", trailing_var_arg = true, allow_hyphen_values = true)]
+    pulumi_args: Vec<OsString>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -150,24 +254,28 @@ fn counts(estimate: &pulumi::Estimate) -> String {
     line
 }
 
-fn estimate(args: &EstimateArgs) -> Result<()> {
-    // Every run but a dry run needs the token, whatever the preview holds: checked first, so a missing one is said
-    // before the preview is read or anything reaches the network.
-    let token = if args.dry_run {
-        None
-    } else {
-        Some(token::resolve(
-            std::env::var("QLOUDPULSE_TOKEN").ok(),
-            &args.endpoint,
-            &mut token::Tty,
-        )?)
-    };
+/// The token a run that sends needs, checked before anything else: from QLOUDPULSE_TOKEN, else asked for at a
+/// terminal. None for a dry run.
+fn token_for(args: &PriceArgs) -> Result<Option<String>> {
+    if args.dry_run {
+        return Ok(None);
+    }
+    token::resolve(std::env::var("QLOUDPULSE_TOKEN").ok(), &args.endpoint, &mut token::Tty).map(Some)
+}
+
+fn check_region(args: &PriceArgs) -> Result<()> {
     if let Some(region) = &args.region
         && !pulumi::is_region(region)
     {
         bail!("--region takes an AWS region name, such as eu-west-1");
     }
-    let preview = pulumi::parse(&read_input(args.file.as_ref())?)?;
+    Ok(())
+}
+
+/// Prices the JSON of `pulumi preview --json` and returns what goes to stdout: the comment, the answer as JSON, or with
+/// --dry-run the request. What is about to be priced, and a newer release, are said on stderr.
+fn price(args: &PriceArgs, token: Option<&str>, input: &str) -> Result<String> {
+    let preview = pulumi::parse(input)?;
     let options = Options {
         region: args.region.clone(),
         with_resource_ids: args.with_resource_ids,
@@ -191,8 +299,7 @@ fn estimate(args: &EstimateArgs) -> Result<()> {
 
     // No token only with --dry-run.
     let Some(token) = token else {
-        println!("{}", serde_json::to_string_pretty(request)?);
-        return Ok(());
+        return Ok(format!("{}\n", serde_json::to_string_pretty(request)?));
     };
 
     // Nothing to price: no call. Unchanged resources alone are still sent, for the stack's cost.
@@ -204,31 +311,160 @@ fn estimate(args: &EstimateArgs) -> Result<()> {
             resources: vec![],
         }
     } else {
-        send::send(&args.endpoint, &token, request)?
+        send::send(&args.endpoint, token, request)?
     };
 
     let style = match format(args.format, std::io::stdout().is_terminal()) {
-        Format::Json => {
-            println!("{}", serde_json::to_string_pretty(&response)?);
-            return Ok(());
-        }
+        Format::Json => return Ok(format!("{}\n", serde_json::to_string_pretty(&response)?)),
         Format::Markdown => Style::Markdown,
         Format::Text => Style::Text,
     };
-    print!("{}", render::render(&response, &estimate, style));
+    let mut out = render::render(&response, &estimate, style);
     if let Some(line) = &newer {
-        println!("\n{}", style.small(line));
+        let _ = writeln!(out, "\n{}", style.small(line));
+    }
+    Ok(out)
+}
+
+fn estimate(args: &EstimateArgs) -> Result<ExitCode> {
+    // Every run but a dry run needs the token, whatever the preview holds: checked first, so a missing one is said
+    // before the preview is read or anything reaches the network.
+    let token = token_for(&args.price)?;
+    check_region(&args.price)?;
+    let input = read_input(args.file.as_ref())?;
+    print!("{}", price(&args.price, token.as_deref(), &input)?);
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Where `pulumi` is: the first directory on PATH that holds it.
+fn find_pulumi() -> Result<PathBuf> {
+    let names: &[&str] = if cfg!(windows) {
+        &["pulumi.exe", "pulumi.cmd", "pulumi.bat"]
+    } else {
+        &["pulumi"]
+    };
+    std::env::var_os("PATH")
+        .iter()
+        .flat_map(std::env::split_paths)
+        .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
+        .find(|path| path.is_file())
+        .ok_or_else(|| {
+            anyhow!(
+                "pulumi is not on PATH: install it (https://www.pulumi.com/docs/install/) or add its directory to PATH"
+            )
+        })
+}
+
+/// Runs Pulumi on the terminal, its stdin, stdout and stderr the user's, as if they had run it themselves.
+fn run_pulumi(pulumi: &Path, command: &str, args: &[OsString]) -> Result<ExitStatus> {
+    Process::new(pulumi)
+        .arg(command)
+        .args(args)
+        .status()
+        .with_context(|| format!("could not run {}", pulumi.display()))
+}
+
+/// Runs the priced preview, `pulumi preview --json --show-sames` with the user's arguments, and returns its JSON.
+/// Pulumi's stderr is the terminal's, so its errors show; it gets no stdin, so it cannot wait on a prompt nobody sees
+/// or read what is meant for the `pulumi up` after it.
+fn priced_preview(pulumi: &Path, args: &[OsString]) -> Result<String> {
+    let out = Process::new(pulumi)
+        .args(wrap::priced_preview(args))
+        // With it, Pulumi streams engine events instead of the digest the client reads.
+        .env_remove("PULUMI_ENABLE_STREAMING_JSON_PREVIEW")
+        .stdin(Stdio::null())
+        .stderr(Stdio::inherit())
+        .output()
+        .with_context(|| format!("could not run {}", pulumi.display()))?;
+    if !out.status.success() {
+        bail!("`pulumi preview --json --show-sames` failed ({})", out.status);
+    }
+    String::from_utf8(out.stdout).context("`pulumi preview --json` printed what is not UTF-8")
+}
+
+/// Pulumi's own exit code, or failure when it has none (killed by a signal) or one past what an exit code holds here.
+fn exit_code(status: ExitStatus) -> ExitCode {
+    #[cfg(unix)]
+    if let Some(signal) = std::os::unix::process::ExitStatusExt::signal(&status) {
+        return u8::try_from(128 + signal).map_or(ExitCode::FAILURE, ExitCode::from);
+    }
+    status
+        .code()
+        .and_then(|c| u8::try_from(c).ok())
+        .map_or(ExitCode::FAILURE, ExitCode::from)
+}
+
+/// Pulumi's --json would share stdout with the estimate.
+fn refuse_json(args: &[OsString], command: &str) -> Result<()> {
+    if wrap::wants_json(args) {
+        bail!(
+            "qloudpulse pulumi {command} takes no --json, as the estimate is printed on the same stdout: run \
+             `pulumi preview --json --show-sames | qloudpulse estimate` for JSON, or `pulumi {command} --json` without \
+             qloudpulse"
+        );
     }
     Ok(())
+}
+
+fn pulumi_preview(args: &PreviewArgs) -> Result<ExitCode> {
+    refuse_json(&args.pulumi_args, "preview")?;
+    check_region(&args.price)?;
+    let pulumi = find_pulumi()?;
+    let shown = run_pulumi(&pulumi, "preview", &args.pulumi_args)?;
+    if !shown.success() {
+        return Ok(exit_code(shown));
+    }
+    let token = token_for(&args.price)?;
+    let json = priced_preview(&pulumi, &args.pulumi_args)?;
+    let out = price(&args.price, token.as_deref(), &json)?;
+    // A line between Pulumi's display and the comment.
+    print!("\n{out}");
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The estimate `pulumi up` prints before it runs.
+fn price_up(pulumi: &Path, args: &UpArgs) -> Result<String> {
+    let token = token_for(&args.price)?;
+    let json = priced_preview(pulumi, &args.pulumi_args)?;
+    price(&args.price, token.as_deref(), &json)
+}
+
+fn pulumi_up(args: &UpArgs) -> Result<ExitCode> {
+    let pulumi_args = &args.pulumi_args;
+    refuse_json(pulumi_args, "up")?;
+    check_region(&args.price)?;
+    let pulumi = find_pulumi()?;
+    if wrap::skips_preview(pulumi_args) {
+        if args.require_estimate {
+            bail!("--require-estimate needs the preview that --skip-preview skips");
+        }
+        eprintln!("qloudpulse: --skip-preview, so nothing is priced");
+    } else {
+        match price_up(&pulumi, args) {
+            Ok(out) => {
+                print!("{out}");
+                if wrap::says_yes(pulumi_args) {
+                    eprintln!("qloudpulse: --yes, so pulumi up goes ahead without asking");
+                }
+            }
+            Err(e) if args.require_estimate => {
+                return Err(e.context("no estimate, so pulumi up was not run (--require-estimate)"));
+            }
+            Err(e) => eprintln!("qloudpulse: no estimate, pulumi up goes on: {e:#}"),
+        }
+    }
+    Ok(exit_code(run_pulumi(&pulumi, "up", pulumi_args)?))
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match &cli.command {
         Command::Estimate(args) => estimate(args),
+        Command::Pulumi(PulumiCommand::Preview(args)) => pulumi_preview(args),
+        Command::Pulumi(PulumiCommand::Up(args)) => pulumi_up(args),
     };
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(e) => {
             eprintln!("qloudpulse: {e:#}");
             ExitCode::FAILURE
