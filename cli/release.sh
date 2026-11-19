@@ -270,9 +270,13 @@ check_binary() { # target binary
   esac
   # Not grep -q after strings: it stops at the first match, strings dies of SIGPIPE, and with pipefail the pipeline
   # fails, so a match would read as none. -a reads the whole file. The user name counts as a path component only:
-  # on a CI runner it is a word such as "runner", which a binary can hold for other reasons.
+  # on a CI runner it is a word such as "runner", which a binary can hold for other reasons. libunwind's assertions,
+  # linked in from the pinned llvm-mingw image, name where its maintainer built it, on a GitHub runner too
+  # (/home/runner/work/llvm-mingw/llvm-mingw/llvm-project/...): the same in every build from that image, and no
+  # path of this machine, so they do not count.
   local leaked
-  leaked=$(strings -a "$bin" | grep -F -e "$HOME" -e "/$ME/" -e "${CARGO_HOME:-$HOME/.cargo}" | head -3 || true)
+  leaked=$(strings -a "$bin" | grep -F -e "$HOME" -e "/$ME/" -e "${CARGO_HOME:-$HOME/.cargo}" \
+    | grep -v -F '/work/llvm-mingw/llvm-mingw/llvm-project/' | head -3 || true)
   [ -z "$leaked" ] || fail "$t: the binary holds a path of this machine ($HOME, /$ME/ or CARGO_HOME): $leaked"
 }
 
