@@ -1,16 +1,26 @@
 #!/usr/bin/env bash
 # Builds the qloudpulse client for every target, checks each binary, and packs one archive per target (a tarball, or a
-# zip for Windows) with SHA256SUMS and release notes. With --publish it creates the release qloudpulse-cli-<version> in this repository
-# from the commit it built. Without --publish nothing leaves this machine.
+# zip for Windows) with SHA256SUMS and release notes, for trying a build here. Nothing it builds leaves this machine.
+#
+# Releases are built by .github/workflows/cli-release.yml on GitHub's runners, which runs this script per target and
+# signs build provenance for every archive, so anyone can check which public commit and workflow made a binary. With
+# --publish this script builds nothing: it checks that the commit may be released and pushes the tag
+# qloudpulse-cli-<version>, which starts that workflow.
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: cli/release.sh [--publish] [--targets "<target> ..."] [--out <dir>]
+Usage: cli/release.sh [--targets "<target> ..."] [--out <dir>] [--skip-tests]
+       cli/release.sh --publish
+       cli/release.sh --finish <dir>
 
-  --publish   create the release qloudpulse-cli-<version> on GitHub with the files it built
-  --targets   build only these targets (default: all six below)
-  --out       where the files go (default: cli/target/dist/<version>)
+  --targets     build only these targets (default: all six below)
+  --out         where the files go (default: cli/target/dist/<version>)
+  --skip-tests  build without running cargo test first (the release workflow tests in a job of its own)
+  --publish     build nothing; check origin/main may be released and push the tag qloudpulse-cli-<version>, which
+                starts the release workflow on GitHub. The workflow builds, attests and publishes
+  --finish      write SHA256SUMS and notes.md for the archives already in <dir> (the release workflow, once every
+                target is built)
 
 Targets:
   x86_64-unknown-linux-musl  aarch64-unknown-linux-musl   static, built in Docker
@@ -23,21 +33,29 @@ Environment:
   WINDOWS_IMAGE  the image of the x86_64 Windows build (default rust:1.88-bookworm)
   LLVM_MINGW_IMAGE  the llvm-mingw toolchain of the arm64 Windows build (default mstorsjo/llvm-mingw:20261104)
   REPO         the GitHub repository to release in (default ulfmansson/qloudpulse-public)
+
+The images are pinned by digest as well as tag: a tag can be moved to other contents, a digest cannot. To move to a
+new image, look up the digest of its multi-platform index (docker buildx imagetools inspect <image>) and change both.
 EOF
 }
 
 ALL_TARGETS="x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-gnu aarch64-pc-windows-gnullvm"
 TARGETS=$ALL_TARGETS
 PUBLISH=0
+FINISH=""
+SKIP_TESTS=0
 OUT=""
-RUST_IMAGE=${RUST_IMAGE:-rust:1.88-alpine}
-WINDOWS_IMAGE=${WINDOWS_IMAGE:-rust:1.88-bookworm}
-LLVM_MINGW_IMAGE=${LLVM_MINGW_IMAGE:-mstorsjo/llvm-mingw:20261104}
+RUST_IMAGE=${RUST_IMAGE:-rust:1.88-alpine@sha256:9dfaae478ecd298b6b5a039e1f2cc4fc040fc818a2de9aa78fa714dea036574d}
+WINDOWS_IMAGE=${WINDOWS_IMAGE:-rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0}
+LLVM_MINGW_IMAGE=${LLVM_MINGW_IMAGE:-mstorsjo/llvm-mingw:20261104@sha256:b2a697af8fc50c5cc56011143453d02168ccfcff635d12ca76a1c363f5f6b0c6}
 REPO=${REPO:-ulfmansson/qloudpulse-public}
+WORKFLOW=cli-release.yml
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --publish) PUBLISH=1 ;;
+    --finish) FINISH=${2:?--finish needs a directory}; shift ;;
+    --skip-tests) SKIP_TESTS=1 ;;
     --targets) TARGETS=${2:?--targets needs a list}; shift ;;
     --out) OUT=${2:?--out needs a directory}; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -72,14 +90,72 @@ case "$TAR_VERSION" in
   *) fail "tar is neither GNU tar nor bsdtar: $(echo "$TAR_VERSION" | head -1)" ;;
 esac
 
-# A release is built from a commit everyone can see, so its source is the tag's.
-if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
-  [ $PUBLISH -eq 0 ] || fail "the checkout has changes; commit or remove them before --publish"
-  echo "Note: the checkout has changes, so this build is for trying only."
+write_sums() { # dir
+  (cd "$1" && shasum -a 256 qloudpulse-*.tar.gz qloudpulse-*.zip 2>/dev/null >SHA256SUMS || true)
+  [ -s "$1/SHA256SUMS" ] || fail "nothing was packed"
+}
+
+write_notes() { # dir built-by
+  cat >"$1/notes.md" <<EOF
+The qloudpulse client $VERSION: \`qloudpulse estimate\` prices a Pulumi change before it is applied.
+Built from $COMMIT $2.
+
+\`\`\`bash
+VERSION=$VERSION
+TARGET=x86_64-unknown-linux-musl   # aarch64-unknown-linux-musl, aarch64-apple-darwin, x86_64-apple-darwin
+BASE=https://github.com/$REPO/releases/download/$TAG
+curl -fsSLO "\$BASE/qloudpulse-\$VERSION-\$TARGET.tar.gz"
+curl -fsSLO "\$BASE/SHA256SUMS"
+sha256sum -c --ignore-missing SHA256SUMS
+gh attestation verify "qloudpulse-\$VERSION-\$TARGET.tar.gz" --repo $REPO \\
+  --signer-workflow $REPO/.github/workflows/$WORKFLOW --source-ref refs/tags/$TAG
+tar -xzf "qloudpulse-\$VERSION-\$TARGET.tar.gz"
+\`\`\`
+
+On Windows (PowerShell):
+
+\`\`\`powershell
+\$Version = "$VERSION"
+\$Base = "https://github.com/$REPO/releases/download/$TAG"
+\$Zip = "qloudpulse-\$Version-x86_64-pc-windows-gnu.zip"   # on Windows on ARM: aarch64-pc-windows-gnullvm
+Invoke-WebRequest "\$Base/\$Zip" -OutFile \$Zip
+Invoke-WebRequest "\$Base/SHA256SUMS" -OutFile SHA256SUMS
+\$Want = (Select-String -Path SHA256SUMS -Pattern ([regex]::Escape(\$Zip))).Line.Split(" ")[0]
+if ((Get-FileHash \$Zip -Algorithm SHA256).Hash -ne \$Want.ToUpper()) { throw "checksum mismatch" }
+gh attestation verify \$Zip --repo $REPO --signer-workflow $REPO/.github/workflows/$WORKFLOW --source-ref refs/tags/$TAG
+Expand-Archive \$Zip -DestinationPath .
+.\\qloudpulse.exe --version
+\`\`\`
+
+\`qloudpulse-$VERSION.cdx.json\` lists every crate the client is built from (CycloneDX). How to verify a release, build
+it from source, and run it in CI without cloud credentials:
+[cli/README.md](https://github.com/$REPO/blob/$TAG/cli/README.md#verify-what-you-run).
+EOF
+}
+
+if [ -n "$FINISH" ]; then
+  [ -d "$FINISH" ] || fail "$FINISH is not a directory"
+  # A release has every target or none.
+  for t in $ALL_TARGETS; do
+    case "$t" in *-windows-*) f="qloudpulse-$VERSION-$t.zip" ;; *) f="qloudpulse-$VERSION-$t.tar.gz" ;; esac
+    [ -f "$FINISH/$f" ] || fail "$FINISH has no $f"
+  done
+  write_sums "$FINISH"
+  write_notes "$FINISH" "by [the release workflow](https://github.com/$REPO/blob/$TAG/.github/workflows/$WORKFLOW) on
+GitHub's runners, with signed build provenance for every archive"
+  cat "$FINISH/SHA256SUMS"
+  exit 0
 fi
+
 if [ $PUBLISH -eq 1 ]; then
+  # Nothing is built here: the tag starts the release workflow, which builds every target on GitHub's runners from
+  # the tagged commit and attests what it built. A binary from this machine could not be told from one built anywhere
+  # else, so none is uploaded from it.
+  [ "$TARGETS" = "$ALL_TARGETS" ] && [ -z "$OUT" ] && [ $SKIP_TESTS -eq 0 ] \
+    || fail "--publish builds nothing, so it takes no --targets, --out or --skip-tests"
   command -v gh >/dev/null || fail "--publish needs gh"
-  # The client's default address has to answer before a release names it (qloudpulse's ADR 0127).
+  # The client's default address has to answer before a release names it (qloudpulse's ADR 0127). The workflow
+  # asks again before it publishes.
   DEFAULT=$(sed -n 's/^pub const DEFAULT_ENDPOINT: &str = "\(.*\)";$/\1/p' "$CLI/src/send.rs")
   [ -n "$DEFAULT" ] || fail "no DEFAULT_ENDPOINT in cli/src/send.rs"
   STATUS=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
@@ -91,10 +167,29 @@ if [ $PUBLISH -eq 1 ]; then
   if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
     fail "$TAG is already released in $REPO; raise version in cli/Cargo.toml first"
   fi
+  if git -C "$ROOT" ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+    fail "the tag $TAG is already on origin; its workflow run is the release (gh run list -R $REPO --workflow $WORKFLOW)"
+  fi
+  printf 'Tag %s as %s and push it, so the release workflow builds and publishes it? [y/N] ' "$COMMIT" "$TAG"
+  read -r answer
+  [ "$answer" = y ] || [ "$answer" = Y ] || fail "not tagged"
+  git -C "$ROOT" tag -a "$TAG" -m "qloudpulse client $VERSION" "$COMMIT"
+  git -C "$ROOT" push origin "refs/tags/$TAG"
+  printf '\nPushed %s. The release workflow builds, attests and publishes it:\n' "$TAG"
+  printf '  gh run list -R %s --workflow %s --branch %s\n' "$REPO" "$WORKFLOW" "$TAG"
+  printf '\nOnce it is out, clients are told when qloudpulse names it: set estimates.client.latest to %s in the\n' "$VERSION"
+  printf "report service's application.yml (ESTIMATES_CLIENT_LATEST on an install), and deploy.\n"
+  exit 0
 fi
 
-say "Tests"
-(cd "$CLI" && cargo test --locked --quiet)
+if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
+  echo "Note: the checkout has changes; this build is not of $COMMIT alone."
+fi
+
+if [ $SKIP_TESTS -eq 0 ]; then
+  say "Tests"
+  (cd "$CLI" && cargo test --locked --quiet)
+fi
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
@@ -189,11 +284,12 @@ build_windows_arm64() { # target
   # Debian's mingw-w64 has no arm64 compiler, so this is Rust's aarch64-pc-windows-gnullvm target (tier 2 with host
   # tools) linked with llvm-mingw, the LLVM toolchain the Rust docs name for it. The other route,
   # aarch64-pc-windows-msvc with cargo-xwin, downloads Microsoft's CRT and SDK under their licence on every machine
-  # that builds; llvm-mingw is open source and pinned here by tag. ring compiles its arm64 Windows assembly
+  # that builds; llvm-mingw is open source and pinned here by digest. ring compiles its arm64 Windows assembly
   # (pregenerated *-win64.S) with clang, which llvm-mingw is. +crt-static links libunwind in; the C runtime is the
   # UCRT, which Windows 10 and later carry (api-ms-win-crt-*.dll), as every Windows on ARM does.
-  # The image is llvm-mingw with the client's Rust copied in, built once and kept by Docker.
-  image="qloudpulse-cli-llvm-mingw:$(echo "$LLVM_MINGW_IMAGE-$WINDOWS_IMAGE" | tr -c 'A-Za-z0-9.\n-' -)"
+  # The image is llvm-mingw with the client's Rust copied in, built once and kept by Docker. Its tag is a hash of the
+  # two images it is made of: their names with digests are longer than the 128 characters a tag may have.
+  image="qloudpulse-cli-llvm-mingw:$(printf '%s\n%s\n' "$LLVM_MINGW_IMAGE" "$WINDOWS_IMAGE" | shasum -a 256 | cut -c1-16)"
   docker build -q -t "$image" - >/dev/null <<EOF
 FROM $WINDOWS_IMAGE AS rust
 FROM $LLVM_MINGW_IMAGE
@@ -260,56 +356,10 @@ for t in $TARGETS; do
   esac
 done
 
-(cd "$OUT" && shasum -a 256 qloudpulse-*.tar.gz qloudpulse-*.zip 2>/dev/null >SHA256SUMS || true)
-[ -s "$OUT/SHA256SUMS" ] || fail "nothing was packed"
+write_sums "$OUT"
 rm -rf "$BUILD"
-
-cat >"$OUT/notes.md" <<EOF
-The qloudpulse client $VERSION: \`qloudpulse estimate\` prices a Pulumi change before it is applied.
-Built from $COMMIT.
-
-\`\`\`bash
-VERSION=$VERSION
-TARGET=x86_64-unknown-linux-musl   # aarch64-unknown-linux-musl, aarch64-apple-darwin, x86_64-apple-darwin
-BASE=https://github.com/$REPO/releases/download/$TAG
-curl -fsSLO "\$BASE/qloudpulse-\$VERSION-\$TARGET.tar.gz"
-curl -fsSLO "\$BASE/SHA256SUMS"
-sha256sum -c --ignore-missing SHA256SUMS
-tar -xzf "qloudpulse-\$VERSION-\$TARGET.tar.gz"
-\`\`\`
-
-On Windows (PowerShell):
-
-\`\`\`powershell
-\$Version = "$VERSION"
-\$Base = "https://github.com/$REPO/releases/download/$TAG"
-\$Zip = "qloudpulse-\$Version-x86_64-pc-windows-gnu.zip"   # on Windows on ARM: aarch64-pc-windows-gnullvm
-Invoke-WebRequest "\$Base/\$Zip" -OutFile \$Zip
-Invoke-WebRequest "\$Base/SHA256SUMS" -OutFile SHA256SUMS
-\$Want = (Select-String -Path SHA256SUMS -Pattern ([regex]::Escape(\$Zip))).Line.Split(" ")[0]
-if ((Get-FileHash \$Zip -Algorithm SHA256).Hash -ne \$Want.ToUpper()) { throw "checksum mismatch" }
-Expand-Archive \$Zip -DestinationPath .
-.\\qloudpulse.exe --version
-\`\`\`
-
-How to use it: [cli/README.md](https://github.com/$REPO/blob/$TAG/cli/README.md).
-EOF
+write_notes "$OUT" "on a maintainer's machine, for trying only: no release is built here, and these files have no provenance"
 
 say "Built $TAG in $OUT"
 cat "$OUT/SHA256SUMS"
-
-if [ $PUBLISH -eq 0 ]; then
-  printf '\nNothing was published. To release it: %s --publish\n' "$0"
-  exit 0
-fi
-
-printf '\nPublish %s in %s, tagged on %s? [y/N] ' "$TAG" "$REPO" "$COMMIT"
-read -r answer
-[ "$answer" = y ] || [ "$answer" = Y ] || fail "not published"
-# --latest=false: the repository's "latest" stays with the cluster agent, whose install links name their version.
-gh release create "$TAG" -R "$REPO" --target "$COMMIT" --latest=false \
-  --title "qloudpulse client $VERSION" --notes-file "$OUT/notes.md" \
-  "$OUT"/qloudpulse-*.tar.gz $(ls "$OUT"/qloudpulse-*.zip 2>/dev/null) "$OUT/SHA256SUMS"
-
-printf '\nReleased. Clients are told once qloudpulse names it: set estimates.client.latest to %s in the report\n' "$VERSION"
-printf "service's application.yml (ESTIMATES_CLIENT_LATEST on an install), and deploy.\n"
+printf '\nNothing was published. Releases are built and attested by the release workflow: %s --publish\n' "$0"

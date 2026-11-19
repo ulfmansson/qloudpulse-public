@@ -1,0 +1,247 @@
+# Builds the qloudpulse client for every target on GitHub's runners and, for a tag qloudpulse-cli-<version>,
+# signs build provenance for each archive and publishes the release. A user checks a download with
+#
+#   gh attestation verify <archive> --repo ulfmansson/qloudpulse-public \
+#     --signer-workflow ulfmansson/qloudpulse-public/.github/workflows/cli-release.yml \
+#     --source-ref refs/tags/qloudpulse-cli-<version>
+#
+# which proves the archive was made by this workflow, from this repository, at that tag: not on someone's laptop.
+#
+# The tag is pushed by `cli/release.sh --publish`, which checks first that the commit is origin/main. The same
+# targets are built on a pull request that changes the client, so a release never finds the build broken; nothing
+# is attested or published then. Every action is pinned by commit, every image (in cli/release.sh) by digest.
+name: CLI release
+
+on:
+  push:
+    tags: ["qloudpulse-cli-[0-9]+.[0-9]+.[0-9]+"]
+  pull_request:
+    paths: ["cli/**", ".github/workflows/cli-release.yml"]
+  workflow_dispatch:
+
+# Nothing by default; each job asks for what it needs.
+permissions: {}
+
+concurrency:
+  group: cli-release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  RUSTUP_TOOLCHAIN: "1.88.0" # the client's rust-version, as in the Linux and Windows build images
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # main's history, to check the tag is on it
+      - name: Check the tag may be released
+        if: startsWith(github.ref, 'refs/tags/qloudpulse-cli-')
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' cli/Cargo.toml | head -1)
+          [ "$TAG" = "qloudpulse-cli-$version" ] \
+            || { echo "::error::the tag is $TAG, and cli/Cargo.toml's version is $version"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::$GITHUB_SHA is not on main; release only what main has"; exit 1; }
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::$TAG is already released"; exit 1
+          fi
+          # The client's default address has to answer before a release names it (qloudpulse's ADR 0127).
+          endpoint=$(sed -n 's/^pub const DEFAULT_ENDPOINT: &str = "\(.*\)";$/\1/p' cli/src/send.rs)
+          status=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
+            -d '{"formatVersion": 1, "types": []}' "$endpoint/catalogue" || true)
+          [ "$status" = 200 ] || { echo "::error::$endpoint/catalogue answers $status, not 200"; exit 1; }
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+      - run: cargo test --locked
+        working-directory: cli
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The Linux and Windows builds run in Docker, in the images cli/release.sh pins; macOS builds on macOS.
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04 }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm }
+          - { target: aarch64-apple-darwin, os: macos-15 }
+          - { target: x86_64-apple-darwin, os: macos-15-intel }
+          - { target: x86_64-pc-windows-gnu, os: ubuntu-24.04 }
+          - { target: aarch64-pc-windows-gnullvm, os: ubuntu-24.04 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        if: endsWith(matrix.target, '-apple-darwin')
+        env:
+          TARGET: ${{ matrix.target }}
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target "$TARGET" --no-self-update
+      - name: Build, check and pack
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cli/release.sh --skip-tests --targets "$TARGET" --out "$RUNNER_TEMP/dist"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cli-${{ matrix.target }}
+          path: ${{ runner.temp }}/dist/qloudpulse-*
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    # The .exe files are cross-built in Docker; this runs each on Windows of its architecture before a release.
+    name: Run on Windows ${{ matrix.target }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-pc-windows-gnu, os: windows-2025 }
+          - { target: aarch64-pc-windows-gnullvm, os: windows-11-arm }
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: cli-${{ matrix.target }}
+          path: dist
+      - name: Run qloudpulse --version
+        shell: pwsh
+        run: |
+          $Zip = Get-ChildItem dist/qloudpulse-*.zip | Select-Object -First 1
+          $Version = $Zip.Name -replace '^qloudpulse-([0-9.]+)-.*$', '$1'
+          Expand-Archive $Zip.FullName -DestinationPath run
+          $Said = & ./run/qloudpulse.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "qloudpulse.exe --version exited $LASTEXITCODE" }
+          if ($Said -ne "qloudpulse $Version") { throw "qloudpulse.exe says '$Said', not 'qloudpulse $Version'" }
+          & ./run/qloudpulse.exe estimate --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "qloudpulse.exe estimate --help exited $LASTEXITCODE" }
+          Write-Output $Said
+
+  sbom:
+    name: SBOM
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+      - run: cargo install --locked cargo-cyclonedx@0.5.9
+      - name: Write the CycloneDX SBOM
+        working-directory: cli
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          # Every crate of Cargo.lock any target builds; dated by the commit, so the same commit gives the same file.
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) cargo cyclonedx --format json --spec-version 1.5 \
+            --target all --override-filename "qloudpulse-$version.cdx"
+          mkdir -p "$RUNNER_TEMP/sbom" && mv "qloudpulse-$version.cdx.json" "$RUNNER_TEMP/sbom/"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom
+          path: ${{ runner.temp }}/sbom/qloudpulse-*.cdx.json
+          if-no-files-found: error
+          retention-days: 7
+
+  attest:
+    # The only job that can sign: it holds the OIDC token Sigstore's certificate is issued for, and nothing that
+    # writes to the repository.
+    name: Attest
+    if: startsWith(github.ref, 'refs/tags/qloudpulse-cli-')
+    needs: [build, windows, sbom]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: cli-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sbom
+          path: dist
+      - name: SHA256SUMS and release notes
+        run: cli/release.sh --finish dist
+      # SLSA build provenance for every archive in SHA256SUMS: this workflow, this commit, this tag.
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        id: provenance
+        with:
+          subject-checksums: dist/SHA256SUMS
+      # The signed bundle goes in the release too, so a download can be checked offline with cosign, without gh.
+      - name: Keep the provenance bundle
+        id: files
+        env:
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' cli/Cargo.toml | head -1)
+          cp "$BUNDLE" "dist/qloudpulse-$version.provenance.sigstore.json"
+          echo "sbom=dist/qloudpulse-$version.cdx.json" >>"$GITHUB_OUTPUT"
+      # The SBOM, signed as the bill of materials of the same archives.
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
+          sbom-path: ${{ steps.files.outputs.sbom }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish
+    if: startsWith(github.ref, 'refs/tags/qloudpulse-cli-')
+    needs: attest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: dist
+      - name: Create the release
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${TAG#qloudpulse-cli-}
+          # --latest=false: the repository's "latest" stays with the cluster agent, whose install links name their
+          # version. --verify-tag: the release is of the tag this run built, never a new one.
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --latest=false \
+            --title "qloudpulse client $version" --notes-file dist/notes.md \
+            dist/qloudpulse-*.tar.gz dist/qloudpulse-*.zip dist/qloudpulse-*.cdx.json \
+            dist/qloudpulse-*.provenance.sigstore.json dist/SHA256SUMS
+          echo "Released $TAG. Clients hear of it once estimates.client.latest is $version in the report service." \
+            >>"$GITHUB_STEP_SUMMARY"

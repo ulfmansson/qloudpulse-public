@@ -48,6 +48,9 @@ The token goes in the same variable: `$env:QLOUDPULSE_TOKEN`, set from a secret 
 Or build it from this directory with Rust 1.88 or later: `cargo build --release --locked`. The binary is
 `target/release/qloudpulse`.
 
+The checksum shows the download is whole. That it was built from this repository's source, by its public workflow,
+is checked as in [Verify what you run](#verify-what-you-run).
+
 ### Updates
 
 The catalogue also names the newest client and the oldest one qloudpulse still takes. When a newer one is out, the
@@ -124,13 +127,156 @@ Types of the catalogue's providers (`aws`) that it does not list are counted by 
 outputs or secrets. `--dry-run` prints exactly what would go. The request and the answer are
 [`estimate.schema.json`](estimate.schema.json).
 
+## Verify what you run
+
+The client holds a token that can price your stack, so check what you run instead of trusting it. Each step below
+needs only public things: this repository, the release, and Sigstore's public log.
+
+**1. The archive was built from this repository, by its release workflow, at the release's tag.** Every archive of a
+release has signed [SLSA build provenance](https://slsa.dev/spec/v1.0/provenance), made by
+[`.github/workflows/cli-release.yml`](../.github/workflows/cli-release.yml) on GitHub's runners and recorded in
+Sigstore's public transparency log. Nothing built on a laptop can carry it. With the [GitHub CLI](https://cli.github.com)
+(signed in to any GitHub account):
+
+```bash
+VERSION=0.3.0
+TARGET=x86_64-unknown-linux-musl
+gh attestation verify "qloudpulse-$VERSION-$TARGET.tar.gz" --repo ulfmansson/qloudpulse-public \
+  --signer-workflow ulfmansson/qloudpulse-public/.github/workflows/cli-release.yml \
+  --source-ref "refs/tags/qloudpulse-cli-$VERSION"
+```
+
+`--repo` alone checks that the archive was attested by a workflow of this repository. `--signer-workflow` and
+`--source-ref` also check that it was the release workflow, run on the release's tag and not on a branch. The commit
+it was built from is in the signing certificate, which the workflow cannot write; add
+`--format json --jq '.[].verificationResult.signature.certificate.sourceRepositoryDigest'` to print it, and compare it
+with `git rev-parse "qloudpulse-cli-$VERSION^{commit}"` in a clone whose source you have read.
+
+Without the GitHub CLI, or offline, use Sigstore's own [cosign](https://docs.sigstore.dev/cosign/) (3.0 or later)
+with the bundle each release carries:
+
+```bash
+cosign verify-blob-attestation \
+  --bundle "qloudpulse-$VERSION.provenance.sigstore.json" \
+  --type slsaprovenance1 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity "https://github.com/ulfmansson/qloudpulse-public/.github/workflows/cli-release.yml@refs/tags/qloudpulse-cli-$VERSION" \
+  "qloudpulse-$VERSION-$TARGET.tar.gz"
+```
+
+The release's SBOM, `qloudpulse-$VERSION.cdx.json` (CycloneDX), lists every crate the client is built from, and it is
+signed for the same archives: `gh attestation verify … --predicate-type https://cyclonedx.org/bom`.
+
+**2. The download is whole.** `SHA256SUMS` has the SHA-256 of every archive, as in [Install](#install):
+
+```bash
+sha256sum -c --ignore-missing SHA256SUMS   # on macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
+```
+
+The sums prove the file is the one uploaded, not who built it: whoever can upload an archive can upload its sum. The
+provenance above proves who built it. In a pipeline, verify a version once when you adopt it, then pin its SHA-256
+there, so every run checks the same bytes:
+
+```bash
+echo "<sha256 from SHA256SUMS>  qloudpulse-$VERSION-$TARGET.tar.gz" | sha256sum -c -
+```
+
+**3. Or build it yourself from the tag.** With Rust 1.88 or later; `--locked` builds exactly the crate versions, with
+their checksums, in the tag's `Cargo.lock`:
+
+```bash
+cargo install --git https://github.com/ulfmansson/qloudpulse-public --tag "qloudpulse-cli-$VERSION" --locked qloudpulse-cli
+```
+
+Every pull request to this repository runs `cargo test`, `cargo clippy`, `cargo deny` (RustSec advisories, the
+licences in [`deny.toml`](deny.toml), crates.io as the only source) and `cargo audit`, in
+[`.github/workflows/cli-checks.yml`](../.github/workflows/cli-checks.yml); the same checks run weekly on `main`.
+
+**4. Run it where it can do no harm.** The client reads two things: the preview's JSON (a file or stdin) and
+`QLOUDPULSE_TOKEN`; and `QLOUDPULSE_ENDPOINT` and `QLOUDPULSE_CATALOGUE` if you set them. It needs no cloud
+credentials, no Pulumi access token and no repository token, and it talks to one host, `api.qloudpulse.com` (the
+estimates and their `/catalogue`), over HTTPS. So run `pulumi preview` in one job, with the cloud credentials, and the
+client in another that has only the qloudpulse token:
+
+```yaml
+jobs:
+  preview:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write   # if your cloud credentials come from OIDC
+    steps:
+      # ... check out, set up Pulumi and the cloud credentials ...
+      - run: pulumi preview --json --show-sames -s payments-prod > preview.json
+      - uses: actions/upload-artifact@<sha> # pin by commit
+        with:
+          name: preview
+          path: preview.json
+
+  estimate:
+    needs: preview
+    runs-on: ubuntu-24.04
+    permissions: {}   # no repository token, and no cloud credentials or Pulumi token in this job
+    steps:
+      - uses: actions/download-artifact@<sha>
+        with:
+          name: preview
+      - env:
+          VERSION: "0.3.0"
+          TARGET: x86_64-unknown-linux-musl
+          SHA256: "<sha256 from SHA256SUMS, checked once with gh attestation verify>"
+          QLOUDPULSE_TOKEN: ${{ secrets.QLOUDPULSE_TOKEN }}
+        run: |
+          curl -fsSLO "https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-cli-$VERSION/qloudpulse-$VERSION-$TARGET.tar.gz"
+          echo "$SHA256  qloudpulse-$VERSION-$TARGET.tar.gz" | sha256sum -c -
+          tar -xzf "qloudpulse-$VERSION-$TARGET.tar.gz"
+          ./qloudpulse estimate preview.json > comment.md
+      - uses: actions/upload-artifact@<sha>
+        with:
+          name: comment
+          path: comment.md
+
+  comment:
+    needs: estimate
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write   # this job posts the comment, and does not run the client
+    steps:
+      - uses: actions/download-artifact@<sha>
+        with:
+          name: comment
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file comment.md
+```
+
+Where your runners let you, also limit the estimate job's egress to `api.qloudpulse.com:443` (and `github.com` and
+its release download host, if it downloads the client there): a firewall or proxy allowlist on a self-hosted runner,
+or a network policy on a Kubernetes one. GitHub-hosted runners have no egress filter of their own; tools such as
+[StepSecurity Harden-Runner](https://docs.stepsecurity.io/harden-runner) add one. With `--catalogue <file>` the client
+does not ask for the catalogue either, and sends only what that file lists.
+
+**5. Read what it sends.** `--dry-run` prints the exact request the client would send, and sends nothing. It needs no
+token; it still asks `api.qloudpulse.com/v1/estimates/catalogue` which types to send (open, no token), unless
+`--catalogue` names a file:
+
+```bash
+qloudpulse estimate --dry-run preview.json | jq .
+```
+
+The request is what [What it sends](#what-it-sends) describes, in the format of
+[`estimate.schema.json`](estimate.schema.json): no names, tags, config, outputs or secrets.
+
 ## Changing it
 
 ```bash
 cargo test --locked
 ```
 
-Before a commit, `cargo fmt` and `cargo clippy --all-targets -- -D warnings`.
+Before a commit, `cargo fmt` and `cargo clippy --all-targets -- -D warnings`. Pull requests also run `cargo deny check
+advisories licenses sources` and `cargo audit`; a new dependency under a licence [`deny.toml`](deny.toml) does not
+allow fails until it is read and added there.
 
 A new type is priced in qloudpulse, not here: its catalogue and its pricing change together, and qloudpulse keeps only
 the catalogue's attributes of whatever a client sends. A client change is needed only for a new kind of input, such as
@@ -143,27 +289,36 @@ format.
 
 ## Releasing
 
-The default address is `https://api.qloudpulse.com/v1/estimates`, qloudpulse's host for machines (ADR 0127). Client
-0.1.0 used `https://app.qloudpulse.com/api/report/public/estimates`, which keeps answering. `release.sh --publish`
-asks the default address's catalogue first and stops unless it answers 200.
-
-`release.sh` builds every target, checks each binary, and packs the files above. Without `--publish` nothing leaves
-your machine:
-
-```bash
-cli/release.sh
-```
+Releases are built on GitHub's runners by [`.github/workflows/cli-release.yml`](../.github/workflows/cli-release.yml),
+never on a laptop, so that each archive's provenance names a public workflow and commit. To release, raise `version`
+in `Cargo.toml`, merge, and from an up-to-date `main`:
 
 ```bash
 cli/release.sh --publish
 ```
 
-It needs Docker (the Linux and Windows builds), rustup (the macOS builds) and `gh` signed in with write access to this
-repository. The Windows `.exe` files are cross-built, the x86_64 one with mingw-w64 and the arm64 one with
-[llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (Rust's `aarch64-pc-windows-gnullvm` target), and cannot run on
-the Mac that builds them: the script checks that each is a Windows program for its architecture that needs only DLLs
-every Windows has, and that it names its version. The first run of each release on Windows is the real test of it.
-To release a new version, raise `version` in `Cargo.toml` first. The release's tag is `qloudpulse-cli-<version>`.
+That builds nothing. It checks that `HEAD` is `origin/main`, that the version is not released yet, and that the
+default address's catalogue answers 200 (`https://api.qloudpulse.com/v1/estimates`, qloudpulse's host for machines,
+ADR 0127; client 0.1.0 used `https://app.qloudpulse.com/api/report/public/estimates`, which keeps answering). Then it
+pushes the tag `qloudpulse-cli-<version>`. The tag starts the workflow, which checks the same again, runs
+`cargo test --locked`, builds every target with `release.sh`, runs the two Windows `.exe` files on Windows x86_64 and
+Windows on ARM, writes the SBOM and `SHA256SUMS`, signs provenance for every archive, and publishes the release. Watch
+it with `gh run list -R ulfmansson/qloudpulse-public --workflow cli-release.yml`.
+
+The workflow also builds every target, without signing or publishing, on each pull request that changes `cli/`.
+Every action in it is pinned by commit, and every build image (in `release.sh`) by digest.
+
+`release.sh` without `--publish` builds every target here and packs the same files, for trying a build; nothing leaves
+your machine, and nothing it builds is released:
+
+```bash
+cli/release.sh
+```
+
+It needs Docker (the Linux and Windows builds) and rustup (the macOS builds). The Windows `.exe` files are cross-built,
+the x86_64 one with mingw-w64 and the arm64 one with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (Rust's
+`aarch64-pc-windows-gnullvm` target), and cannot run on the Mac that builds them: the script checks that each is a
+Windows program for its architecture that needs only DLLs every Windows has, and that it names its version.
 
 Clients hear about a release once qloudpulse says so: raise `estimates.client.latest` in the report service's
 `application.yml` to the new version (`ESTIMATES_CLIENT_LATEST` on an install), and `estimates.client.minimum` only
