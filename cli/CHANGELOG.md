@@ -20,6 +20,10 @@ has lines.
 - Every pull request runs `cargo test`, `cargo clippy`, `cargo deny` (advisories, licences, sources) and
   `cargo audit`, and they run weekly on `main`.
 - The README says how to verify what you run, build it from a tag, and run it in CI without cloud credentials.
+- `install.sh` and `install.ps1` in every release: `curl -fsSL <release>/install.sh | sh` on Linux and macOS,
+  `irm <release>/install.ps1 | iex` on Windows. Each picks the build for the machine (Windows on ARM included), checks
+  it against `SHA256SUMS`, installs the release it came with, and on a GitHub Actions runner puts it on the job's
+  PATH. Both are listed in `SHA256SUMS` and attested with the archives.
 
 ### Changed
 

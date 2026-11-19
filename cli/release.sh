@@ -96,9 +96,18 @@ case "$TAR_VERSION" in
   *) fail "tar is neither GNU tar nor bsdtar: $(echo "$TAR_VERSION" | head -1)" ;;
 esac
 
-write_sums() { # dir
-  (cd "$1" && shasum -a 256 qloudpulse-*.tar.gz qloudpulse-*.zip 2>/dev/null >SHA256SUMS || true)
-  [ -s "$1/SHA256SUMS" ] || fail "nothing was packed"
+write_installers() { # dir: install.sh and install.ps1 with this version written in, so each installs its release
+  sed "s/^DEFAULT_VERSION=\"\"\$/DEFAULT_VERSION=\"$VERSION\"/" "$CLI/install.sh" >"$1/install.sh"
+  sed "s/^\\\$QloudpulseDefaultVersion = ''\$/\\\$QloudpulseDefaultVersion = '$VERSION'/" "$CLI/install.ps1" >"$1/install.ps1"
+  grep -qxF "DEFAULT_VERSION=\"$VERSION\"" "$1/install.sh" || fail "install.sh has no DEFAULT_VERSION=\"\" line to fill in"
+  grep -qxF "\$QloudpulseDefaultVersion = '$VERSION'" "$1/install.ps1" \
+    || fail "install.ps1 has no \$QloudpulseDefaultVersion = '' line to fill in"
+  chmod 755 "$1/install.sh"
+}
+
+write_sums() { # dir: the archives and the install scripts, so the provenance attested for SHA256SUMS covers all of them
+  (cd "$1" && shasum -a 256 qloudpulse-*.tar.gz qloudpulse-*.zip install.sh install.ps1 2>/dev/null >SHA256SUMS || true)
+  grep -Eq '\.(tar\.gz|zip)$' "$1/SHA256SUMS" || fail "nothing was packed"
 }
 
 CHANGELOG="$CLI/CHANGELOG.md"
@@ -182,6 +191,7 @@ if [ -n "$FINISH" ]; then
     case "$t" in *-windows-*) f="qloudpulse-$VERSION-$t.zip" ;; *) f="qloudpulse-$VERSION-$t.tar.gz" ;; esac
     [ -f "$FINISH/$f" ] || fail "$FINISH has no $f"
   done
+  write_installers "$FINISH"
   write_sums "$FINISH"
   write_notes "$FINISH" "by [the release workflow](https://github.com/$REPO/blob/$TAG/.github/workflows/$WORKFLOW) on
 GitHub's runners, with signed build provenance for every archive"
@@ -410,6 +420,7 @@ for t in $TARGETS; do
   esac
 done
 
+write_installers "$OUT"
 write_sums "$OUT"
 rm -rf "$BUILD"
 write_notes "$OUT" "on a maintainer's machine, for trying only: no release is built here, and these files have no provenance"
