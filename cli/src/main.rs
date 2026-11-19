@@ -201,6 +201,7 @@ fn estimate(args: &EstimateArgs) -> Result<()> {
             format_version: FORMAT_VERSION,
             estimate_id: None,
             currency: "USD".into(),
+            url: None,
             resources: vec![],
         }
     } else {

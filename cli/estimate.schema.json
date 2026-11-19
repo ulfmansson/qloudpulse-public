@@ -18,6 +18,12 @@
           "enum": ["pulumi"],
           "description": "What the change was read from. Terraform and OpenTofu plans come later."
         },
+        "stack": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "The project and stack, such as shop/prod, from the resources' URNs (docs/adr/0133). The Pulumi stacks page lists estimates by it. Resource names are never sent."
+        },
         "resources": {
           "type": "array",
           "maxItems": 5000,
@@ -170,6 +176,11 @@
           "description": "Names this estimate, so the change event sent after apply can refer to it."
         },
         "currency": { "const": "USD" },
+        "url": {
+          "type": "string",
+          "pattern": "^https?://",
+          "description": "The estimate's page in the reports (docs/adr/0133). The client adds #names=<base64url of a JSON object of key to name> for the resources it sent, which the browser never sends to a server."
+        },
         "resources": {
           "type": "array",
           "description": "One answer per resource sent, those left the same included (an endpoint from before 2026-11-19 left them out).",

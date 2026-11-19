@@ -105,8 +105,8 @@ catalogue:
 - its region, from its provider, else the stack's `aws:region`, else `--region`;
 - the attributes in the catalogue for its type, before and after. A value Pulumi knows only after apply, or prints as
   `[secret]`, is left out and its attribute named under `unknown`;
-- a key, `r` and 16 hex digits of the SHA-256 of its URN. The URN, with the stack, project and resource names, stays
-  in CI, and the comment's names come from the preview the client still holds;
+- a key, `r` and 16 hex digits of the SHA-256 of its URN. The URN, with its resource name, stays in CI, and the
+  comment's names come from the preview the client still holds;
 - for a type whose catalogue entry has `references`, such as an ECS service's `taskDefinition`, the key of the resource
   each one names (from Pulumi's `propertyDependencies`), so qloudpulse can price the two together;
 - with `--with-resource-ids`, its cloud ID.
@@ -120,8 +120,14 @@ reference's key is sent without the resource. When the unchanged resources would
 those a changed one refers to go, and the comment leaves the stack's cost out. An endpoint from before 2026-11-19
 does not answer unchanged resources, and the comment says so instead of a stack line.
 
-Types of the catalogue's providers (`aws`) that it does not list are counted by type. Nothing else from the preview is sent: no names, tags, config,
-outputs or secrets. `--dry-run` prints exactly what would go. The request and the answer are
+Once per request, the stack goes as `"stack": "project/stack"`, from the URNs when they all name the same one, so
+qloudpulse's Pulumi stacks page can list the estimate under it. Types of the catalogue's providers (`aws`) that it
+does not list are counted by type. Nothing else from the preview is sent: no resource names, tags, config, outputs
+or secrets.
+
+The comment links to the estimate's page in qloudpulse ("See it in qloudpulse") when the answer gives its address.
+The resource names travel only in the link's `#fragment`, `#names=` and base64url of a JSON object of key to name,
+which a browser never sends to a server: they reach only the browser of whoever opens the link. `--dry-run` prints exactly what would go. The request and the answer are
 [`estimate.schema.json`](estimate.schema.json).
 
 ## Changing it

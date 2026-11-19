@@ -2,6 +2,7 @@
 //! applied.
 
 pub mod catalogue;
+pub mod link;
 pub mod pulumi;
 pub mod render;
 pub mod request;

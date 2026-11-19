@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
+use crate::link::page_link;
 use crate::pulumi::{Estimate, Local};
 use crate::request::{Basis, ChangeKind, MAX_RESOURCES, NoteKind, ResourceEstimate, Response, Risk};
 
@@ -267,6 +268,13 @@ pub fn render(response: &Response, estimate: &Estimate, style: Style) -> String 
         "this change moves the monthly cost by less than $1".to_string()
     };
     let _ = writeln!(out, "{}\n", style.heading(&headline));
+    let link = page_link(response.url.as_deref(), &estimate.locals);
+    if let Some(link) = &link {
+        let _ = match style {
+            Style::Markdown => writeln!(out, "[See it in qloudpulse]({link})\n"),
+            Style::Text => writeln!(out, "See it in qloudpulse: {link}\n"),
+        };
+    }
     if let Some(line) = stack_line(&answers, estimate, style) {
         let _ = writeln!(out, "{line}\n");
     }
@@ -354,6 +362,16 @@ pub fn render(response: &Response, estimate: &Estimate, style: Style) -> String 
         let _ = write!(footer, " Estimate {}.", style.code(id));
     }
     let _ = writeln!(out, "{}", style.small(&footer));
+    if link.is_some() && style == Style::Markdown {
+        let _ = writeln!(
+            out,
+            "{}",
+            style.small(
+                "The resource names in the link stay in your browser: they come after its #, which a browser never \
+                 sends to a server."
+            )
+        );
+    }
     out
 }
 

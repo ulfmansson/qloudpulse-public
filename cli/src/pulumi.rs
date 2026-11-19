@@ -103,6 +103,30 @@ pub fn key(urn: &str) -> String {
     format!("r{hex}")
 }
 
+/// The most characters a stack's name may have.
+pub const MAX_STACK: usize = 200;
+
+/// The stack a preview is of, `project/stack`, from its URNs, `urn:pulumi:<stack>::<project>::…`: only when every
+/// URN names the same one, and it is at most [`MAX_STACK`] characters with no control characters.
+pub fn stack_of(preview: &Preview) -> Option<String> {
+    let mut found: Option<(&str, &str)> = None;
+    for step in &preview.steps {
+        let mut parts = step.urn.strip_prefix("urn:pulumi:")?.split("::");
+        let (stack, project) = (parts.next()?, parts.next()?);
+        if stack.is_empty() || project.is_empty() {
+            return None;
+        }
+        match found {
+            None => found = Some((stack, project)),
+            Some(f) if f != (stack, project) => return None,
+            Some(_) => {}
+        }
+    }
+    let (stack, project) = found?;
+    let name = format!("{project}/{stack}");
+    (name.chars().count() <= MAX_STACK && !name.chars().any(char::is_control)).then_some(name)
+}
+
 /// The resource's name: the URN's last part.
 fn name(urn: &str) -> &str {
     urn.rsplit_once("::").map_or(urn, |(_, n)| n)
@@ -461,6 +485,7 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
         request: Request {
             format_version: FORMAT_VERSION,
             tool: Tool::Pulumi,
+            stack: stack_of(preview),
             resources,
             not_priced: not_priced
                 .into_iter()

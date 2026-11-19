@@ -80,7 +80,11 @@ fn only_the_listed_attributes_leave_ci() {
         "the secret password is not a priced attribute, so it is not named"
     );
 
-    let sent = serde_json::to_string(&e.request).unwrap();
+    // The project and stack are named, as `stack` (qloudpulse's ADR 0133); nothing else of the URNs goes.
+    assert_eq!(e.request.stack.as_deref(), Some("shop/dev"));
+    let mut without_stack = e.request.clone();
+    without_stack.stack = None;
+    let sent = serde_json::to_string(&without_stack).unwrap();
     for never in [
         "orders",
         "shop",
@@ -957,4 +961,101 @@ fn format_text_and_the_markdown_default_through_the_binary() {
     );
     let (ok, stdout, _) = run(&args, UNCHANGED, Some("qpev_test"));
     assert!(ok && stdout.starts_with("### qloudpulse: "), "{stdout}");
+}
+
+#[test]
+fn the_stack_is_named_when_every_urn_agrees() {
+    let e = estimate(UPDATE, &Options::default());
+    assert_eq!(e.request.stack.as_deref(), Some("shop/prod"));
+    let (ok, stdout, stderr) = run(&["estimate", "--dry-run"], UPDATE, None);
+    assert!(ok, "{stderr}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&stdout).unwrap()["stack"],
+        "shop/prod",
+        "--dry-run shows it"
+    );
+
+    let mixed = UPDATE.replacen("urn:pulumi:prod::shop::", "urn:pulumi:staging::shop::", 1);
+    assert_eq!(
+        estimate(&mixed, &Options::default()).request.stack,
+        None,
+        "two stacks: none named"
+    );
+    let other_project = UPDATE.replacen("urn:pulumi:prod::shop::", "urn:pulumi:prod::billing::", 1);
+    assert_eq!(estimate(&other_project, &Options::default()).request.stack, None);
+
+    let long = UPDATE.replace(
+        "urn:pulumi:prod::shop::",
+        &format!("urn:pulumi:prod::{}::", "p".repeat(200)),
+    );
+    assert_eq!(
+        estimate(&long, &Options::default()).request.stack,
+        None,
+        "past 200 characters"
+    );
+    let fits = UPDATE.replace(
+        "urn:pulumi:prod::shop::",
+        &format!("urn:pulumi:prod::{}::", "p".repeat(195)),
+    );
+    assert_eq!(
+        estimate(&fits, &Options::default())
+            .request
+            .stack
+            .unwrap()
+            .chars()
+            .count(),
+        200
+    );
+    let control = UPDATE.replace("urn:pulumi:prod::shop::", "urn:pulumi:prod::sh\\top::");
+    assert_eq!(estimate(&control, &Options::default()).request.stack, None);
+
+    let empty = estimate(r#"{"steps": []}"#, &Options::default());
+    assert_eq!(empty.request.stack, None);
+    assert!(
+        !serde_json::to_string(&empty.request).unwrap().contains("stack"),
+        "no stack, no field"
+    );
+}
+
+#[test]
+fn the_comment_links_the_estimate_s_page_with_the_names_after_the_hash() {
+    let e = estimate(&update_with_an_unchanged_queue(), &Options::default());
+    let mut response = noted_response();
+    response.url = Some("https://app.qloudpulse.com/ui/?estimate=est_02".into());
+    let link = qloudpulse_cli::link::page_link(response.url.as_deref(), &e.locals).unwrap();
+    assert!(
+        link.starts_with("https://app.qloudpulse.com/ui/?estimate=est_02#names="),
+        "{link}"
+    );
+
+    let markdown = render::render(&response, &e, render::Style::Markdown);
+    assert!(
+        markdown.starts_with(&format!(
+            "### qloudpulse: this change adds about $381 a month\n\n[See it in qloudpulse]({link})\n\n**The stack:**"
+        )),
+        "{markdown}"
+    );
+    assert!(
+        markdown.ends_with(
+            "<sub>Monthly figures in USD, before tax. Estimate `est_02`.</sub>\n<sub>The resource names in the link \
+             stay in your browser: they come after its #, which a browser never sends to a server.</sub>\n"
+        ),
+        "{markdown}"
+    );
+
+    let text = render::render(&response, &e, render::Style::Text);
+    assert!(
+        text.starts_with(&format!(
+            "qloudpulse: this change adds about $381 a month\n\nSee it in qloudpulse: {link}\n\nThe stack:"
+        )),
+        "{text}"
+    );
+    assert!(!text.contains("<sub>") && !text.contains("]("), "{text}");
+
+    response.url = None;
+    let without = render::render(&response, &e, render::Style::Markdown);
+    assert!(
+        !without.contains("See it in qloudpulse") && !without.contains("stay in your browser"),
+        "{without}"
+    );
 }
