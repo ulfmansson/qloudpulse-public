@@ -32,7 +32,8 @@ Connecting to your company:
 const ESTIMATE_ENVIRONMENT: &str = "\
 Environment:
   QLOUDPULSE_TOKEN     A change-event source's token (qpev_...), from Settings, Events in
-                       qloudpulse. Needed unless --dry-run
+                       qloudpulse. Needed on every run but --dry-run, even one with nothing
+                       to price
   QLOUDPULSE_ENDPOINT  The same as --endpoint
 
 Example:
@@ -54,7 +55,7 @@ struct EstimateArgs {
     /// The JSON of `pulumi preview --json`. Without it, or with -, it is read from stdin.
     file: Option<PathBuf>,
 
-    /// Print the request that would be sent, and send nothing. Needs no token.
+    /// Print the request that would be sent, and send nothing. The only run that needs no token.
     #[arg(long)]
     dry_run: bool,
 
@@ -132,7 +133,22 @@ fn counts(estimate: &pulumi::Estimate) -> String {
     line
 }
 
+/// The token from QLOUDPULSE_TOKEN, trimmed, or the error that says where to get one.
+fn token() -> Result<String> {
+    std::env::var("QLOUDPULSE_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .context(
+            "set QLOUDPULSE_TOKEN to a change-event source's token (qpev_...), from Settings, Events in qloudpulse, \
+             or use --dry-run",
+        )
+}
+
 fn estimate(args: &EstimateArgs) -> Result<()> {
+    // Every run but a dry run needs the token, whatever the preview holds: checked first, so a missing one is said
+    // before the preview is read or anything reaches the network.
+    let token = if args.dry_run { None } else { Some(token()?) };
     if let Some(region) = &args.region
         && !pulumi::is_region(region)
     {
@@ -160,12 +176,13 @@ fn estimate(args: &EstimateArgs) -> Result<()> {
 
     eprintln!("qloudpulse: {}", counts(&estimate));
 
-    if args.dry_run {
+    // No token only with --dry-run.
+    let Some(token) = token else {
         println!("{}", serde_json::to_string_pretty(request)?);
         return Ok(());
-    }
+    };
 
-    // Nothing to price: no call, and no token needed. Unchanged resources alone are still sent, for the stack's cost.
+    // Nothing to price: no call. Unchanged resources alone are still sent, for the stack's cost.
     let response = if request.resources.is_empty() {
         Response {
             format_version: FORMAT_VERSION,
@@ -174,14 +191,7 @@ fn estimate(args: &EstimateArgs) -> Result<()> {
             resources: vec![],
         }
     } else {
-        let token = std::env::var("QLOUDPULSE_TOKEN")
-            .ok()
-            .filter(|t| !t.trim().is_empty())
-            .context(
-                "set QLOUDPULSE_TOKEN to a change-event source's token (qpev_...), from Settings, Events in \
-                 qloudpulse, or use --dry-run",
-            )?;
-        send::send(&args.endpoint, token.trim(), request)?
+        send::send(&args.endpoint, &token, request)?
     };
 
     match args.format {

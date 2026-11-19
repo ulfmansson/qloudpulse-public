@@ -64,7 +64,7 @@ pulumi preview --json --show-sames -s payments-prod | qloudpulse estimate > comm
 | Option | |
 |---|---|
 | `FILE` | The JSON of `pulumi preview --json`. Without it, or with `-`, stdin |
-| `--dry-run` | Print the request that would be sent, and send nothing. Needs no token |
+| `--dry-run` | Print the request that would be sent, and send nothing. The only run that needs no token |
 | `--region <region>` | The region of resources whose provider and stack name none |
 | `--with-resource-ids` | Send the cloud ID of each resource that exists before the change, so its usage comes from what it really used |
 | `--format json` | Print qloudpulse's answer as JSON instead of the comment |
@@ -72,7 +72,9 @@ pulumi preview --json --show-sames -s payments-prod | qloudpulse estimate > comm
 | `--catalogue <file>` | Read the answer from a file instead of asking, also `QLOUDPULSE_CATALOGUE`, to pin what is sent. `qloudpulse estimate --dry-run` shows the types; `curl -fsS -H 'Content-Type: application/json' -d '{"formatVersion": 1, "types": ["aws:rds/instance:Instance"]}' https://api.qloudpulse.com/v1/estimates/catalogue > catalogue.json` saves an answer |
 
 The token is read from `QLOUDPULSE_TOKEN` only, never from an option: a change-event source's token (`qpev_…`), from
-Settings, Events in qloudpulse. The same source can send the change event after `pulumi up`.
+Settings, Events in qloudpulse. The same source can send the change event after `pulumi up`. Every run but
+`--dry-run` needs it, even one whose preview holds nothing to price: without it the client stops with an error before
+it reads the preview or asks for the catalogue.
 
 In GitHub Actions:
 

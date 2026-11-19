@@ -392,12 +392,60 @@ fn the_token_is_never_sent_over_plain_http() {
 
 #[test]
 fn nothing_to_price_needs_no_call() {
-    let (ok, stdout, stderr) = run(&["estimate"], r#"{"steps": []}"#, None);
+    // The endpoint is a closed port, so a call would fail the run.
+    let (ok, stdout, stderr) = run(
+        &["estimate", "--endpoint", "https://127.0.0.1:9/v1/estimates"],
+        r#"{"steps": []}"#,
+        Some("qpev_test"),
+    );
     assert!(ok, "{stderr}");
     assert!(
         stdout.starts_with("### qloudpulse: nothing in this change could be priced"),
         "{stdout}"
     );
+}
+
+#[test]
+fn nothing_to_price_still_needs_a_token() {
+    let (ok, stdout, stderr) = run(&["estimate"], r#"{"steps": []}"#, None);
+    assert!(!ok, "{stdout}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert_eq!(
+        stderr.trim(),
+        "qloudpulse: set QLOUDPULSE_TOKEN to a change-event source's token (qpev_...), from Settings, Events in \
+         qloudpulse, or use --dry-run"
+    );
+
+    let (ok, _, stderr) = run(&["estimate"], r#"{"steps": []}"#, Some("   "));
+    assert!(
+        !ok && stderr.contains("set QLOUDPULSE_TOKEN"),
+        "a blank token is none: {stderr}"
+    );
+
+    let (ok, stdout, stderr) = run(&["estimate", "--dry-run"], r#"{"steps": []}"#, None);
+    assert!(ok, "{stderr}");
+    assert_eq!(serde_json::from_str::<Value>(&stdout).unwrap()["resources"], json!([]));
+}
+
+#[test]
+fn a_missing_token_is_said_before_the_preview_is_read_or_the_catalogue_asked() {
+    let out = Command::new(env!("CARGO_BIN_EXE_qloudpulse"))
+        // A closed port and no catalogue file: reaching for the catalogue would fail with a connection error instead.
+        .args([
+            "estimate",
+            "--endpoint",
+            "https://127.0.0.1:9/v1/estimates",
+            "/nonexistent/preview.json",
+        ])
+        .env_remove("QLOUDPULSE_TOKEN")
+        .env_remove("QLOUDPULSE_CATALOGUE")
+        .env_remove("QLOUDPULSE_ENDPOINT")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(err.contains("set QLOUDPULSE_TOKEN"), "{err}");
+    assert!(!err.contains("127.0.0.1") && !err.contains("could not read"), "{err}");
 }
 
 #[test]
