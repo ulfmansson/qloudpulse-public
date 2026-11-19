@@ -14,8 +14,8 @@ prices. So when qloudpulse prices a new type, the client you already have sends 
 
 ## Install
 
-Each release has a static binary for Linux (x86_64 and arm64), binaries for macOS, and one for Windows (x86_64), with
-their SHA-256 sums:
+Each release has a static binary for Linux (x86_64 and arm64), binaries for macOS, and binaries for Windows (x86_64
+and arm64), with their SHA-256 sums:
 
 ```bash
 VERSION=0.2.0
@@ -33,7 +33,7 @@ On Windows, in PowerShell:
 ```powershell
 $Version = "0.2.0"
 $Base = "https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-cli-$Version"
-$Zip = "qloudpulse-$Version-x86_64-pc-windows-gnu.zip"
+$Zip = "qloudpulse-$Version-x86_64-pc-windows-gnu.zip"   # on Windows on ARM: aarch64-pc-windows-gnullvm
 Invoke-WebRequest "$Base/$Zip" -OutFile $Zip
 Invoke-WebRequest "$Base/SHA256SUMS" -OutFile SHA256SUMS
 $Want = (Select-String -Path SHA256SUMS -Pattern ([regex]::Escape($Zip))).Line.Split(" ")[0]
@@ -145,9 +145,10 @@ cli/release.sh --publish
 ```
 
 It needs Docker (the Linux and Windows builds), rustup (the macOS builds) and `gh` signed in with write access to this
-repository. The Windows `.exe` is cross-built with mingw-w64 and cannot run on the Mac that builds it: the script checks
-that it is an x86-64 Windows program that needs only DLLs every Windows has, and that it names its version. The first
-run of each release on Windows is the real test of it.
+repository. The Windows `.exe` files are cross-built, the x86_64 one with mingw-w64 and the arm64 one with
+[llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (Rust's `aarch64-pc-windows-gnullvm` target), and cannot run on
+the Mac that builds them: the script checks that each is a Windows program for its architecture that needs only DLLs
+every Windows has, and that it names its version. The first run of each release on Windows is the real test of it.
 To release a new version, raise `version` in `Cargo.toml` first. The release's tag is `qloudpulse-cli-<version>`.
 
 Clients hear about a release once qloudpulse says so: raise `estimates.client.latest` in the report service's
