@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use qloudpulse_cli::catalogue::Catalogue;
 use qloudpulse_cli::pulumi::{self, Options};
 use qloudpulse_cli::request::{ChangeKind, FORMAT_VERSION, MAX_RESOURCES, Response};
-use qloudpulse_cli::{render, send, version};
+use qloudpulse_cli::{render, send, token, version};
 
 #[derive(Parser)]
 #[command(name = "qloudpulse", version, about = "qloudpulse from the command line", after_help = CONNECT)]
@@ -24,8 +24,9 @@ Connecting to your company:
   Anyone in the company makes their own token under Your tokens (under your name); an admin's
   event-source token from Settings, Events works too. On hosted qloudpulse, Your tokens is
   https://app.qloudpulse.com/ui/?profile#my-tokens.
-  Put the token in QLOUDPULSE_TOKEN, for example from a CI secret. It is read from there only,
-  never from an option, so it stays out of logs and shell history.
+  Put the token in QLOUDPULSE_TOKEN, for example from a CI secret, never in an option, so it
+  stays out of logs and shell history. Unset at a terminal, it is asked for there with the
+  input hidden, and used for that run only.
 
   Prices are your company's own when its AWS bill is connected in qloudpulse (/account/aws);
   otherwise they are list prices.";
@@ -35,7 +36,8 @@ const ESTIMATE_ENVIRONMENT: &str = "\
 Environment:
   QLOUDPULSE_TOKEN     A token of your own (qpev_...), from Your tokens under your name in
                        qloudpulse. Needed on every run but --dry-run, even one with nothing
-                       to price
+                       to price. Unset at a terminal, it is asked for, hidden, for that run
+                       only; in CI or without a terminal the run stops
   QLOUDPULSE_ENDPOINT  The same as --endpoint
 
 Example:
@@ -135,22 +137,17 @@ fn counts(estimate: &pulumi::Estimate) -> String {
     line
 }
 
-/// The token from QLOUDPULSE_TOKEN, trimmed, or the error that says where the endpoint's tokens are made.
-fn token(endpoint: &str) -> Result<String> {
-    std::env::var("QLOUDPULSE_TOKEN")
-        .ok()
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty())
-        .with_context(|| send::missing_token(endpoint))
-}
-
 fn estimate(args: &EstimateArgs) -> Result<()> {
     // Every run but a dry run needs the token, whatever the preview holds: checked first, so a missing one is said
     // before the preview is read or anything reaches the network.
     let token = if args.dry_run {
         None
     } else {
-        Some(token(&args.endpoint)?)
+        Some(token::resolve(
+            std::env::var("QLOUDPULSE_TOKEN").ok(),
+            &args.endpoint,
+            &mut token::Tty,
+        )?)
     };
     if let Some(region) = &args.region
         && !pulumi::is_region(region)
