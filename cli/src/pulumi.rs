@@ -13,7 +13,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest as _, Sha256};
 
 use crate::catalogue::{Catalogue, CatalogueType};
-use crate::request::{ChangeKind, FORMAT_VERSION, NotPriced, Request, ResourceChange, Tool};
+use crate::request::{ChangeKind, FORMAT_VERSION, MAX_RESOURCES, NotPriced, Request, ResourceChange, Tool};
 
 /// What Pulumi writes for a value it will only know after apply.
 pub const UNKNOWN: &str = "04da6b54-80e4-46f7-96ec-b56ff0331ba9";
@@ -80,7 +80,15 @@ pub struct Local {
 #[derive(Debug)]
 pub struct Estimate {
     pub request: Request,
+    /// One for each resource sent, those left the same included.
     pub locals: Vec<Local>,
+    /// Whether the preview listed any step left the same, as `pulumi preview --json --show-sames` does.
+    pub stack_listed: bool,
+    /// The stack's unchanged resources of the catalogue's providers whose type it does not price.
+    pub stack_not_priced: u32,
+    /// When sending every unchanged resource would pass [`MAX_RESOURCES`], how many resources that would have been:
+    /// then only those a changed one refers to are sent, and the comment leaves the stack's cost out.
+    pub stack_too_large: Option<usize>,
 }
 
 pub fn parse(json: &str) -> Result<Preview> {
@@ -313,7 +321,7 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
     let mut sent: BTreeSet<&str> = BTreeSet::new();
     let mut referred: Vec<&str> = Vec::new();
 
-    for urn in order {
+    for &urn in &order {
         let g = &gathered[urn];
         let Some(change) = g.change() else { continue };
         let Some(state) = g.new.as_ref().or(g.old.as_ref()) else {
@@ -378,9 +386,40 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
         });
     }
 
-    // A resource a changed one refers to and the change leaves the same, such as the task definition of a service
-    // whose count changes, goes too: it is in the preview with `--show-sames`.
-    for urn in referred {
+    // Every resource the change leaves the same goes too, so that the comment can add up what the stack costs: Pulumi
+    // lists them with `--show-sames`. Only what a changed resource sends goes for each, never its cloud ID, and its
+    // name stays in CI. Those of the catalogue's providers that it does not price are counted for the comment only;
+    // `notPriced` is the change's.
+    let mut stack_listed = false;
+    let mut stack_not_priced = 0;
+    let mut sames: Vec<&str> = Vec::new();
+    for &urn in &order {
+        let g = &gathered[urn];
+        if !g.ops.contains("same") {
+            continue;
+        }
+        stack_listed = true;
+        let Some(state) = g.new.as_ref().or(g.old.as_ref()) else {
+            continue;
+        };
+        if !state.custom || state.type_token.starts_with("pulumi:") || sent.contains(urn) {
+            continue;
+        }
+        if catalogue.priced(&state.type_token).is_some() {
+            sames.push(urn);
+        } else if catalogue.counts(&state.type_token) {
+            stack_not_priced += 1;
+        }
+    }
+
+    // A resource a changed one refers to, such as the task definition of a service whose count changes, goes whatever
+    // the stack's size. With every other one the request would pass its limit, the stack's cost is left out.
+    let mut stack_too_large = None;
+    if resources.len() + sames.len() > MAX_RESOURCES {
+        stack_too_large = Some(resources.len() + sames.len());
+        sames.clear();
+    }
+    for urn in referred.into_iter().chain(sames) {
         if !sent.insert(urn) {
             continue;
         }
@@ -392,8 +431,15 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
             continue;
         };
         let (attrs, hidden) = priced_attributes(state.inputs.as_ref(), &priced.attributes);
+        let key = key(urn);
+        locals.push(Local {
+            key: key.clone(),
+            name: name(urn).to_string(),
+            label: priced.label.to_string(),
+            change: ChangeKind::Same,
+        });
         resources.push(ResourceChange {
-            key: key(urn),
+            key,
             change: ChangeKind::Same,
             type_token: state.type_token.clone(),
             region: region_of(g),
@@ -416,6 +462,9 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
                 .collect(),
         },
         locals,
+        stack_listed,
+        stack_not_priced,
+        stack_too_large,
     }
 }
 

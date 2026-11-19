@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::io::Read as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -7,7 +8,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use qloudpulse_cli::catalogue::Catalogue;
 use qloudpulse_cli::pulumi::{self, Options};
-use qloudpulse_cli::request::{ChangeKind, FORMAT_VERSION, Response};
+use qloudpulse_cli::request::{ChangeKind, FORMAT_VERSION, MAX_RESOURCES, Response};
 use qloudpulse_cli::{render, send, version};
 
 #[derive(Parser)]
@@ -21,6 +22,7 @@ struct Cli {
 const CONNECT: &str = "\
 Connecting to your company:
   An admin in qloudpulse opens Settings, Events, adds a source and copies its token (qpev_...).
+  On hosted qloudpulse that is https://app.qloudpulse.com/ui/?events.
   Put the token in QLOUDPULSE_TOKEN, for example from a CI secret. It is read from there only,
   never from an option, so it stays out of logs and shell history.
 
@@ -31,7 +33,8 @@ Connecting to your company:
 const ESTIMATE_ENVIRONMENT: &str = "\
 Environment:
   QLOUDPULSE_TOKEN     A change-event source's token (qpev_...), from Settings, Events in
-                       qloudpulse. Needed unless --dry-run
+                       qloudpulse. Needed on every run but --dry-run, even one with nothing
+                       to price
   QLOUDPULSE_ENDPOINT  The same as --endpoint
 
 Example:
@@ -53,7 +56,7 @@ struct EstimateArgs {
     /// The JSON of `pulumi preview --json`. Without it, or with -, it is read from stdin.
     file: Option<PathBuf>,
 
-    /// Print the request that would be sent, and send nothing. Needs no token.
+    /// Print the request that would be sent, and send nothing. The only run that needs no token.
     #[arg(long)]
     dry_run: bool,
 
@@ -100,7 +103,54 @@ fn read_input(file: Option<&PathBuf>) -> Result<String> {
     Ok(input)
 }
 
+/// What is about to be priced, for stderr: the change's resources, and the stack's unchanged ones.
+fn counts(estimate: &pulumi::Estimate) -> String {
+    let request = &estimate.request;
+    let same = request
+        .resources
+        .iter()
+        .filter(|r| r.change == ChangeKind::Same)
+        .count();
+    let not_priced: u32 = request.not_priced.iter().map(|n| n.count).sum();
+    let mut line = format!(
+        "{} resources to price, {not_priced} not priced",
+        request.resources.len() - same
+    );
+    if let Some(n) = estimate.stack_too_large {
+        let _ = write!(
+            line,
+            "; the stack's cost is left out, as its {n} resources are more than one estimate takes ({MAX_RESOURCES})"
+        );
+        if same > 0 {
+            let _ = write!(line, ", and {same} unchanged that they refer to go");
+        }
+    } else if estimate.stack_listed {
+        let _ = write!(
+            line,
+            "; and {same} unchanged, for the stack's cost, {} not priced",
+            estimate.stack_not_priced
+        );
+    }
+    line
+}
+
+/// The token from QLOUDPULSE_TOKEN, trimmed, or the error that says where the endpoint's tokens are made.
+fn token(endpoint: &str) -> Result<String> {
+    std::env::var("QLOUDPULSE_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .with_context(|| send::missing_token(endpoint))
+}
+
 fn estimate(args: &EstimateArgs) -> Result<()> {
+    // Every run but a dry run needs the token, whatever the preview holds: checked first, so a missing one is said
+    // before the preview is read or anything reaches the network.
+    let token = if args.dry_run {
+        None
+    } else {
+        Some(token(&args.endpoint)?)
+    };
     if let Some(region) = &args.region
         && !pulumi::is_region(region)
     {
@@ -126,29 +176,16 @@ fn estimate(args: &EstimateArgs) -> Result<()> {
     let estimate = pulumi::estimate(&preview, &catalogue, &options);
     let request = &estimate.request;
 
-    let not_priced: u32 = request.not_priced.iter().map(|n| n.count).sum();
-    let same = request
-        .resources
-        .iter()
-        .filter(|r| r.change == ChangeKind::Same)
-        .count();
-    let referred = if same > 0 {
-        format!(" (and {same} unchanged that they refer to)")
-    } else {
-        String::new()
-    };
-    eprintln!(
-        "qloudpulse: {} resources to price{referred}, {} not priced",
-        request.resources.len() - same,
-        not_priced
-    );
+    eprintln!("qloudpulse: {}", counts(&estimate));
 
-    if args.dry_run {
+    // No token only with --dry-run.
+    let Some(token) = token else {
         println!("{}", serde_json::to_string_pretty(request)?);
         return Ok(());
-    }
+    };
 
-    let response = if request.resources.len() == same {
+    // Nothing to price: no call. Unchanged resources alone are still sent, for the stack's cost.
+    let response = if request.resources.is_empty() {
         Response {
             format_version: FORMAT_VERSION,
             estimate_id: None,
@@ -156,19 +193,12 @@ fn estimate(args: &EstimateArgs) -> Result<()> {
             resources: vec![],
         }
     } else {
-        let token = std::env::var("QLOUDPULSE_TOKEN")
-            .ok()
-            .filter(|t| !t.trim().is_empty())
-            .context(
-                "set QLOUDPULSE_TOKEN to a change-event source's token (qpev_...), from Settings, Events in \
-                 qloudpulse, or use --dry-run",
-            )?;
-        send::send(&args.endpoint, token.trim(), request)?
+        send::send(&args.endpoint, &token, request)?
     };
 
     match args.format {
         Format::Markdown => {
-            print!("{}", render::comment(&response, &estimate.locals, &request.not_priced));
+            print!("{}", render::comment(&response, &estimate));
             if let Some(line) = &newer {
                 println!("\n<sub>{line}</sub>");
             }

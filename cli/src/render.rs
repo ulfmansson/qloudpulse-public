@@ -3,8 +3,21 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-use crate::pulumi::Local;
-use crate::request::{Basis, NotPriced, NoteKind, ResourceEstimate, Response, Risk};
+use crate::pulumi::{Estimate, Local};
+use crate::request::{Basis, ChangeKind, MAX_RESOURCES, NoteKind, ResourceEstimate, Response, Risk};
+
+/// A whole number with thousands separators.
+fn grouped(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
 
 /// Dollars as a comment shows them: cents under $10, whole dollars with thousands separators above.
 pub fn money(usd: f64) -> String {
@@ -13,16 +26,7 @@ pub fn money(usd: f64) -> String {
     let body = if abs < 10.0 {
         format!("{abs:.2}")
     } else {
-        let whole = abs.round() as u64;
-        let digits = whole.to_string();
-        let mut grouped = String::new();
-        for (i, c) in digits.chars().enumerate() {
-            if i > 0 && (digits.len() - i).is_multiple_of(3) {
-                grouped.push(',');
-            }
-            grouped.push(c);
-        }
-        grouped
+        grouped(abs.round() as u64)
     };
     format!("{}${body}", if negative { "-" } else { "" })
 }
@@ -68,13 +72,87 @@ fn cell(v: Option<f64>) -> String {
     v.map_or_else(|| "–".to_string(), money)
 }
 
-/// The Markdown comment for a change.
-pub fn comment(response: &Response, locals: &[Local], not_priced: &[NotPriced]) -> String {
+/// A count and its noun, such as "1 priced resource" or "3 priced resources".
+fn resources(n: usize, adjective: &str) -> String {
+    format!("{n} {adjective} resource{}", if n == 1 { "" } else { "s" })
+}
+
+/// The line on what the whole stack costs, under the headline, or why it is left out.
+fn stack_line(answers: &HashMap<&str, &ResourceEstimate>, estimate: &Estimate) -> Option<String> {
+    if let Some(n) = estimate.stack_too_large {
+        return Some(format!(
+            "**The stack:** its cost is left out: with every unchanged resource the request would hold {} \
+             resources, and one estimate takes {} at most.",
+            grouped(n as u64),
+            grouped(MAX_RESOURCES as u64)
+        ));
+    }
+    if !estimate.stack_listed {
+        return None;
+    }
+    let sames: Vec<&Local> = estimate
+        .locals
+        .iter()
+        .filter(|l| l.change == ChangeKind::Same)
+        .collect();
+    if !sames.is_empty() && sames.iter().all(|l| !answers.contains_key(l.key.as_str())) {
+        return Some(
+            "**The stack:** its cost is left out: this endpoint does not price unchanged resources yet.".to_string(),
+        );
+    }
+
+    let mut before = 0.0;
+    let mut after = 0.0;
+    let mut priced = 0;
+    let mut not_priced = estimate.stack_not_priced as usize
+        + estimate
+            .request
+            .not_priced
+            .iter()
+            .map(|n| n.count as usize)
+            .sum::<usize>();
+    for l in &estimate.locals {
+        match answers.get(l.key.as_str()) {
+            Some(a) if a.basis != Basis::NotPriced => {
+                priced += 1;
+                before += a.monthly_before.unwrap_or(0.0);
+                after += a.monthly_after.unwrap_or(0.0);
+            }
+            _ => not_priced += 1,
+        }
+    }
+    let unpriced = if not_priced > 0 {
+        format!("; {not_priced} not priced")
+    } else {
+        String::new()
+    };
+    if priced == 0 {
+        return Some(format!(
+            "**The stack:** none of its resources could be priced{unpriced}."
+        ));
+    }
+    Some(format!(
+        "**The stack:** about {} a month now, about {} after this change, from {}{unpriced}.",
+        money(before),
+        money(after),
+        resources(priced, "priced")
+    ))
+}
+
+/// The Markdown comment for a change: what the change adds, from the resources it changes, and what the whole stack
+/// costs, from those it leaves the same too.
+pub fn comment(response: &Response, estimate: &Estimate) -> String {
     let answers: HashMap<&str, &ResourceEstimate> = response.resources.iter().map(|r| (r.key.as_str(), r)).collect();
+    let locals: Vec<&Local> = estimate
+        .locals
+        .iter()
+        .filter(|l| l.change != ChangeKind::Same)
+        .collect();
+    let not_priced = &estimate.request.not_priced;
 
     let priced: Vec<(&Local, &ResourceEstimate)> = locals
         .iter()
-        .filter_map(|l| answers.get(l.key.as_str()).map(|a| (l, *a)))
+        .filter_map(|l| answers.get(l.key.as_str()).map(|a| (*l, *a)))
         .filter(|(_, a)| a.basis != Basis::NotPriced)
         .collect();
     let delta: f64 = priced
@@ -93,6 +171,9 @@ pub fn comment(response: &Response, locals: &[Local], not_priced: &[NotPriced]) 
         "this change moves the monthly cost by less than $1".to_string()
     };
     let _ = writeln!(out, "### qloudpulse: {headline}\n");
+    if let Some(line) = stack_line(&answers, estimate) {
+        let _ = writeln!(out, "{line}\n");
+    }
 
     if !priced.is_empty() {
         out.push_str("| Resource | Change | Monthly now | Monthly after | Priced from |\n");
@@ -114,7 +195,7 @@ pub fn comment(response: &Response, locals: &[Local], not_priced: &[NotPriced]) 
 
     let notes_of = |kind: NoteKind| -> Vec<String> {
         let mut lines = Vec::new();
-        for l in locals {
+        for l in &locals {
             let Some(a) = answers.get(l.key.as_str()) else { continue };
             for n in a.notes.iter().filter(|n| n.kind == kind) {
                 let mut line = format!("- {}: {}", code(&l.name), text(&n.text));
@@ -141,7 +222,7 @@ pub fn comment(response: &Response, locals: &[Local], not_priced: &[NotPriced]) 
     }
 
     let mut unpriced: Vec<String> = Vec::new();
-    for l in locals {
+    for l in &locals {
         match answers.get(l.key.as_str()) {
             None => unpriced.push(format!("- {} {}: no answer for it", code(&l.name), l.label)),
             Some(a) if a.basis == Basis::NotPriced => {
@@ -160,6 +241,10 @@ pub fn comment(response: &Response, locals: &[Local], not_priced: &[NotPriced]) 
     }
     if !unpriced.is_empty() {
         let _ = writeln!(out, "**Not priced**\n\n{}\n", unpriced.join("\n"));
+    }
+
+    if !estimate.stack_listed && estimate.stack_too_large.is_none() {
+        out.push_str("<sub>Run `pulumi preview --json --show-sames` to see the whole stack's monthly cost.</sub>\n\n");
     }
 
     let mut footer = String::from("Monthly figures in USD, before tax.");

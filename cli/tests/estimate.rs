@@ -161,9 +161,11 @@ fn updates_replacements_and_deletes_carry_before_and_after() {
     let e = estimate(UPDATE, &Options::default());
     assert_eq!(
         e.request.resources.len(),
-        4,
-        "the same instance and the read are left out"
+        5,
+        "the read is left out; the same instance goes, for the stack's cost"
     );
+    let web = resource(&e, "urn:pulumi:prod::shop::aws:ec2/instance:Instance::web");
+    assert_eq!(web.change, ChangeKind::Same);
 
     let orders = resource(&e, "urn:pulumi:prod::shop::aws:rds/instance:Instance::orders");
     assert_eq!(orders.change, ChangeKind::Update);
@@ -262,7 +264,7 @@ fn the_comment_names_resources_from_ci_and_figures_from_the_answer() {
     }))
     .unwrap();
 
-    let comment = render::comment(&response, &e.locals, &e.request.not_priced);
+    let comment = render::comment(&response, &e);
     // 810 - 398 + 17.6 - 11 + 0 - 37.96 = 380.64
     assert!(
         comment.starts_with("### qloudpulse: this change adds about $381 a month\n"),
@@ -305,7 +307,7 @@ fn a_change_that_saves_says_so() {
         "resources": [{"key": egress, "monthlyBefore": 37.96, "basis": "company-rate"}]
     }))
     .unwrap();
-    let comment = render::comment(&response, &e.locals, &e.request.not_priced);
+    let comment = render::comment(&response, &e);
     assert!(
         comment.starts_with("### qloudpulse: this change saves about $38 a month\n"),
         "{comment}"
@@ -343,7 +345,15 @@ fn dry_run_prints_the_request_and_needs_no_token() {
     let request: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(request["formatVersion"], 1);
     assert_eq!(request["tool"], "pulumi");
-    assert_eq!(request["resources"].as_array().unwrap().len(), 4);
+    assert_eq!(request["resources"].as_array().unwrap().len(), 5);
+    assert_eq!(
+        stderr.trim(),
+        "qloudpulse: 4 resources to price, 0 not priced; and 1 unchanged, for the stack's cost, 0 not priced"
+    );
+
+    let without_sames = UPDATE.replace("\"op\": \"same\"", "\"op\": \"read\"");
+    let (ok, _, stderr) = run(&["estimate", "--dry-run"], &without_sames, None);
+    assert!(ok, "{stderr}");
     assert_eq!(stderr.trim(), "qloudpulse: 4 resources to price, 0 not priced");
 }
 
@@ -382,12 +392,75 @@ fn the_token_is_never_sent_over_plain_http() {
 
 #[test]
 fn nothing_to_price_needs_no_call() {
-    let (ok, stdout, stderr) = run(&["estimate"], r#"{"steps": []}"#, None);
+    // The endpoint is a closed port, so a call would fail the run.
+    let (ok, stdout, stderr) = run(
+        &["estimate", "--endpoint", "https://127.0.0.1:9/v1/estimates"],
+        r#"{"steps": []}"#,
+        Some("qpev_test"),
+    );
     assert!(ok, "{stderr}");
     assert!(
         stdout.starts_with("### qloudpulse: nothing in this change could be priced"),
         "{stdout}"
     );
+}
+
+#[test]
+fn nothing_to_price_still_needs_a_token() {
+    let (ok, stdout, stderr) = run(&["estimate"], r#"{"steps": []}"#, None);
+    assert!(!ok, "{stdout}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert_eq!(
+        stderr.trim(),
+        "qloudpulse: set QLOUDPULSE_TOKEN to a change-event source's token (qpev_...). An admin makes one at \
+         https://app.qloudpulse.com/ui/?events (Settings, Events: add a source and copy its token). Or use --dry-run \
+         to see what would be sent.",
+        "the default endpoint is hosted qloudpulse: the page is linked"
+    );
+
+    let (ok, _, stderr) = run(
+        &["estimate", "--endpoint", "https://qloudpulse.example.com/v1/estimates"],
+        r#"{"steps": []}"#,
+        None,
+    );
+    assert!(!ok);
+    assert_eq!(
+        stderr.trim(),
+        "qloudpulse: set QLOUDPULSE_TOKEN to a change-event source's token (qpev_...), from Settings, Events in \
+         your qloudpulse. Or use --dry-run to see what would be sent.",
+        "an install of its own: no address guessed"
+    );
+
+    let (ok, _, stderr) = run(&["estimate"], r#"{"steps": []}"#, Some("   "));
+    assert!(
+        !ok && stderr.contains("set QLOUDPULSE_TOKEN"),
+        "a blank token is none: {stderr}"
+    );
+
+    let (ok, stdout, stderr) = run(&["estimate", "--dry-run"], r#"{"steps": []}"#, None);
+    assert!(ok, "{stderr}");
+    assert_eq!(serde_json::from_str::<Value>(&stdout).unwrap()["resources"], json!([]));
+}
+
+#[test]
+fn a_missing_token_is_said_before_the_preview_is_read_or_the_catalogue_asked() {
+    let out = Command::new(env!("CARGO_BIN_EXE_qloudpulse"))
+        // A closed port and no catalogue file: reaching for the catalogue would fail with a connection error instead.
+        .args([
+            "estimate",
+            "--endpoint",
+            "https://127.0.0.1:9/v1/estimates",
+            "/nonexistent/preview.json",
+        ])
+        .env_remove("QLOUDPULSE_TOKEN")
+        .env_remove("QLOUDPULSE_CATALOGUE")
+        .env_remove("QLOUDPULSE_ENDPOINT")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(err.contains("set QLOUDPULSE_TOKEN"), "{err}");
+    assert!(!err.contains("127.0.0.1") && !err.contains("could not read"), "{err}");
 }
 
 #[test]
@@ -460,8 +533,10 @@ fn a_reference_names_the_resource_by_key_and_an_unchanged_one_goes_too() {
         Value::Object(definition.after.clone().unwrap()),
         json!({"cpu": "512", "memory": "1024", "runtimePlatform": {"cpuArchitecture": "ARM64"}})
     );
-    // An unchanged resource gets no line in the comment, and nothing else of it is sent.
-    assert_eq!(e.locals.len(), 1);
+    // An unchanged resource keeps its name in CI, and nothing else of it is sent.
+    assert_eq!(e.locals.len(), 2);
+    assert_eq!(e.locals[1].change, ChangeKind::Same);
+    assert_eq!(e.locals[1].name, "api");
     let sent = serde_json::to_string(&e.request).unwrap();
     assert!(
         !sent.contains("hunter2") && !sent.contains("DB_PASSWORD") && !sent.contains("arn:aws"),
@@ -563,4 +638,177 @@ fn the_types_asked_about_are_every_cloud_resource_in_the_preview_once() {
     let update = pulumi::found_types(&pulumi::parse(UPDATE).unwrap());
     assert!(update.iter().all(|t| !t.starts_with("pulumi:")), "{update:?}");
     assert!(update.contains(&"aws:rds/instance:Instance".to_string()), "{update:?}");
+}
+
+/// The update fixture's answer from an endpoint that prices unchanged resources: the changed ones as in
+/// `the_comment_names_resources_from_ci_and_figures_from_the_answer`, and the unchanged instance at one figure.
+fn stack_response(with_sames: bool) -> Response {
+    let orders = key("urn:pulumi:prod::shop::aws:rds/instance:Instance::orders");
+    let data = key("urn:pulumi:prod::shop::aws:ebs/volume:Volume::data");
+    let egress = key("urn:pulumi:prod::shop::aws:ec2/natGateway:NatGateway::egress");
+    let assets = key("urn:pulumi:prod::shop::aws:s3/bucket:Bucket::assets");
+    let web = key("urn:pulumi:prod::shop::aws:ec2/instance:Instance::web");
+    let mut resources = vec![
+        json!({"key": orders, "monthlyBefore": 398.0, "monthlyAfter": 810.0, "basis": "company-rate"}),
+        json!({"key": data, "monthlyBefore": 11.0, "monthlyAfter": 17.6, "basis": "list-price"}),
+        json!({"key": egress, "monthlyBefore": 37.96, "monthlyAfter": null, "basis": "company-rate"}),
+        json!({"key": assets, "basis": "not-priced", "reason": "Priced from usage; no usage collected for it yet."}),
+    ];
+    if with_sames {
+        resources.push(json!({"key": web, "monthlyBefore": 70.08, "monthlyAfter": 70.08, "basis": "list-price"}));
+    }
+    serde_json::from_value(
+        json!({"formatVersion": 1, "estimateId": "est_02", "currency": "USD", "resources": resources}),
+    )
+    .unwrap()
+}
+
+/// A stack of the update fixture with an unchanged SQS queue too: of the catalogue's provider, and not priced.
+fn update_with_an_unchanged_queue() -> String {
+    let mut preview: Value = serde_json::from_str(UPDATE).unwrap();
+    let queue = json!({"urn": "urn:pulumi:prod::shop::aws:sqs/queue:Queue::jobs", "custom": true,
+                       "id": "https://sqs.eu-west-1.amazonaws.com/1/jobs", "type": "aws:sqs/queue:Queue",
+                       "inputs": {"name": "jobs"}});
+    preview["steps"].as_array_mut().unwrap().push(json!({
+        "op": "same", "urn": "urn:pulumi:prod::shop::aws:sqs/queue:Queue::jobs", "oldState": queue, "newState": queue
+    }));
+    preview.to_string()
+}
+
+#[test]
+fn every_unchanged_priced_resource_is_sent_with_its_name_kept_in_ci() {
+    let e = estimate(
+        &update_with_an_unchanged_queue(),
+        &Options {
+            with_resource_ids: true,
+            ..Options::default()
+        },
+    );
+    assert!(e.stack_listed);
+    assert_eq!(e.stack_too_large, None);
+    assert_eq!(e.stack_not_priced, 1, "the queue, counted but not sent");
+    assert!(
+        e.request.not_priced.is_empty(),
+        "notPriced is the change's: {:?}",
+        e.request.not_priced
+    );
+
+    let web = resource(&e, "urn:pulumi:prod::shop::aws:ec2/instance:Instance::web");
+    assert_eq!(web.change, ChangeKind::Same);
+    assert_eq!(web.region.as_deref(), Some("eu-west-1"));
+    assert!(web.before.is_none());
+    assert_eq!(
+        Value::Object(web.after.clone().unwrap()),
+        json!({"instanceType": "m5.large"})
+    );
+    assert!(web.resource_id.is_none(), "never the cloud ID of an unchanged resource");
+
+    let local = e.locals.iter().find(|l| l.key == web.key).unwrap();
+    assert_eq!((local.name.as_str(), local.change), ("web", ChangeKind::Same));
+    assert_eq!(local.label, "EC2 instance");
+
+    let sent = serde_json::to_string(&e.request).unwrap();
+    for never in ["i-0abc", "web", "jobs", "sqs.eu-west-1", "urn:"] {
+        assert!(!sent.contains(never), "the request carries {never:?}: {sent}");
+    }
+}
+
+#[test]
+fn the_comment_gives_the_stack_beside_the_change() {
+    let e = estimate(&update_with_an_unchanged_queue(), &Options::default());
+    let comment = render::comment(&stack_response(true), &e);
+    // The change: 810 - 398 + 17.6 - 11 - 37.96 = 380.64. The stack now: 398 + 11 + 37.96 + 70.08 = 517.04; after:
+    // 810 + 17.6 + 0 + 70.08 = 897.68. Priced: orders, data, egress, web. Not priced: assets and the queue.
+    assert!(
+        comment.starts_with(
+            "### qloudpulse: this change adds about $381 a month\n\n**The stack:** about $517 a month now, about $898 \
+             after this change, from 4 priced resources; 2 not priced.\n\n| Resource"
+        ),
+        "{comment}"
+    );
+    assert!(
+        !comment.contains("`web`"),
+        "an unchanged resource gets no line of its own: {comment}"
+    );
+    assert!(!comment.contains("show-sames"), "{comment}");
+}
+
+#[test]
+fn a_preview_without_sames_says_how_to_get_the_stack() {
+    let without_sames = UPDATE.replace("\"op\": \"same\"", "\"op\": \"read\"");
+    let e = estimate(&without_sames, &Options::default());
+    assert!(!e.stack_listed);
+    assert!(e.locals.iter().all(|l| l.change != ChangeKind::Same));
+    let comment = render::comment(&stack_response(false), &e);
+    assert!(!comment.contains("**The stack:**"), "{comment}");
+    assert!(
+        comment.contains(
+            "<sub>Run `pulumi preview --json --show-sames` to see the whole stack's monthly cost.</sub>\n\n<sub>Monthly"
+        ),
+        "{comment}"
+    );
+}
+
+#[test]
+fn an_endpoint_that_leaves_sames_unanswered_leaves_the_stack_out() {
+    let e = estimate(UPDATE, &Options::default());
+    let comment = render::comment(&stack_response(false), &e);
+    assert!(
+        comment.starts_with(
+            "### qloudpulse: this change adds about $381 a month\n\n**The stack:** its cost is left out: this \
+             endpoint does not price unchanged resources yet.\n\n"
+        ),
+        "{comment}"
+    );
+    assert!(!comment.contains("about $517"), "{comment}");
+    assert!(
+        !comment.contains("`web` EC2 instance: no answer"),
+        "an unanswered same is not a resource of the change left unpriced: {comment}"
+    );
+}
+
+#[test]
+fn a_stack_past_the_request_limit_sends_the_referenced_sames_only() {
+    let mut preview: Value = serde_json::from_str(&ecs_preview("same")).unwrap();
+    let steps = preview["steps"].as_array_mut().unwrap();
+    for i in 0..5000 {
+        let urn = format!("urn:pulumi:prod::shop::aws:ebs/volume:Volume::v{i}");
+        let state = json!({"type": "aws:ebs/volume:Volume", "custom": true, "id": format!("vol-{i}"),
+                           "inputs": {"size": 10, "type": "gp3"}});
+        steps.push(json!({"op": "same", "urn": urn, "oldState": state, "newState": state}));
+    }
+    let e = estimate(&preview.to_string(), &Options::default());
+    assert_eq!(
+        e.stack_too_large,
+        Some(5002),
+        "the service, its task definition and 5000 volumes"
+    );
+    let kinds: Vec<ChangeKind> = e.request.resources.iter().map(|r| r.change).collect();
+    assert_eq!(
+        kinds,
+        [ChangeKind::Update, ChangeKind::Same],
+        "the task definition still goes"
+    );
+
+    let service = key("urn:pulumi:prod::shop::aws:ecs/service:Service::api");
+    let response: Response = serde_json::from_value(json!({"formatVersion": 1, "currency": "USD", "resources": [
+        {"key": service, "monthlyBefore": 36.0, "monthlyAfter": 72.0, "basis": "list-price"}]}))
+    .unwrap();
+    let comment = render::comment(&response, &e);
+    assert!(
+        comment.contains(
+            "**The stack:** its cost is left out: with every unchanged resource the request would hold 5,002 \
+             resources, and one estimate takes 5,000 at most."
+        ),
+        "{comment}"
+    );
+    assert!(!comment.contains("show-sames"), "{comment}");
+
+    // One fewer volume fits, and every one goes.
+    let mut preview: Value = serde_json::from_str(&preview.to_string()).unwrap();
+    preview["steps"].as_array_mut().unwrap().pop();
+    preview["steps"].as_array_mut().unwrap().pop();
+    let e = estimate(&preview.to_string(), &Options::default());
+    assert_eq!(e.stack_too_large, None);
+    assert_eq!(e.request.resources.len(), 5000);
 }

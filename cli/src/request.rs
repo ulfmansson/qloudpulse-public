@@ -8,6 +8,9 @@ use serde_json::{Map, Value};
 /// The version of `estimate.schema.json` this client writes and reads.
 pub const FORMAT_VERSION: u32 = 1;
 
+/// The most resources one request may carry.
+pub const MAX_RESOURCES: usize = 5000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Tool {
@@ -21,7 +24,9 @@ pub enum ChangeKind {
     Update,
     Replace,
     Delete,
-    /// Left as it is, and sent because a changed resource refers to it. qloudpulse does not answer it on its own.
+    /// Left as it is: sent so that the comment can give the whole stack's cost, and so that a changed resource that
+    /// refers to it is priced with it. qloudpulse answers it with the same figure before and after and no notes; an
+    /// endpoint from before 2026-11-19 does not answer it.
     Same,
 }
 

@@ -12,6 +12,38 @@ use crate::request::{FORMAT_VERSION, Request, Response};
 /// `https://app.qloudpulse.com/api/report/public/estimates`, which keeps answering.
 pub const DEFAULT_ENDPOINT: &str = "https://api.qloudpulse.com/v1/estimates";
 
+/// Where an admin of hosted qloudpulse makes a change-event source and copies its token: Settings, Events.
+pub const TOKEN_PAGE: &str = "https://app.qloudpulse.com/ui/?events";
+
+/// Whether the endpoint is hosted qloudpulse, so that [`TOKEN_PAGE`] is where its tokens are made: https on
+/// `api.qloudpulse.com` or `app.qloudpulse.com`. An install of its own has its own address, which the client does
+/// not guess.
+pub fn is_hosted(endpoint: &str) -> bool {
+    let Some(rest) = endpoint.strip_prefix("https://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = host.split_once(':').map_or(host, |(h, _)| h);
+    ["api.qloudpulse.com", "app.qloudpulse.com"]
+        .iter()
+        .any(|h| host.eq_ignore_ascii_case(h))
+}
+
+/// What to say when the token is missing: where to make one, linked for hosted qloudpulse.
+pub fn missing_token(endpoint: &str) -> String {
+    if is_hosted(endpoint) {
+        format!(
+            "set QLOUDPULSE_TOKEN to a change-event source's token (qpev_...). An admin makes one at {TOKEN_PAGE} \
+             (Settings, Events: add a source and copy its token). Or use --dry-run to see what would be sent."
+        )
+    } else {
+        "set QLOUDPULSE_TOKEN to a change-event source's token (qpev_...), from Settings, Events in your qloudpulse. \
+         Or use --dry-run to see what would be sent."
+            .to_string()
+    }
+}
+
 const USER_AGENT: &str = concat!("qloudpulse-cli/", env!("CARGO_PKG_VERSION"));
 
 /// An endpoint the client will send a token to: https, or http to this machine for testing.
@@ -103,6 +135,28 @@ pub fn send(endpoint: &str, token: &str, request: &Request) -> Result<Response> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hosted_qloudpulse_is_its_two_hosts_over_https() {
+        for hosted in [
+            DEFAULT_ENDPOINT,
+            "https://app.qloudpulse.com/api/report/public/estimates",
+            "https://API.qloudpulse.com:443/v1/estimates",
+            "https://api.qloudpulse.com",
+        ] {
+            assert!(is_hosted(hosted), "{hosted}");
+        }
+        for other in [
+            "http://api.qloudpulse.com/v1/estimates",
+            "https://qloudpulse.example.com/v1/estimates",
+            "https://api.qloudpulse.com.example.com/v1/estimates",
+            "https://api.qloudpulse.com@example.com/v1/estimates",
+            "https://example.com/?api.qloudpulse.com",
+            "http://localhost:8080/v1/estimates",
+        ] {
+            assert!(!is_hosted(other), "{other}");
+        }
+    }
 
     #[test]
     fn https_or_local_http_only() {

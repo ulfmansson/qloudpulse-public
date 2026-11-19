@@ -23,6 +23,10 @@ fn every_help_names_the_token_and_where_it_is_made() {
             text.contains("Settings, Events"),
             "{args:?} does not say where the token is made:\n{text}"
         );
+        assert!(
+            text.contains("https://app.qloudpulse.com/ui/?events"),
+            "{args:?} does not link hosted qloudpulse's token page:\n{text}"
+        );
     }
     assert!(help(&["estimate", "-h"]).contains("QLOUDPULSE_ENDPOINT"));
 }
@@ -32,7 +36,7 @@ fn without_a_token_it_says_where_to_get_one() {
     let out = Command::new(env!("CARGO_BIN_EXE_qloudpulse"))
         .args(["estimate", "tests/fixtures/preview-update.json"])
         .env_remove("QLOUDPULSE_TOKEN")
-        // The shipped list, so the test reaches no network before the token is asked for.
+        // The shipped list, so the test reaches no network even if the token were asked for late.
         .env(
             "QLOUDPULSE_CATALOGUE",
             concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/catalogue.json"),
