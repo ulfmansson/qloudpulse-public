@@ -2,7 +2,9 @@
 //! applied; `pulumi preview` and `pulumi up` run Pulumi and price the change on the way.
 
 pub mod catalogue;
+pub mod credentials;
 pub mod link;
+pub mod login;
 pub mod pulumi;
 pub mod render;
 pub mod request;

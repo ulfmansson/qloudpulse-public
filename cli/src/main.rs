@@ -8,6 +8,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 
 use qloudpulse_cli::catalogue::Catalogue;
+use qloudpulse_cli::credentials::{self, Kept, Saved};
+use qloudpulse_cli::login::{self, SignedIn};
 use qloudpulse_cli::pulumi::{self, Options};
 use qloudpulse_cli::render::{self, Style};
 use qloudpulse_cli::request::{ChangeKind, FORMAT_VERSION, MAX_RESOURCES, Response};
@@ -27,8 +29,10 @@ Connecting to your company:
   event-source token from Settings, Events works too. On hosted qloudpulse, Your tokens is
   https://app.qloudpulse.com/ui/?profile#my-tokens.
   Put the token in QLOUDPULSE_TOKEN, for example from a CI secret, never in an option, so it
-  stays out of logs and shell history. Unset at a terminal, it is asked for there with the
-  input hidden, and used for that run only.
+  stays out of logs and shell history. On your own machine, `qloudpulse login` signs in with
+  your browser and keeps a token in the system keychain; QLOUDPULSE_TOKEN wins over it. With
+  neither, a run at a terminal offers to sign in, or takes a pasted token, hidden, for that
+  run only.
 
   Prices are your company's own when its AWS bill is connected in qloudpulse (/account/aws);
   otherwise they are list prices.";
@@ -38,10 +42,14 @@ const ENVIRONMENT: &str = "\
 Environment:
   QLOUDPULSE_TOKEN      A token of your own (qpev_...), from Your tokens under your name in
                         qloudpulse. Needed on every run but --dry-run, even one with nothing
-                        to price. Unset at a terminal, it is asked for, hidden, for that run
-                        only; in CI or without a terminal the run stops
+                        to price. Unset, the token `qloudpulse login` kept is used; with none,
+                        a run at a terminal offers to sign in with the browser; in CI or
+                        without a terminal the run stops
   QLOUDPULSE_ENDPOINT   The same as --endpoint
-  QLOUDPULSE_CATALOGUE  The same as --catalogue";
+  QLOUDPULSE_CATALOGUE  The same as --catalogue
+  QLOUDPULSE_CREDENTIALS_FILE
+                        Keep the token of `qloudpulse login` in this file (0600) instead of
+                        the system keychain";
 
 /// How `estimate` is used, shown under its help.
 const ESTIMATE_EXAMPLE: &str = "\
@@ -108,6 +116,38 @@ enum Command {
     /// Run `pulumi preview` or `pulumi up` with your own arguments, and price the change on the way.
     #[command(subcommand, after_help = CONNECT)]
     Pulumi(PulumiCommand),
+
+    /// Sign in with your browser, and keep a token on this machine for the runs after.
+    ///
+    /// Shows a one-time code and opens qloudpulse's page in your browser, where you check the code and approve it.
+    /// qloudpulse then makes a token of your own, listed under Your tokens, and the client keeps it in the system
+    /// keychain. Nothing listens on a port, so it works over SSH: open the address on any device.
+    #[command(after_help = format!("{LOGIN}\n\n{CONNECT}"))]
+    Login(AccountArgs),
+
+    /// Remove the token `qloudpulse login` kept on this machine.
+    ///
+    /// The token still works until it expires or you remove it under Your tokens in qloudpulse.
+    #[command(after_help = CONNECT)]
+    Logout(AccountArgs),
+}
+
+/// How `login` keeps its token, shown under its help.
+const LOGIN: &str = "\
+Where the token is kept:
+  In the macOS Keychain, the Windows Credential Manager or Linux's Secret Service, one for each
+  qloudpulse address. Without a keychain, as on a headless Linux machine, in a file only you can
+  read: ~/.config/qloudpulse/credentials (%APPDATA%\\qloudpulse\\credentials on Windows), or the
+  file QLOUDPULSE_CREDENTIALS_FILE names. QLOUDPULSE_TOKEN, when set, wins over the kept token.
+  A kept token past its expiry counts as none.";
+
+/// What `login` and `logout` take.
+#[derive(clap::Args)]
+struct AccountArgs {
+    /// The qloudpulse to sign in to, by the address `estimate` sends to. On hosted qloudpulse the sign-in is at
+    /// https://app.qloudpulse.com.
+    #[arg(long, env = "QLOUDPULSE_ENDPOINT", default_value = send::DEFAULT_ENDPOINT)]
+    endpoint: String,
 }
 
 #[derive(Subcommand)]
@@ -254,13 +294,98 @@ fn counts(estimate: &pulumi::Estimate) -> String {
     line
 }
 
-/// The token a run that sends needs, checked before anything else: from QLOUDPULSE_TOKEN, else asked for at a
-/// terminal. None for a dry run.
+/// The token a run that sends needs, checked before anything else: from QLOUDPULSE_TOKEN, else the one kept by
+/// `qloudpulse login`, else, at a terminal, from signing in with the browser or a pasted one. None for a dry run.
 fn token_for(args: &PriceArgs) -> Result<Option<String>> {
     if args.dry_run {
         return Ok(None);
     }
-    token::resolve(std::env::var("QLOUDPULSE_TOKEN").ok(), &args.endpoint, &mut token::Tty).map(Some)
+    let endpoint = &args.endpoint;
+    token::resolve(
+        std::env::var("QLOUDPULSE_TOKEN").ok(),
+        endpoint,
+        || kept_token(endpoint),
+        &mut token::Tty,
+        |terminal| Ok(sign_in(endpoint, terminal)?.token),
+    )
+    .map(Some)
+}
+
+/// The token `qloudpulse login` kept for the qloudpulse behind the endpoint, unless it has expired.
+fn kept_token(endpoint: &str) -> Option<String> {
+    let origin = login::origin(endpoint).ok()?;
+    credentials::system()
+        .load(&origin, credentials::now())
+        .map(|saved| saved.token)
+}
+
+/// Signs in with the browser at the qloudpulse behind the endpoint, keeps the token, and says where.
+fn sign_in(endpoint: &str, terminal: &mut impl token::Terminal) -> Result<SignedIn> {
+    let origin = login::origin(endpoint)?;
+    let signed_in = login::sign_in(
+        &origin,
+        &mut login::Network,
+        &mut login::SystemClock::default(),
+        &mut login::SystemBrowser,
+        terminal,
+    )?;
+    let saved = Saved {
+        token: signed_in.token.clone(),
+        company: signed_in.company.clone(),
+        expires_at: signed_in.expires_at.clone(),
+    };
+    let company = login::plain(&signed_in.company);
+    let lasts = match signed_in.expires_at.as_deref().and_then(credentials::day) {
+        Some(day) => format!("The token lasts until {day}"),
+        None => "The token is yours".to_string(),
+    };
+    let page = login::tokens_page(&origin);
+    match credentials::system().save(&origin, &saved) {
+        Ok(kept) => {
+            terminal.say(&format!(
+                "qloudpulse: signed in to {company}. {lasts}; remove it under Your tokens ({page})."
+            ));
+            terminal.say(&match kept {
+                Kept::Keychain => "qloudpulse: it is kept in the system keychain for the runs after this one.".into(),
+                Kept::File(path) => format!(
+                    "qloudpulse: there is no system keychain here, so it is kept in {}, which only you can read.",
+                    path.display()
+                ),
+            });
+        }
+        // The token works for this run even when it cannot be kept.
+        Err(e) => terminal.say(&format!(
+            "qloudpulse: signed in to {company}, for this run only: {e:#}. {lasts}; remove it under Your tokens \
+             ({page})."
+        )),
+    }
+    Ok(signed_in)
+}
+
+fn login_command(args: &AccountArgs) -> Result<ExitCode> {
+    let mut terminal = token::Tty;
+    sign_in(&args.endpoint, &mut terminal)?;
+    if std::env::var("QLOUDPULSE_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
+        eprintln!("qloudpulse: QLOUDPULSE_TOKEN is set in this shell, and wins over the kept token while it is.");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn logout_command(args: &AccountArgs) -> Result<ExitCode> {
+    let origin = login::origin(&args.endpoint)?;
+    let page = login::tokens_page(&origin);
+    if credentials::system().remove(&origin)? {
+        eprintln!(
+            "qloudpulse: signed out of {origin} on this machine. The token still exists in qloudpulse until it \
+             expires or you remove it under Your tokens: {page}"
+        );
+    } else {
+        eprintln!("qloudpulse: no token was kept for {origin} on this machine.");
+    }
+    if std::env::var("QLOUDPULSE_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
+        eprintln!("qloudpulse: QLOUDPULSE_TOKEN is still set in this shell, and runs use it.");
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn check_region(args: &PriceArgs) -> Result<()> {
@@ -463,6 +588,8 @@ fn main() -> ExitCode {
         Command::Estimate(args) => estimate(args),
         Command::Pulumi(PulumiCommand::Preview(args)) => pulumi_preview(args),
         Command::Pulumi(PulumiCommand::Up(args)) => pulumi_up(args),
+        Command::Login(args) => login_command(args),
+        Command::Logout(args) => logout_command(args),
     };
     match result {
         Ok(code) => code,

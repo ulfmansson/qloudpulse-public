@@ -12,6 +12,15 @@ has lines.
 
 ### Added
 
+- `qloudpulse login` signs in with your browser: it shows a one-time code, opens qloudpulse's page, and once you
+  approve there it keeps a token of your own in the macOS Keychain, the Windows Credential Manager or Linux's Secret
+  Service. Without a keychain it keeps it in a file only you can read, `~/.config/qloudpulse/credentials`, or the file
+  `QLOUDPULSE_CREDENTIALS_FILE` names. Runs use the kept token when `QLOUDPULSE_TOKEN` is unset; `QLOUDPULSE_TOKEN`
+  still wins, so CI is unchanged. It needs qloudpulse's report service with ADR 0135 (report migration V33).
+- `qloudpulse logout` removes the kept token from the machine; it still works until you remove it under Your tokens.
+- A run at a terminal with no token asks "Sign in with your browser? [Y/n]" first: yes signs in and keeps the token,
+  no asks for a token to paste, as before.
+
 - Releases are built on GitHub's runners by `.github/workflows/cli-release.yml`, never on a laptop, and every archive
   has signed SLSA build provenance: `gh attestation verify <archive> --repo ulfmansson/qloudpulse-public` checks it
   was built from this repository's tag. The signed bundle is in the release too, for `cosign` offline.
@@ -23,6 +32,7 @@ has lines.
 
 ### Changed
 
+- The missing-token error, and the one for a refused token (401), name `qloudpulse login`.
 - `release.sh --publish` no longer builds or uploads anything: it checks the commit may be released and pushes the
   tag, which starts the release workflow. The build images are pinned by digest, and the workflow's actions by
   commit.

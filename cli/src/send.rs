@@ -31,16 +31,19 @@ pub fn is_hosted(endpoint: &str) -> bool {
         .any(|h| host.eq_ignore_ascii_case(h))
 }
 
-/// What to say when the token is missing: where to make one of your own, linked for hosted qloudpulse.
+/// What to say when the token is missing: where to make one of your own, linked for hosted qloudpulse, and that
+/// `qloudpulse login` keeps one on this machine.
 pub fn missing_token(endpoint: &str) -> String {
     if is_hosted(endpoint) {
         format!(
             "set QLOUDPULSE_TOKEN to a token of your own (qpev_...). Make one at {TOKEN_PAGE} (Your tokens, under \
-             your name), or use --dry-run to see what would be sent."
+             your name), or run `qloudpulse login` at a terminal to sign in with your browser, or use --dry-run to \
+             see what would be sent."
         )
     } else {
         "set QLOUDPULSE_TOKEN to a token of your own (qpev_...). Make one under Your tokens, under your name in your \
-         qloudpulse, or use --dry-run to see what would be sent."
+         qloudpulse, or run `qloudpulse login` at a terminal to sign in with your browser, or use --dry-run to see \
+         what would be sent."
             .to_string()
     }
 }
@@ -67,7 +70,7 @@ pub fn catalogue_url(endpoint: &str) -> String {
     format!("{}/catalogue", endpoint.trim_end_matches('/'))
 }
 
-fn agent() -> ureq::Agent {
+pub(crate) fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(60)))
         .http_status_as_error(false)
@@ -113,7 +116,10 @@ pub fn send(endpoint: &str, token: &str, request: &Request) -> Result<Response> 
         let detail: String = body.chars().take(2000).collect();
         match status {
             400 => bail!("qloudpulse refused the request (400): {detail}"),
-            401 => bail!("qloudpulse refused the token (401): it is wrong, rotated or removed"),
+            401 => bail!(
+                "qloudpulse refused the token (401): it is wrong, expired, rotated or removed. Run `qloudpulse login` \
+                 for a new one, or set QLOUDPULSE_TOKEN"
+            ),
             404 => bail!("no estimates endpoint at this address (404)"),
             413 => bail!("the change is too large to send in one request (413)"),
             429 => bail!("too many requests from this token; try again in a minute (429)"),
