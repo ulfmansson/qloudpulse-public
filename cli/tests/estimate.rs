@@ -812,3 +812,149 @@ fn a_stack_past_the_request_limit_sends_the_referenced_sames_only() {
     assert_eq!(e.stack_too_large, None);
     assert_eq!(e.request.resources.len(), 5000);
 }
+
+const UNCHANGED: &str = include_str!("fixtures/preview-unchanged.json");
+
+/// The answer of `stack_response(true)` with a saving note on `orders`, rendered both ways below.
+fn noted_response() -> Response {
+    let mut r = stack_response(true);
+    let orders = key("urn:pulumi:prod::shop::aws:rds/instance:Instance::orders");
+    r.resources[0] = serde_json::from_value(json!({
+        "key": orders, "monthlyBefore": 398.0, "monthlyAfter": 810.0, "basis": "company-rate",
+        "notes": [{"kind": "saving", "text": "db.r7g.2xlarge does the same job on Graviton.", "monthlySaving": 120.0,
+                   "risk": "low"}]
+    }))
+    .unwrap();
+    r
+}
+
+#[test]
+fn the_stack_and_its_providers_alone_are_no_stack_listed() {
+    // What the user ran: `pulumi preview --json | qloudpulse estimate`, no --show-sames, nothing changed. Pulumi
+    // still lists the stack and its provider as the same.
+    let e = estimate(UNCHANGED, &Options::default());
+    assert!(!e.stack_listed);
+    let (ok, stdout, stderr) = run(
+        &["estimate", "--endpoint", "https://127.0.0.1:9/v1/estimates"],
+        UNCHANGED,
+        Some("qpev_test"),
+    );
+    assert!(ok, "{stderr}");
+    assert_eq!(stderr.trim(), "qloudpulse: 0 resources to price, 0 not priced");
+    assert_eq!(
+        stdout,
+        "### qloudpulse: nothing in this change could be priced\n\n<sub>Run `pulumi preview --json --show-sames` to \
+         see the whole stack's monthly cost.</sub>\n\n<sub>Monthly figures in USD, before tax.</sub>\n",
+        "stdout is a pipe: Markdown, and the hint rather than a stack line"
+    );
+}
+
+#[test]
+fn a_stack_listed_but_not_priced_says_so() {
+    let e = estimate(UPDATE, &Options::default());
+    assert!(e.stack_listed);
+    let resources: Vec<Value> = e
+        .request
+        .resources
+        .iter()
+        .map(|r| json!({"key": r.key, "basis": "not-priced"}))
+        .collect();
+    let response: Response =
+        serde_json::from_value(json!({"formatVersion": 1, "currency": "USD", "resources": resources})).unwrap();
+    let comment = render::comment(&response, &e);
+    assert!(
+        comment.starts_with(
+            "### qloudpulse: nothing in this change could be priced\n\n**The stack:** none of its resources could be \
+             priced; 5 not priced.\n\n"
+        ),
+        "{comment}"
+    );
+    assert!(!comment.contains("show-sames"), "{comment}");
+}
+
+#[test]
+fn the_same_answer_as_markdown_and_as_text() {
+    let e = estimate(&update_with_an_unchanged_queue(), &Options::default());
+    let response = noted_response();
+    assert_eq!(
+        render::render(&response, &e, render::Style::Markdown),
+        "### qloudpulse: this change adds about $381 a month
+
+**The stack:** about $517 a month now, about $898 after this change, from 4 priced resources; 2 not priced.
+
+| Resource | Change | Monthly now | Monthly after | Priced from |
+| --- | --- | --- | --- | --- |
+| `orders` RDS instance | changed | $398 | $810 | your rates |
+| `data` EBS volume | replaced | $11 | $18 | list price |
+| `egress` NAT gateway | removed | $38 | – | your rates |
+
+**Savings to consider**
+
+- `orders`: db.r7g.2xlarge does the same job on Graviton. About $120 a month less. Risk: low.
+
+**Not priced**
+
+- `assets` S3 bucket: Priced from usage; no usage collected for it yet.
+
+<sub>Monthly figures in USD, before tax. Estimate `est_02`.</sub>
+"
+    );
+    assert_eq!(
+        render::render(&response, &e, render::Style::Text),
+        "qloudpulse: this change adds about $381 a month
+
+The stack: about $517 a month now, about $898 after this change, from 4 priced resources; 2 not priced.
+
+Resource             Change    Monthly now  Monthly after  Priced from
+orders RDS instance  changed          $398           $810  your rates
+data EBS volume      replaced          $11            $18  list price
+egress NAT gateway   removed           $38              –  your rates
+
+Savings to consider:
+- orders: db.r7g.2xlarge does the same job on Graviton. About $120 a month less. Risk: low.
+
+Not priced:
+- assets S3 bucket: Priced from usage; no usage collected for it yet.
+
+Monthly figures in USD, before tax. Estimate est_02.
+"
+    );
+}
+
+#[test]
+fn text_has_no_markup_and_names_stay_clean() {
+    let e = estimate(
+        &UPDATE.replace("::orders\"", "::ord\\u001b[31mers`|\""),
+        &Options::default(),
+    );
+    let orders = key("urn:pulumi:prod::shop::aws:rds/instance:Instance::ord\u{1b}[31mers`|");
+    let response: Response = serde_json::from_value(json!({"formatVersion": 1, "currency": "USD", "resources": [
+        {"key": orders, "monthlyBefore": 398.0, "monthlyAfter": 810.0, "basis": "company-rate",
+         "notes": [{"kind": "info", "text": "line\u{7}one"}]}]}))
+    .unwrap();
+    let text = render::render(&response, &e, render::Style::Text);
+    for markup in ["###", "**", "<sub>", "| ---"] {
+        assert!(!text.contains(markup), "{markup:?} in {text}");
+    }
+    assert!(!text.chars().any(|c| c.is_control() && c != '\n'), "{text:?}");
+    assert!(text.contains("ord[31mers`| RDS instance"), "{text}");
+    assert!(text.contains("- ord[31mers`|: lineone"), "{text}");
+}
+
+#[test]
+fn format_text_and_the_markdown_default_through_the_binary() {
+    let args = ["estimate", "--endpoint", "https://127.0.0.1:9/v1/estimates"];
+    let (ok, stdout, stderr) = run(
+        &[&args[..], &["--format", "text"]].concat(),
+        UNCHANGED,
+        Some("qpev_test"),
+    );
+    assert!(ok, "{stderr}");
+    assert_eq!(
+        stdout,
+        "qloudpulse: nothing in this change could be priced\n\nRun pulumi preview --json --show-sames to see the \
+         whole stack's monthly cost.\n\nMonthly figures in USD, before tax.\n"
+    );
+    let (ok, stdout, _) = run(&args, UNCHANGED, Some("qpev_test"));
+    assert!(ok && stdout.starts_with("### qloudpulse: "), "{stdout}");
+}

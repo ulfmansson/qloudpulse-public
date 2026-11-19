@@ -6,4 +6,5 @@ pub mod pulumi;
 pub mod render;
 pub mod request;
 pub mod send;
+pub mod token;
 pub mod version;

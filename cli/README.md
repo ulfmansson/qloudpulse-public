@@ -67,17 +67,21 @@ pulumi preview --json --show-sames -s payments-prod | qloudpulse estimate > comm
 | `--dry-run` | Print the request that would be sent, and send nothing. The only run that needs no token |
 | `--region <region>` | The region of resources whose provider and stack name none |
 | `--with-resource-ids` | Send the cloud ID of each resource that exists before the change, so its usage comes from what it really used |
-| `--format json` | Print qloudpulse's answer as JSON instead of the comment |
+| `--format <markdown\|text\|json>` | The comment in Markdown, for a pull request, or as plain text, or qloudpulse's answer as JSON. Without it: text when stdout is a terminal, Markdown when it is piped or redirected, as in `> comment.md` |
 | `--endpoint <url>` | Another address, such as your own qloudpulse install, also `QLOUDPULSE_ENDPOINT`. https only; http only to localhost. The types are asked about at this address and `/catalogue` |
 | `--catalogue <file>` | Read the answer from a file instead of asking, also `QLOUDPULSE_CATALOGUE`, to pin what is sent. `qloudpulse estimate --dry-run` shows the types; `curl -fsS -H 'Content-Type: application/json' -d '{"formatVersion": 1, "types": ["aws:rds/instance:Instance"]}' https://api.qloudpulse.com/v1/estimates/catalogue > catalogue.json` saves an answer |
 
-The token is read from `QLOUDPULSE_TOKEN` only, never from an option: a token of your own (`qpev_…`), which anyone in
+The token is read from `QLOUDPULSE_TOKEN`, never from an option: a token of your own (`qpev_…`), which anyone in
 the company, a viewer too, makes under Your tokens, under their name in qloudpulse (on hosted qloudpulse,
 [app.qloudpulse.com/ui/?profile#my-tokens](https://app.qloudpulse.com/ui/?profile#my-tokens)). It lasts 30, 90 or 365
 days, as you choose. An admin's event-source token from Settings, Events works too, and that source can send the
 change event after `pulumi up`. Every run but
-`--dry-run` needs it, even one whose preview holds nothing to price: without it the client stops with an error before
-it reads the preview or asks for the catalogue.
+`--dry-run` needs it, even one whose preview holds nothing to price. When it is unset and you run the client at a
+terminal, it asks for the token there, with the input hidden, and reads the answer from the terminal itself
+(`/dev/tty`, or the console on Windows), never from stdin, so `pulumi preview --json | qloudpulse estimate` still
+works. It takes three tries at a value shaped like a token, uses it for that run only, writes it nowhere, and suggests
+`export QLOUDPULSE_TOKEN` for next time. In CI, or with no terminal, the client stops with an error before it reads the
+preview or asks for the catalogue.
 
 In GitHub Actions:
 
