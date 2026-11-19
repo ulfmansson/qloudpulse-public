@@ -21,8 +21,9 @@ struct Cli {
 /// How the client reaches a company, shown under every help text.
 const CONNECT: &str = "\
 Connecting to your company:
-  An admin in qloudpulse opens Settings, Events, adds a source and copies its token (qpev_...).
-  On hosted qloudpulse that is https://app.qloudpulse.com/ui/?events.
+  Anyone in the company makes their own token under Your tokens (under your name); an admin's
+  event-source token from Settings, Events works too. On hosted qloudpulse, Your tokens is
+  https://app.qloudpulse.com/ui/?profile#my-tokens.
   Put the token in QLOUDPULSE_TOKEN, for example from a CI secret. It is read from there only,
   never from an option, so it stays out of logs and shell history.
 
@@ -32,7 +33,7 @@ Connecting to your company:
 /// The environment `estimate` reads, shown under its help.
 const ESTIMATE_ENVIRONMENT: &str = "\
 Environment:
-  QLOUDPULSE_TOKEN     A change-event source's token (qpev_...), from Settings, Events in
+  QLOUDPULSE_TOKEN     A token of your own (qpev_...), from Your tokens under your name in
                        qloudpulse. Needed on every run but --dry-run, even one with nothing
                        to price
   QLOUDPULSE_ENDPOINT  The same as --endpoint

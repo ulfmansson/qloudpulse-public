@@ -71,9 +71,11 @@ pulumi preview --json --show-sames -s payments-prod | qloudpulse estimate > comm
 | `--endpoint <url>` | Another address, such as your own qloudpulse install, also `QLOUDPULSE_ENDPOINT`. https only; http only to localhost. The types are asked about at this address and `/catalogue` |
 | `--catalogue <file>` | Read the answer from a file instead of asking, also `QLOUDPULSE_CATALOGUE`, to pin what is sent. `qloudpulse estimate --dry-run` shows the types; `curl -fsS -H 'Content-Type: application/json' -d '{"formatVersion": 1, "types": ["aws:rds/instance:Instance"]}' https://api.qloudpulse.com/v1/estimates/catalogue > catalogue.json` saves an answer |
 
-The token is read from `QLOUDPULSE_TOKEN` only, never from an option: a change-event source's token (`qpev_…`), which
-an admin makes in Settings, Events in qloudpulse (on hosted qloudpulse,
-[app.qloudpulse.com/ui/?events](https://app.qloudpulse.com/ui/?events)): add a source and copy its token. The same source can send the change event after `pulumi up`. Every run but
+The token is read from `QLOUDPULSE_TOKEN` only, never from an option: a token of your own (`qpev_…`), which anyone in
+the company, a viewer too, makes under Your tokens, under their name in qloudpulse (on hosted qloudpulse,
+[app.qloudpulse.com/ui/?profile#my-tokens](https://app.qloudpulse.com/ui/?profile#my-tokens)). It lasts 30, 90 or 365
+days, as you choose. An admin's event-source token from Settings, Events works too, and that source can send the
+change event after `pulumi up`. Every run but
 `--dry-run` needs it, even one whose preview holds nothing to price: without it the client stops with an error before
 it reads the preview or asks for the catalogue.
 

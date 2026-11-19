@@ -20,12 +20,12 @@ fn every_help_names_the_token_and_where_it_is_made() {
             "{args:?} does not name QLOUDPULSE_TOKEN:\n{text}"
         );
         assert!(
-            text.contains("Settings, Events"),
-            "{args:?} does not say where the token is made:\n{text}"
+            text.contains("Your tokens") && text.contains("Settings, Events"),
+            "{args:?} does not say where a token of your own, or an event source's, is made:\n{text}"
         );
         assert!(
-            text.contains("https://app.qloudpulse.com/ui/?events"),
-            "{args:?} does not link hosted qloudpulse's token page:\n{text}"
+            text.contains("https://app.qloudpulse.com/ui/?profile#my-tokens"),
+            "{args:?} does not link hosted qloudpulse's Your tokens page:\n{text}"
         );
     }
     assert!(help(&["estimate", "-h"]).contains("QLOUDPULSE_ENDPOINT"));
@@ -46,7 +46,7 @@ fn without_a_token_it_says_where_to_get_one() {
     assert!(!out.status.success());
     let err = String::from_utf8(out.stderr).unwrap();
     assert!(
-        err.contains("QLOUDPULSE_TOKEN") && err.contains("Settings, Events"),
+        err.contains("QLOUDPULSE_TOKEN") && err.contains("https://app.qloudpulse.com/ui/?profile#my-tokens"),
         "{err}"
     );
 }
