@@ -22,6 +22,7 @@ struct Cli {
 const CONNECT: &str = "\
 Connecting to your company:
   An admin in qloudpulse opens Settings, Events, adds a source and copies its token (qpev_...).
+  On hosted qloudpulse that is https://app.qloudpulse.com/ui/?events.
   Put the token in QLOUDPULSE_TOKEN, for example from a CI secret. It is read from there only,
   never from an option, so it stays out of logs and shell history.
 
@@ -133,22 +134,23 @@ fn counts(estimate: &pulumi::Estimate) -> String {
     line
 }
 
-/// The token from QLOUDPULSE_TOKEN, trimmed, or the error that says where to get one.
-fn token() -> Result<String> {
+/// The token from QLOUDPULSE_TOKEN, trimmed, or the error that says where the endpoint's tokens are made.
+fn token(endpoint: &str) -> Result<String> {
     std::env::var("QLOUDPULSE_TOKEN")
         .ok()
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
-        .context(
-            "set QLOUDPULSE_TOKEN to a change-event source's token (qpev_...), from Settings, Events in qloudpulse, \
-             or use --dry-run",
-        )
+        .with_context(|| send::missing_token(endpoint))
 }
 
 fn estimate(args: &EstimateArgs) -> Result<()> {
     // Every run but a dry run needs the token, whatever the preview holds: checked first, so a missing one is said
     // before the preview is read or anything reaches the network.
-    let token = if args.dry_run { None } else { Some(token()?) };
+    let token = if args.dry_run {
+        None
+    } else {
+        Some(token(&args.endpoint)?)
+    };
     if let Some(region) = &args.region
         && !pulumi::is_region(region)
     {

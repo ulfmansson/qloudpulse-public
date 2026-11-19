@@ -23,6 +23,10 @@ fn every_help_names_the_token_and_where_it_is_made() {
             text.contains("Settings, Events"),
             "{args:?} does not say where the token is made:\n{text}"
         );
+        assert!(
+            text.contains("https://app.qloudpulse.com/ui/?events"),
+            "{args:?} does not link hosted qloudpulse's token page:\n{text}"
+        );
     }
     assert!(help(&["estimate", "-h"]).contains("QLOUDPULSE_ENDPOINT"));
 }

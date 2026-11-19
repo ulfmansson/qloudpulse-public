@@ -412,8 +412,23 @@ fn nothing_to_price_still_needs_a_token() {
     assert!(stdout.is_empty(), "{stdout}");
     assert_eq!(
         stderr.trim(),
+        "qloudpulse: set QLOUDPULSE_TOKEN to a change-event source's token (qpev_...). An admin makes one at \
+         https://app.qloudpulse.com/ui/?events (Settings, Events: add a source and copy its token). Or use --dry-run \
+         to see what would be sent.",
+        "the default endpoint is hosted qloudpulse: the page is linked"
+    );
+
+    let (ok, _, stderr) = run(
+        &["estimate", "--endpoint", "https://qloudpulse.example.com/v1/estimates"],
+        r#"{"steps": []}"#,
+        None,
+    );
+    assert!(!ok);
+    assert_eq!(
+        stderr.trim(),
         "qloudpulse: set QLOUDPULSE_TOKEN to a change-event source's token (qpev_...), from Settings, Events in \
-         qloudpulse, or use --dry-run"
+         your qloudpulse. Or use --dry-run to see what would be sent.",
+        "an install of its own: no address guessed"
     );
 
     let (ok, _, stderr) = run(&["estimate"], r#"{"steps": []}"#, Some("   "));
