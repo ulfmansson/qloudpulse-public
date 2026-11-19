@@ -102,9 +102,14 @@ catalogue:
   each one names (from Pulumi's `propertyDependencies`), so qloudpulse can price the two together;
 - with `--with-resource-ids`, its cloud ID.
 
-A resource a changed one refers to and the change leaves the same is sent too, as `"change": "same"`, with its
-catalogue attributes only. Pulumi lists unchanged resources only with `pulumi preview --json --show-sames`; without it
-the reference's key is sent and qloudpulse says what it could not price.
+Every resource the change leaves the same, of a type in the catalogue, is sent too, as `"change": "same"`: its type,
+region, catalogue attributes and key, never its cloud ID, even with `--with-resource-ids`. qloudpulse answers each
+with one figure for now and after, so the comment gives the whole stack's monthly cost beside what the change adds,
+and prices a changed resource with one it refers to, such as an ECS service with its task definition. Pulumi lists
+unchanged resources only with `pulumi preview --json --show-sames`; without it the comment says so, and a
+reference's key is sent without the resource. When the unchanged resources would take a request past its 5,000, only
+those a changed one refers to go, and the comment leaves the stack's cost out. An endpoint from before 2026-11-19
+does not answer unchanged resources, and the comment says so instead of a stack line.
 
 Types of the catalogue's providers (`aws`) that it does not list are counted by type. Nothing else from the preview is sent: no names, tags, config,
 outputs or secrets. `--dry-run` prints exactly what would go. The request and the answer are

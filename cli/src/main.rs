@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::io::Read as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -7,7 +8,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use qloudpulse_cli::catalogue::Catalogue;
 use qloudpulse_cli::pulumi::{self, Options};
-use qloudpulse_cli::request::{ChangeKind, FORMAT_VERSION, Response};
+use qloudpulse_cli::request::{ChangeKind, FORMAT_VERSION, MAX_RESOURCES, Response};
 use qloudpulse_cli::{render, send, version};
 
 #[derive(Parser)]
@@ -100,6 +101,37 @@ fn read_input(file: Option<&PathBuf>) -> Result<String> {
     Ok(input)
 }
 
+/// What is about to be priced, for stderr: the change's resources, and the stack's unchanged ones.
+fn counts(estimate: &pulumi::Estimate) -> String {
+    let request = &estimate.request;
+    let same = request
+        .resources
+        .iter()
+        .filter(|r| r.change == ChangeKind::Same)
+        .count();
+    let not_priced: u32 = request.not_priced.iter().map(|n| n.count).sum();
+    let mut line = format!(
+        "{} resources to price, {not_priced} not priced",
+        request.resources.len() - same
+    );
+    if let Some(n) = estimate.stack_too_large {
+        let _ = write!(
+            line,
+            "; the stack's cost is left out, as its {n} resources are more than one estimate takes ({MAX_RESOURCES})"
+        );
+        if same > 0 {
+            let _ = write!(line, ", and {same} unchanged that they refer to go");
+        }
+    } else if estimate.stack_listed {
+        let _ = write!(
+            line,
+            "; and {same} unchanged, for the stack's cost, {} not priced",
+            estimate.stack_not_priced
+        );
+    }
+    line
+}
+
 fn estimate(args: &EstimateArgs) -> Result<()> {
     if let Some(region) = &args.region
         && !pulumi::is_region(region)
@@ -126,29 +158,15 @@ fn estimate(args: &EstimateArgs) -> Result<()> {
     let estimate = pulumi::estimate(&preview, &catalogue, &options);
     let request = &estimate.request;
 
-    let not_priced: u32 = request.not_priced.iter().map(|n| n.count).sum();
-    let same = request
-        .resources
-        .iter()
-        .filter(|r| r.change == ChangeKind::Same)
-        .count();
-    let referred = if same > 0 {
-        format!(" (and {same} unchanged that they refer to)")
-    } else {
-        String::new()
-    };
-    eprintln!(
-        "qloudpulse: {} resources to price{referred}, {} not priced",
-        request.resources.len() - same,
-        not_priced
-    );
+    eprintln!("qloudpulse: {}", counts(&estimate));
 
     if args.dry_run {
         println!("{}", serde_json::to_string_pretty(request)?);
         return Ok(());
     }
 
-    let response = if request.resources.len() == same {
+    // Nothing to price: no call, and no token needed. Unchanged resources alone are still sent, for the stack's cost.
+    let response = if request.resources.is_empty() {
         Response {
             format_version: FORMAT_VERSION,
             estimate_id: None,
@@ -168,7 +186,7 @@ fn estimate(args: &EstimateArgs) -> Result<()> {
 
     match args.format {
         Format::Markdown => {
-            print!("{}", render::comment(&response, &estimate.locals, &request.not_priced));
+            print!("{}", render::comment(&response, &estimate));
             if let Some(line) = &newer {
                 println!("\n<sub>{line}</sub>");
             }

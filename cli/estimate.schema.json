@@ -21,7 +21,7 @@
         "resources": {
           "type": "array",
           "maxItems": 5000,
-          "description": "The resources the change creates, updates, replaces or deletes, of the catalogue's types, and those it leaves the same that one of them refers to.",
+          "description": "The resources the change creates, updates, replaces or deletes, of the catalogue's types, and those it leaves the same: every one the preview lists (with --show-sames), so that the comment can give the whole stack's cost, or at least those a changed one refers to.",
           "items": { "$ref": "#/$defs/resourceChange" }
         },
         "notPriced": {
@@ -51,7 +51,7 @@
         },
         "change": {
           "enum": ["create", "update", "replace", "delete", "same"],
-          "description": "same: left as it is, and sent because a changed resource refers to it; it is not answered on its own."
+          "description": "same: left as it is. Answered too, with the same figure before and after and no notes, so that the client can add up what the stack costs; a changed resource that refers to it is priced with it."
         },
         "type": {
           "type": "string",
@@ -172,6 +172,7 @@
         "currency": { "const": "USD" },
         "resources": {
           "type": "array",
+          "description": "One answer per resource sent, those left the same included (an endpoint from before 2026-11-19 left them out).",
           "items": { "$ref": "#/$defs/resourceEstimate" }
         }
       }
