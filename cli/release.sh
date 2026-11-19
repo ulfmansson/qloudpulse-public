@@ -243,6 +243,9 @@ mkdir -p "$BUILD"
 # carries no user name.
 REMAP="--remap-path-prefix=$CLI=/src --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo --remap-path-prefix=$HOME=/home"
 ME=$(id -un)
+# The containers build as root; what they leave in the mounted /out is handed to the user running this, so the files
+# can be checked, packed and removed on a Linux host too (Docker Desktop on a Mac maps the owner on its own).
+OWNER="$(id -u):$(id -g)"
 
 check_binary() { # target binary
   local t=$1 bin=$2 info
@@ -266,10 +269,11 @@ check_binary() { # target binary
       ;;
   esac
   # Not grep -q after strings: it stops at the first match, strings dies of SIGPIPE, and with pipefail the pipeline
-  # fails, so a match would read as none. -a reads the whole file.
-  if strings -a "$bin" | grep -F -e "$HOME" -e "$ME" -e "${CARGO_HOME:-$HOME/.cargo}" >/dev/null; then
-    fail "$t: the binary holds a path of this machine ($HOME, the user name or CARGO_HOME)"
-  fi
+  # fails, so a match would read as none. -a reads the whole file. The user name counts as a path component only:
+  # on a CI runner it is a word such as "runner", which a binary can hold for other reasons.
+  local leaked
+  leaked=$(strings -a "$bin" | grep -F -e "$HOME" -e "/$ME/" -e "${CARGO_HOME:-$HOME/.cargo}" | head -3 || true)
+  [ -z "$leaked" ] || fail "$t: the binary holds a path of this machine ($HOME, /$ME/ or CARGO_HOME): $leaked"
 }
 
 build_linux() { # target
@@ -282,11 +286,12 @@ build_linux() { # target
   mkdir -p "$BUILD/$t"
   # The source is mounted read-only; --locked keeps Cargo.lock as it is. The crates cache is a named volume.
   docker run --rm --platform "$platform" \
-    -v "$CLI:/src:ro" -v qloudpulse-cli-cargo:/usr/local/cargo/registry -v "$BUILD/$t:/out" \
+    -v "$CLI:/src:ro" -v qloudpulse-cli-cargo:/usr/local/cargo/registry -v "$BUILD/$t:/out" -e OWNER="$OWNER" \
     -w /src -e CARGO_TARGET_DIR=/tmp/target "$RUST_IMAGE" \
     sh -euc 'apk add --no-cache musl-dev >/dev/null
              cargo build --release --locked --quiet
              cp /tmp/target/release/qloudpulse /out/qloudpulse
+             chown -R "$OWNER" /out
              /out/qloudpulse --version' >"$BUILD/$t/version"
 }
 
@@ -297,7 +302,7 @@ build_windows() { # target
   # Cross-built with mingw-w64, the C runtime linked in (+crt-static), so the .exe runs on its own; the DLLs it
   # imports are listed for check_binary.
   docker run --rm \
-    -v "$CLI:/src:ro" -v qloudpulse-cli-cargo:/usr/local/cargo/registry -v "$BUILD/$t:/out" \
+    -v "$CLI:/src:ro" -v qloudpulse-cli-cargo:/usr/local/cargo/registry -v "$BUILD/$t:/out" -e OWNER="$OWNER" \
     -w /src -e CARGO_TARGET_DIR=/tmp/target -e RUSTFLAGS="-C target-feature=+crt-static" \
     -e CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc "$WINDOWS_IMAGE" \
     sh -euc 'apt-get update -qq >/dev/null
@@ -305,7 +310,8 @@ build_windows() { # target
              rustup target add x86_64-pc-windows-gnu >/dev/null 2>&1
              cargo build --release --locked --quiet --target x86_64-pc-windows-gnu
              cp /tmp/target/x86_64-pc-windows-gnu/release/qloudpulse.exe /out/qloudpulse.exe
-             x86_64-w64-mingw32-objdump -p /out/qloudpulse.exe | sed -n "s/^[[:space:]]*DLL Name: //p" | sort -u >/out/dlls'
+             x86_64-w64-mingw32-objdump -p /out/qloudpulse.exe | sed -n "s/^[[:space:]]*DLL Name: //p" | sort -u >/out/dlls
+             chown -R "$OWNER" /out'
   windows_version "$t"
 }
 
@@ -342,14 +348,15 @@ ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH=/usr/local/ca
 RUN rustup target add $t
 EOF
   docker run --rm \
-    -v "$CLI:/src:ro" -v qloudpulse-cli-cargo:/usr/local/cargo/registry -v "$BUILD/$t:/out" \
+    -v "$CLI:/src:ro" -v qloudpulse-cli-cargo:/usr/local/cargo/registry -v "$BUILD/$t:/out" -e OWNER="$OWNER" \
     -w /src -e CARGO_TARGET_DIR=/tmp/target -e RUSTFLAGS="-C target-feature=+crt-static" \
     -e CARGO_TARGET_AARCH64_PC_WINDOWS_GNULLVM_LINKER=aarch64-w64-mingw32-clang \
     -e CC_aarch64_pc_windows_gnullvm=aarch64-w64-mingw32-clang -e AR_aarch64_pc_windows_gnullvm=llvm-ar \
     -e T="$t" "$image" \
     sh -euc 'cargo build --release --locked --quiet --target "$T"
              cp "/tmp/target/$T/release/qloudpulse.exe" /out/qloudpulse.exe
-             llvm-readobj --coff-imports /out/qloudpulse.exe | sed -n "s/^[[:space:]]*Name: //p" | sort -u >/out/dlls'
+             llvm-readobj --coff-imports /out/qloudpulse.exe | sed -n "s/^[[:space:]]*Name: //p" | sort -u >/out/dlls
+             chown -R "$OWNER" /out'
   windows_version "$t"
 }
 
