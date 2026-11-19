@@ -9,27 +9,30 @@ usage() {
 Usage: cli/release.sh [--publish] [--targets "<target> ..."] [--out <dir>]
 
   --publish   create the release qloudpulse-cli-<version> on GitHub with the files it built
-  --targets   build only these targets (default: all five below)
+  --targets   build only these targets (default: all six below)
   --out       where the files go (default: cli/target/dist/<version>)
 
 Targets:
   x86_64-unknown-linux-musl  aarch64-unknown-linux-musl   static, built in Docker
   aarch64-apple-darwin       x86_64-apple-darwin          built here with rustup (macOS only)
   x86_64-pc-windows-gnu                                   built in Docker with mingw-w64, CRT linked in
+  aarch64-pc-windows-gnullvm                              Windows on ARM, built in Docker with llvm-mingw
 
 Environment:
   RUST_IMAGE     the image of the Linux builds (default rust:1.88-alpine, the client's rust-version)
-  WINDOWS_IMAGE  the image of the Windows build (default rust:1.88-bookworm)
+  WINDOWS_IMAGE  the image of the x86_64 Windows build (default rust:1.88-bookworm)
+  LLVM_MINGW_IMAGE  the llvm-mingw toolchain of the arm64 Windows build (default mstorsjo/llvm-mingw:20261104)
   REPO         the GitHub repository to release in (default ulfmansson/qloudpulse-public)
 EOF
 }
 
-ALL_TARGETS="x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-gnu"
+ALL_TARGETS="x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-gnu aarch64-pc-windows-gnullvm"
 TARGETS=$ALL_TARGETS
 PUBLISH=0
 OUT=""
 RUST_IMAGE=${RUST_IMAGE:-rust:1.88-alpine}
 WINDOWS_IMAGE=${WINDOWS_IMAGE:-rust:1.88-bookworm}
+LLVM_MINGW_IMAGE=${LLVM_MINGW_IMAGE:-mstorsjo/llvm-mingw:20261104}
 REPO=${REPO:-ulfmansson/qloudpulse-public}
 
 while [ $# -gt 0 ]; do
@@ -57,6 +60,17 @@ COMMIT=$(git -C "$ROOT" rev-parse HEAD)
 for t in $TARGETS; do
   case " $ALL_TARGETS " in *" $t "*) ;; *) fail "unknown target $t" ;; esac
 done
+
+# Archives are owned by root:0, whichever tar is first on PATH: bsdtar (macOS's /usr/bin/tar) and GNU tar (a devbox
+# or Linux shell) spell it differently. COPYFILE_DISABLE=1 keeps bsdtar from adding AppleDouble (._*) files and
+# --no-xattrs keeps out macOS attributes such as com.apple.provenance, which GNU tar warns about on extract; GNU tar
+# stores neither unless asked.
+TAR_VERSION=$(tar --version 2>/dev/null || true)
+case "$TAR_VERSION" in
+  *"GNU tar"*) TAR_OWNER="--owner=root:0 --group=root:0" ;;
+  *bsdtar*) TAR_OWNER="--uid 0 --gid 0 --uname root --gname root --no-xattrs --no-mac-metadata" ;;
+  *) fail "tar is neither GNU tar nor bsdtar: $(echo "$TAR_VERSION" | head -1)" ;;
+esac
 
 # A release is built from a commit everyone can see, so its source is the tag's.
 if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
@@ -101,18 +115,21 @@ check_binary() { # target binary
     aarch64-apple-darwin) echo "$info" | grep -q 'Mach-O 64-bit.*arm64' || fail "$t: not an arm64 Mach-O: $info" ;;
     x86_64-apple-darwin) echo "$info" | grep -q 'Mach-O 64-bit.*x86_64' || fail "$t: not an x86_64 Mach-O: $info" ;;
     x86_64-pc-windows-gnu) echo "$info" | grep -q 'PE32+ executable.*x86-64' || fail "$t: not an x86-64 PE: $info" ;;
+    aarch64-pc-windows-gnullvm) echo "$info" | grep -q 'PE32+ executable.*Aarch64' || fail "$t: not an arm64 PE: $info" ;;
   esac
   case "$t" in
     *-linux-musl) echo "$info" | grep -q 'statically linked\|static-pie linked' || fail "$t: not static: $info" ;;
-    *-windows-gnu)
-      # Only DLLs every Windows has: no libgcc or winpthread to ship beside the .exe.
+    *-windows-*)
+      # Only DLLs every Windows has: no libgcc, winpthread or libunwind to ship beside the .exe.
       local extra
       extra=$(grep -viE '^(kernel32|ntdll|advapi32|bcrypt|bcryptprimitives|ws2_32|userenv|msvcrt|ucrtbase|secur32|crypt32|user32|shell32|ole32|oleaut32|synchronization|api-ms-win-[a-z0-9-]+)\.dll$' \
         "$BUILD/$t/dlls" || true)
       [ -z "$extra" ] || fail "$t: needs DLLs a Windows machine does not have: $(echo $extra)"
       ;;
   esac
-  if strings "$bin" | grep -qF -e "$HOME" -e "$ME" -e "${CARGO_HOME:-$HOME/.cargo}"; then
+  # Not grep -q after strings: it stops at the first match, strings dies of SIGPIPE, and with pipefail the pipeline
+  # fails, so a match would read as none. -a reads the whole file.
+  if strings -a "$bin" | grep -F -e "$HOME" -e "$ME" -e "${CARGO_HOME:-$HOME/.cargo}" >/dev/null; then
     fail "$t: the binary holds a path of this machine ($HOME, the user name or CARGO_HOME)"
   fi
 }
@@ -151,13 +168,50 @@ build_windows() { # target
              cargo build --release --locked --quiet --target x86_64-pc-windows-gnu
              cp /tmp/target/x86_64-pc-windows-gnu/release/qloudpulse.exe /out/qloudpulse.exe
              x86_64-w64-mingw32-objdump -p /out/qloudpulse.exe | sed -n "s/^[[:space:]]*DLL Name: //p" | sort -u >/out/dlls'
-  # It cannot run here; its version is the one its User-Agent names.
-  if strings "$BUILD/$t/qloudpulse.exe" | grep -qF "qloudpulse-cli/$VERSION"; then
+  windows_version "$t"
+}
+
+windows_version() { # target
+  local t=$1
+  # It cannot run here; its version is the one its User-Agent names. (No grep -q: see check_binary.)
+  if strings -a "$BUILD/$t/qloudpulse.exe" | grep -F "qloudpulse-cli/$VERSION" >/dev/null; then
     echo "qloudpulse $VERSION" >"$BUILD/$t/version"
     echo "  (not run here: a Windows binary; its version is read from the file)"
   else
     echo "unknown" >"$BUILD/$t/version"
   fi
+}
+
+build_windows_arm64() { # target
+  local t=$1 image
+  command -v docker >/dev/null || fail "the Windows build needs Docker"
+  mkdir -p "$BUILD/$t"
+  # Debian's mingw-w64 has no arm64 compiler, so this is Rust's aarch64-pc-windows-gnullvm target (tier 2 with host
+  # tools) linked with llvm-mingw, the LLVM toolchain the Rust docs name for it. The other route,
+  # aarch64-pc-windows-msvc with cargo-xwin, downloads Microsoft's CRT and SDK under their licence on every machine
+  # that builds; llvm-mingw is open source and pinned here by tag. ring compiles its arm64 Windows assembly
+  # (pregenerated *-win64.S) with clang, which llvm-mingw is. +crt-static links libunwind in; the C runtime is the
+  # UCRT, which Windows 10 and later carry (api-ms-win-crt-*.dll), as every Windows on ARM does.
+  # The image is llvm-mingw with the client's Rust copied in, built once and kept by Docker.
+  image="qloudpulse-cli-llvm-mingw:$(echo "$LLVM_MINGW_IMAGE-$WINDOWS_IMAGE" | tr -c 'A-Za-z0-9.\n-' -)"
+  docker build -q -t "$image" - >/dev/null <<EOF
+FROM $WINDOWS_IMAGE AS rust
+FROM $LLVM_MINGW_IMAGE
+COPY --from=rust /usr/local/rustup /usr/local/rustup
+COPY --from=rust /usr/local/cargo /usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH=/usr/local/cargo/bin:\$PATH
+RUN rustup target add $t
+EOF
+  docker run --rm \
+    -v "$CLI:/src:ro" -v qloudpulse-cli-cargo:/usr/local/cargo/registry -v "$BUILD/$t:/out" \
+    -w /src -e CARGO_TARGET_DIR=/tmp/target -e RUSTFLAGS="-C target-feature=+crt-static" \
+    -e CARGO_TARGET_AARCH64_PC_WINDOWS_GNULLVM_LINKER=aarch64-w64-mingw32-clang \
+    -e CC_aarch64_pc_windows_gnullvm=aarch64-w64-mingw32-clang -e AR_aarch64_pc_windows_gnullvm=llvm-ar \
+    -e T="$t" "$image" \
+    sh -euc 'cargo build --release --locked --quiet --target "$T"
+             cp "/tmp/target/$T/release/qloudpulse.exe" /out/qloudpulse.exe
+             llvm-readobj --coff-imports /out/qloudpulse.exe | sed -n "s/^[[:space:]]*Name: //p" | sort -u >/out/dlls'
+  windows_version "$t"
 }
 
 build_macos() { # target
@@ -185,22 +239,22 @@ for t in $TARGETS; do
   case "$t" in
     *-linux-musl) build_linux "$t" ;;
     *-apple-darwin) build_macos "$t" ;;
-    *-windows-gnu) build_windows "$t" ;;
+    x86_64-pc-windows-gnu) build_windows "$t" ;;
+    aarch64-pc-windows-gnullvm) build_windows_arm64 "$t" ;;
   esac
-  case "$t" in *-windows-gnu) exe=qloudpulse.exe ;; *) exe=qloudpulse ;; esac
+  case "$t" in *-windows-*) exe=qloudpulse.exe ;; *) exe=qloudpulse ;; esac
   check_binary "$t" "$BUILD/$t/$exe"
   [ "$(cat "$BUILD/$t/version")" = "qloudpulse $VERSION" ] \
     || fail "$t says $(cat "$BUILD/$t/version"), not qloudpulse $VERSION"
   chmod 755 "$BUILD/$t/$exe"
   # No user name or extended attributes in the archive.
   case "$t" in
-    *-windows-gnu)
+    *-windows-*)
       (cd "$BUILD/$t" && TZ=UTC zip -q -X "$OUT/qloudpulse-$VERSION-$t.zip" "$exe")
       echo "  qloudpulse-$VERSION-$t.zip"
       ;;
     *)
-      COPYFILE_DISABLE=1 tar -czf "$OUT/qloudpulse-$VERSION-$t.tar.gz" \
-        --uid 0 --gid 0 --uname root --gname root -C "$BUILD/$t" "$exe"
+      COPYFILE_DISABLE=1 tar -czf "$OUT/qloudpulse-$VERSION-$t.tar.gz" $TAR_OWNER -C "$BUILD/$t" "$exe"
       echo "  qloudpulse-$VERSION-$t.tar.gz"
       ;;
   esac
@@ -229,7 +283,7 @@ On Windows (PowerShell):
 \`\`\`powershell
 \$Version = "$VERSION"
 \$Base = "https://github.com/$REPO/releases/download/$TAG"
-\$Zip = "qloudpulse-\$Version-x86_64-pc-windows-gnu.zip"
+\$Zip = "qloudpulse-\$Version-x86_64-pc-windows-gnu.zip"   # on Windows on ARM: aarch64-pc-windows-gnullvm
 Invoke-WebRequest "\$Base/\$Zip" -OutFile \$Zip
 Invoke-WebRequest "\$Base/SHA256SUMS" -OutFile SHA256SUMS
 \$Want = (Select-String -Path SHA256SUMS -Pattern ([regex]::Escape(\$Zip))).Line.Split(" ")[0]
