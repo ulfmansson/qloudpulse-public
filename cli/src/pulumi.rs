@@ -90,6 +90,24 @@ pub struct Estimate {
     /// When sending every unchanged resource would pass [`MAX_RESOURCES`], how many resources that would have been:
     /// then only those a changed one refers to are sent, and the comment leaves the stack's cost out.
     pub stack_too_large: Option<usize>,
+    /// The changed resources of types AWS charges nothing for of their own, by type, in the order first met. They are
+    /// not sent; unchanged ones of such types are neither sent nor counted.
+    pub free: Vec<Free>,
+}
+
+/// Changed resources of one type AWS charges nothing for of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Free {
+    pub type_token: String,
+    pub reason: String,
+    pub count: u32,
+}
+
+impl Free {
+    /// What the comment calls the type: the type token's last part, such as `Role`.
+    pub fn label(&self) -> &str {
+        self.type_token.rsplit(':').next().unwrap_or(&self.type_token)
+    }
 }
 
 pub fn parse(json: &str) -> Result<Preview> {
@@ -101,6 +119,30 @@ pub fn key(urn: &str) -> String {
     let digest = Sha256::digest(urn.as_bytes());
     let hex: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
     format!("r{hex}")
+}
+
+/// The most characters a stack's name may have.
+pub const MAX_STACK: usize = 200;
+
+/// The stack a preview is of, `project/stack`, from its URNs, `urn:pulumi:<stack>::<project>::…`: only when every
+/// URN names the same one, and it is at most [`MAX_STACK`] characters with no control characters.
+pub fn stack_of(preview: &Preview) -> Option<String> {
+    let mut found: Option<(&str, &str)> = None;
+    for step in &preview.steps {
+        let mut parts = step.urn.strip_prefix("urn:pulumi:")?.split("::");
+        let (stack, project) = (parts.next()?, parts.next()?);
+        if stack.is_empty() || project.is_empty() {
+            return None;
+        }
+        match found {
+            None => found = Some((stack, project)),
+            Some(f) if f != (stack, project) => return None,
+            Some(_) => {}
+        }
+    }
+    let (stack, project) = found?;
+    let name = format!("{project}/{stack}");
+    (name.chars().count() <= MAX_STACK && !name.chars().any(char::is_control)).then_some(name)
 }
 
 /// The resource's name: the URN's last part.
@@ -319,6 +361,7 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
     let mut resources = Vec::new();
     let mut locals = Vec::new();
     let mut not_priced: BTreeMap<String, u32> = BTreeMap::new();
+    let mut free: Vec<Free> = Vec::new();
     let mut sent: BTreeSet<&str> = BTreeSet::new();
     let mut referred: Vec<&str> = Vec::new();
 
@@ -329,6 +372,17 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
             continue;
         };
         if !state.custom || state.type_token.starts_with("pulumi:") {
+            continue;
+        }
+        if let Some(f) = catalogue.free(&state.type_token) {
+            match free.iter_mut().find(|x| x.type_token == f.token) {
+                Some(x) => x.count += 1,
+                None => free.push(Free {
+                    type_token: f.token.clone(),
+                    reason: f.reason.clone(),
+                    count: 1,
+                }),
+            }
             continue;
         }
         let Some(priced) = catalogue.priced(&state.type_token) else {
@@ -413,7 +467,7 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
         }
         if catalogue.priced(&state.type_token).is_some() {
             sames.push(urn);
-        } else if catalogue.counts(&state.type_token) {
+        } else if catalogue.free(&state.type_token).is_none() && catalogue.counts(&state.type_token) {
             stack_not_priced += 1;
         }
     }
@@ -461,6 +515,7 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
         request: Request {
             format_version: FORMAT_VERSION,
             tool: Tool::Pulumi,
+            stack: stack_of(preview),
             resources,
             not_priced: not_priced
                 .into_iter()
@@ -471,6 +526,7 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
         stack_listed,
         stack_not_priced,
         stack_too_large,
+        free,
     }
 }
 

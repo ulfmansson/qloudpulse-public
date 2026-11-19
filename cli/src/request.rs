@@ -48,6 +48,10 @@ impl ChangeKind {
 pub struct Request {
     pub format_version: u32,
     pub tool: Tool,
+    /// The project and stack, `project/stack`, from the resources' URNs when they all agree. Resource names are never
+    /// sent; an endpoint from before 2026-11-19 ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stack: Option<String>,
     pub resources: Vec<ResourceChange>,
     pub not_priced: Vec<NotPriced>,
 }
@@ -84,6 +88,9 @@ pub struct Response {
     #[serde(default)]
     pub estimate_id: Option<String>,
     pub currency: String,
+    /// The estimate's page in qloudpulse's reports; the client adds the names of what it sent after `#`.
+    #[serde(default)]
+    pub url: Option<String>,
     pub resources: Vec<ResourceEstimate>,
 }
 

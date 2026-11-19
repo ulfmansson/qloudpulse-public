@@ -80,7 +80,11 @@ fn only_the_listed_attributes_leave_ci() {
         "the secret password is not a priced attribute, so it is not named"
     );
 
-    let sent = serde_json::to_string(&e.request).unwrap();
+    // The project and stack are named, as `stack` (qloudpulse's ADR 0133); nothing else of the URNs goes.
+    assert_eq!(e.request.stack.as_deref(), Some("shop/dev"));
+    let mut without_stack = e.request.clone();
+    without_stack.stack = None;
+    let sent = serde_json::to_string(&without_stack).unwrap();
     for never in [
         "orders",
         "shop",
@@ -957,4 +961,259 @@ fn format_text_and_the_markdown_default_through_the_binary() {
     );
     let (ok, stdout, _) = run(&args, UNCHANGED, Some("qpev_test"));
     assert!(ok && stdout.starts_with("### qloudpulse: "), "{stdout}");
+}
+
+#[test]
+fn the_stack_is_named_when_every_urn_agrees() {
+    let e = estimate(UPDATE, &Options::default());
+    assert_eq!(e.request.stack.as_deref(), Some("shop/prod"));
+    let (ok, stdout, stderr) = run(&["estimate", "--dry-run"], UPDATE, None);
+    assert!(ok, "{stderr}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&stdout).unwrap()["stack"],
+        "shop/prod",
+        "--dry-run shows it"
+    );
+
+    let mixed = UPDATE.replacen("urn:pulumi:prod::shop::", "urn:pulumi:staging::shop::", 1);
+    assert_eq!(
+        estimate(&mixed, &Options::default()).request.stack,
+        None,
+        "two stacks: none named"
+    );
+    let other_project = UPDATE.replacen("urn:pulumi:prod::shop::", "urn:pulumi:prod::billing::", 1);
+    assert_eq!(estimate(&other_project, &Options::default()).request.stack, None);
+
+    let long = UPDATE.replace(
+        "urn:pulumi:prod::shop::",
+        &format!("urn:pulumi:prod::{}::", "p".repeat(200)),
+    );
+    assert_eq!(
+        estimate(&long, &Options::default()).request.stack,
+        None,
+        "past 200 characters"
+    );
+    let fits = UPDATE.replace(
+        "urn:pulumi:prod::shop::",
+        &format!("urn:pulumi:prod::{}::", "p".repeat(195)),
+    );
+    assert_eq!(
+        estimate(&fits, &Options::default())
+            .request
+            .stack
+            .unwrap()
+            .chars()
+            .count(),
+        200
+    );
+    let control = UPDATE.replace("urn:pulumi:prod::shop::", "urn:pulumi:prod::sh\\top::");
+    assert_eq!(estimate(&control, &Options::default()).request.stack, None);
+
+    let empty = estimate(r#"{"steps": []}"#, &Options::default());
+    assert_eq!(empty.request.stack, None);
+    assert!(
+        !serde_json::to_string(&empty.request).unwrap().contains("stack"),
+        "no stack, no field"
+    );
+}
+
+#[test]
+fn the_comment_links_the_estimate_s_page_with_the_names_after_the_hash() {
+    let e = estimate(&update_with_an_unchanged_queue(), &Options::default());
+    let mut response = noted_response();
+    response.url = Some("https://app.qloudpulse.com/ui/?estimate=est_02".into());
+    let link = qloudpulse_cli::link::page_link(response.url.as_deref(), &e.locals).unwrap();
+    assert!(
+        link.starts_with("https://app.qloudpulse.com/ui/?estimate=est_02#names="),
+        "{link}"
+    );
+
+    let markdown = render::render(&response, &e, render::Style::Markdown);
+    assert!(
+        markdown.starts_with(&format!(
+            "### qloudpulse: this change adds about $381 a month\n\n[See it in qloudpulse]({link})\n\n**The stack:**"
+        )),
+        "{markdown}"
+    );
+    assert!(
+        markdown.ends_with(
+            "<sub>Monthly figures in USD, before tax. Estimate `est_02`.</sub>\n<sub>The resource names in the link \
+             stay in your browser: they come after its #, which a browser never sends to a server.</sub>\n"
+        ),
+        "{markdown}"
+    );
+
+    let text = render::render(&response, &e, render::Style::Text);
+    assert!(
+        text.starts_with(&format!(
+            "qloudpulse: this change adds about $381 a month\n\nSee it in qloudpulse: {link}\n\nThe stack:"
+        )),
+        "{text}"
+    );
+    assert!(!text.contains("<sub>") && !text.contains("]("), "{text}");
+
+    response.url = None;
+    let without = render::render(&response, &e, render::Style::Markdown);
+    assert!(
+        !without.contains("See it in qloudpulse") && !without.contains("stay in your browser"),
+        "{without}"
+    );
+}
+
+/// The shipped catalogue with `free`, as an endpoint from 2026-11-19 answers: IAM roles and S3 Block Public Access.
+fn catalogue_with_free() -> String {
+    let mut c: Value = serde_json::from_str(CATALOGUE).unwrap();
+    c["free"] = json!([
+        {"type": "aws:iam/role:Role", "reason": "IAM is offered at no additional charge."},
+        {"type": "aws:s3/bucketPublicAccessBlock:BucketPublicAccessBlock",
+         "reason": "S3 charges for storage, requests and transfer, not for a bucket's settings."}
+    ]);
+    c.to_string()
+}
+
+/// A change of an RDS instance, two new IAM roles, a new Block Public Access and a new queue, in a stack that also
+/// holds an unchanged role and an unchanged security group.
+fn free_preview(with_priced: bool) -> String {
+    let step = |op: &str, kind: &str, name: &str, inputs: Value| {
+        let urn = format!("urn:pulumi:prod::shop::{kind}::{name}");
+        let state = json!({"urn": urn, "custom": true, "type": kind, "inputs": inputs});
+        json!({"op": op, "urn": urn, "oldState": state, "newState": state})
+    };
+    let mut steps = vec![
+        step("create", "aws:iam/role:Role", "api", json!({"name": "api-role"})),
+        step("create", "aws:iam/role:Role", "worker", json!({})),
+        step(
+            "create",
+            "aws:s3/bucketPublicAccessBlock:BucketPublicAccessBlock",
+            "assets-block",
+            json!({"blockPublicAcls": true}),
+        ),
+        step("same", "aws:iam/role:Role", "deploy", json!({})),
+        step("same", "aws:ec2/securityGroup:SecurityGroup", "db", json!({})),
+    ];
+    if with_priced {
+        steps.insert(
+            0,
+            step(
+                "update",
+                "aws:rds/instance:Instance",
+                "orders",
+                json!({"instanceClass": "db.r6i.xlarge"}),
+            ),
+        );
+        steps.push(step("create", "aws:sqs/queue:Queue", "jobs", json!({})));
+    }
+    json!({"config": {"aws:region": "eu-west-1"}, "steps": steps}).to_string()
+}
+
+#[test]
+fn a_free_type_is_neither_sent_nor_not_priced() {
+    let e = estimate_with(&free_preview(true), &catalogue_with_free(), &Options::default());
+    let types: Vec<&str> = e.request.resources.iter().map(|r| r.type_token.as_str()).collect();
+    assert_eq!(
+        types,
+        ["aws:rds/instance:Instance"],
+        "free types are not sent, changed or unchanged"
+    );
+    assert_eq!(
+        serde_json::to_value(&e.request.not_priced).unwrap(),
+        json!([{"type": "aws:sqs/queue:Queue", "count": 1}])
+    );
+    assert_eq!(e.stack_not_priced, 1, "the security group; the unchanged role is free");
+    let free: Vec<(&str, u32)> = e.free.iter().map(|f| (f.label(), f.count)).collect();
+    assert_eq!(
+        free,
+        [("Role", 2), ("BucketPublicAccessBlock", 1)],
+        "changed ones, by type, in order"
+    );
+    assert_eq!(e.locals.len(), 1);
+}
+
+#[test]
+fn a_catalogue_without_free_behaves_as_before() {
+    let e = estimate(&free_preview(true), &Options::default());
+    assert!(e.free.is_empty());
+    assert_eq!(
+        serde_json::to_value(&e.request.not_priced).unwrap(),
+        json!([
+            {"type": "aws:iam/role:Role", "count": 2},
+            {"type": "aws:s3/bucketPublicAccessBlock:BucketPublicAccessBlock", "count": 1},
+            {"type": "aws:sqs/queue:Queue", "count": 1}
+        ])
+    );
+    assert_eq!(e.stack_not_priced, 2);
+    let response: Response =
+        serde_json::from_value(json!({"formatVersion": 1, "currency": "USD", "resources": []})).unwrap();
+    let comment = render::comment(&response, &e);
+    assert!(!comment.contains("No charge"), "{comment}");
+}
+
+#[test]
+fn the_comment_says_no_charge_of_their_own() {
+    let e = estimate_with(&free_preview(true), &catalogue_with_free(), &Options::default());
+    let orders = key("urn:pulumi:prod::shop::aws:rds/instance:Instance::orders");
+    let response: Response = serde_json::from_value(json!({"formatVersion": 1, "currency": "USD", "resources": [
+        {"key": orders, "monthlyBefore": 398.0, "monthlyAfter": 398.0, "basis": "company-rate"}]}))
+    .unwrap();
+
+    let markdown = render::render(&response, &e, render::Style::Markdown);
+    assert!(
+        markdown.contains(
+            "**Not priced**\n\n- 1 × `aws:sqs/queue:Queue`: not priced by qloudpulse yet\n\n**No charge of their \
+             own**\n\n- 2 × `Role`: IAM is offered at no additional charge.\n- 1 × `BucketPublicAccessBlock`: S3 \
+             charges for storage, requests and transfer, not for a bucket's settings.\n\n"
+        ),
+        "{markdown}"
+    );
+    assert!(
+        markdown.contains(
+            "**The stack:** about $398 a month now, about $398 after this change, from 1 priced resource; 2 not priced."
+        ),
+        "the queue and the security group; no free one: {markdown}"
+    );
+    assert!(!markdown.contains("iam/role"), "{markdown}");
+
+    let text = render::render(&response, &e, render::Style::Text);
+    assert!(
+        text.contains("2 × Role, 1 × BucketPublicAccessBlock: no charge of their own.\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_change_of_only_free_types_adds_no_cost() {
+    let free = std::env::temp_dir().join(format!("qloudpulse-catalogue-free-{}.json", std::process::id()));
+    std::fs::write(&free, catalogue_with_free()).unwrap();
+    let args = [
+        "estimate",
+        "--endpoint",
+        "https://127.0.0.1:9/v1/estimates",
+        "--format",
+        "markdown",
+    ];
+
+    let (ok, stdout, stderr) = run(
+        &[&args[..], &["--catalogue", free.to_str().unwrap()]].concat(),
+        &free_preview(false),
+        Some("qpev_test"),
+    );
+    assert!(ok, "{stderr}");
+    assert!(
+        stdout.starts_with("### qloudpulse: this change adds no monthly cost\n"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("Not priced"), "{stdout}");
+    assert!(stdout.contains("- 2 × `Role`: IAM is offered"), "{stdout}");
+
+    // The shipped list has no `free`: as before, they are not priced.
+    let (ok, stdout, stderr) = run(&args, &free_preview(false), Some("qpev_test"));
+    assert!(ok, "{stderr}");
+    assert!(
+        stdout.starts_with("### qloudpulse: nothing in this change could be priced\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("- 2 × `aws:iam/role:Role`: not priced by qloudpulse yet"),
+        "{stdout}"
+    );
 }

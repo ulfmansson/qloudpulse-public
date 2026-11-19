@@ -25,6 +25,10 @@ pub struct Catalogue {
     #[serde(default)]
     pub providers: Vec<String>,
     pub types: Vec<CatalogueType>,
+    /// Of the types asked, those AWS charges nothing for of their own, such as an IAM role: not sent, and not counted
+    /// as not priced. Absent from an endpoint, or a saved catalogue, from before 2026-11-19.
+    #[serde(default)]
+    pub free: Vec<FreeType>,
     /// The client releases qloudpulse expects; absent from a catalogue saved before it named them.
     #[serde(default)]
     pub client: Option<ClientVersions>,
@@ -36,6 +40,14 @@ pub struct ClientVersions {
     pub latest: String,
     pub minimum: String,
     pub download: String,
+}
+
+/// A type AWS charges nothing for of its own, and why, from AWS's pricing pages.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FreeType {
+    #[serde(rename = "type")]
+    pub token: String,
+    pub reason: String,
 }
 
 /// One type qloudpulse prices.
@@ -90,6 +102,14 @@ impl Catalogue {
     /// The type with this token, if qloudpulse prices it.
     pub fn priced(&self, token: &str) -> Option<&CatalogueType> {
         self.types.iter().find(|t| t.token == token)
+    }
+
+    /// The type with this token, if AWS charges nothing for it of its own. A type the catalogue prices is not free.
+    pub fn free(&self, token: &str) -> Option<&FreeType> {
+        if self.priced(token).is_some() {
+            return None;
+        }
+        self.free.iter().find(|f| f.token == token)
     }
 
     /// Whether a type of one of the catalogue's providers, so that one outside the list is counted as not priced.
