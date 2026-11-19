@@ -126,6 +126,19 @@
           "items": { "type": "string", "minLength": 1 },
           "description": "Pulumi packages, such as aws, whose types outside the list are counted under notPriced."
         },
+        "free": {
+          "type": "array",
+          "description": "Of the types asked, those AWS charges nothing for of their own, with why, from AWS's pricing pages. The client counts them as no cost: not sent, and not under notPriced.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "reason"],
+            "properties": {
+              "type": { "type": "string", "minLength": 1, "maxLength": 200 },
+              "reason": { "type": "string", "minLength": 1, "maxLength": 300 }
+            }
+          }
+        },
         "client": {
           "type": "object",
           "additionalProperties": false,

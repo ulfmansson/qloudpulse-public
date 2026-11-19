@@ -258,7 +258,10 @@ pub fn render(response: &Response, estimate: &Estimate, style: Style) -> String 
         .sum();
 
     let mut out = String::new();
-    let headline = if priced.is_empty() {
+    let headline = if priced.is_empty() && locals.is_empty() && not_priced.is_empty() && !estimate.free.is_empty() {
+        // Only what AWS charges nothing for: no cost, not "not priced".
+        "this change adds no monthly cost".to_string()
+    } else if priced.is_empty() {
         "nothing in this change could be priced".to_string()
     } else if delta >= 0.5 {
         format!("this change adds about {} a month", money(delta))
@@ -347,6 +350,27 @@ pub fn render(response: &Response, estimate: &Estimate, style: Style) -> String 
     }
     if !unpriced.is_empty() {
         out.push_str(&style.section("Not priced", &unpriced));
+    }
+
+    if !estimate.free.is_empty() {
+        match style {
+            Style::Markdown => {
+                let lines: Vec<String> = estimate
+                    .free
+                    .iter()
+                    .map(|f| format!("- {} × {}: {}", f.count, style.code(f.label()), style.text(&f.reason)))
+                    .collect();
+                out.push_str(&style.section("No charge of their own", &lines));
+            }
+            Style::Text => {
+                let counts: Vec<String> = estimate
+                    .free
+                    .iter()
+                    .map(|f| format!("{} × {}", f.count, style.code(f.label())))
+                    .collect();
+                let _ = writeln!(out, "{}: no charge of their own.\n", counts.join(", "));
+            }
+        }
     }
 
     if !estimate.stack_listed && estimate.stack_too_large.is_none() {

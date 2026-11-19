@@ -122,7 +122,9 @@ does not answer unchanged resources, and the comment says so instead of a stack 
 
 Once per request, the stack goes as `"stack": "project/stack"`, from the URNs when they all name the same one, so
 qloudpulse's Pulumi stacks page can list the estimate under it. Types of the catalogue's providers (`aws`) that it
-does not list are counted by type. Nothing else from the preview is sent: no resource names, tags, config, outputs
+does not list are counted by type, except those the catalogue names under `free`, which AWS charges nothing for of
+their own (IAM, a VPC and its parts, S3 bucket settings): those are neither sent nor counted, and the comment lists
+them as no charge of their own. Nothing else from the preview is sent: no resource names, tags, config, outputs
 or secrets.
 
 The comment links to the estimate's page in qloudpulse ("See it in qloudpulse") when the answer gives its address.
