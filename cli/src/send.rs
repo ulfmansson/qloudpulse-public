@@ -12,8 +12,9 @@ use crate::request::{FORMAT_VERSION, Request, Response};
 /// `https://app.qloudpulse.com/api/report/public/estimates`, which keeps answering.
 pub const DEFAULT_ENDPOINT: &str = "https://api.qloudpulse.com/v1/estimates";
 
-/// Where an admin of hosted qloudpulse makes a change-event source and copies its token: Settings, Events.
-pub const TOKEN_PAGE: &str = "https://app.qloudpulse.com/ui/?events";
+/// Where anyone in a company on hosted qloudpulse makes a token of their own: Your tokens, under their name
+/// (qloudpulse's ADR 0131). An admin's event-source token from Settings, Events works too.
+pub const TOKEN_PAGE: &str = "https://app.qloudpulse.com/ui/?profile#my-tokens";
 
 /// Whether the endpoint is hosted qloudpulse, so that [`TOKEN_PAGE`] is where its tokens are made: https on
 /// `api.qloudpulse.com` or `app.qloudpulse.com`. An install of its own has its own address, which the client does
@@ -30,16 +31,16 @@ pub fn is_hosted(endpoint: &str) -> bool {
         .any(|h| host.eq_ignore_ascii_case(h))
 }
 
-/// What to say when the token is missing: where to make one, linked for hosted qloudpulse.
+/// What to say when the token is missing: where to make one of your own, linked for hosted qloudpulse.
 pub fn missing_token(endpoint: &str) -> String {
     if is_hosted(endpoint) {
         format!(
-            "set QLOUDPULSE_TOKEN to a change-event source's token (qpev_...). An admin makes one at {TOKEN_PAGE} \
-             (Settings, Events: add a source and copy its token). Or use --dry-run to see what would be sent."
+            "set QLOUDPULSE_TOKEN to a token of your own (qpev_...). Make one at {TOKEN_PAGE} (Your tokens, under \
+             your name), or use --dry-run to see what would be sent."
         )
     } else {
-        "set QLOUDPULSE_TOKEN to a change-event source's token (qpev_...), from Settings, Events in your qloudpulse. \
-         Or use --dry-run to see what would be sent."
+        "set QLOUDPULSE_TOKEN to a token of your own (qpev_...). Make one under Your tokens, under your name in your \
+         qloudpulse, or use --dry-run to see what would be sent."
             .to_string()
     }
 }

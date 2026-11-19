@@ -412,9 +412,9 @@ fn nothing_to_price_still_needs_a_token() {
     assert!(stdout.is_empty(), "{stdout}");
     assert_eq!(
         stderr.trim(),
-        "qloudpulse: set QLOUDPULSE_TOKEN to a change-event source's token (qpev_...). An admin makes one at \
-         https://app.qloudpulse.com/ui/?events (Settings, Events: add a source and copy its token). Or use --dry-run \
-         to see what would be sent.",
+        "qloudpulse: set QLOUDPULSE_TOKEN to a token of your own (qpev_...). Make one at \
+         https://app.qloudpulse.com/ui/?profile#my-tokens (Your tokens, under your name), or use --dry-run to see \
+         what would be sent.",
         "the default endpoint is hosted qloudpulse: the page is linked"
     );
 
@@ -426,8 +426,8 @@ fn nothing_to_price_still_needs_a_token() {
     assert!(!ok);
     assert_eq!(
         stderr.trim(),
-        "qloudpulse: set QLOUDPULSE_TOKEN to a change-event source's token (qpev_...), from Settings, Events in \
-         your qloudpulse. Or use --dry-run to see what would be sent.",
+        "qloudpulse: set QLOUDPULSE_TOKEN to a token of your own (qpev_...). Make one under Your tokens, under your \
+         name in your qloudpulse, or use --dry-run to see what would be sent.",
         "an install of its own: no address guessed"
     );
 
