@@ -22,6 +22,8 @@ fn every_help_names_the_token_and_where_it_is_made() {
         &["pulumi", "--help"],
         &["pulumi", "preview", "--help"],
         &["pulumi", "up", "-h"],
+        &["login", "--help"],
+        &["logout", "-h"],
     ] {
         let text = help(args);
         assert!(
@@ -38,6 +40,26 @@ fn every_help_names_the_token_and_where_it_is_made() {
         );
     }
     assert!(help(&["estimate", "-h"]).contains("QLOUDPULSE_ENDPOINT"));
+}
+
+#[test]
+fn the_helps_name_login_and_where_it_keeps_the_token() {
+    let top = help(&["--help"]);
+    for said in ["login", "logout", "qloudpulse login", "system keychain"] {
+        assert!(top.contains(said), "--help does not say {said:?}:\n{top}");
+    }
+    let login = help(&["login", "--help"]);
+    for said in [
+        "one-time code",
+        "Keychain",
+        "Credential Manager",
+        "Secret Service",
+        "QLOUDPULSE_CREDENTIALS_FILE",
+    ] {
+        assert!(login.contains(said), "login --help does not say {said:?}:\n{login}");
+    }
+    assert!(help(&["logout", "--help"]).contains("still works until it expires or you remove it"));
+    assert!(help(&["estimate", "--help"]).contains("QLOUDPULSE_CREDENTIALS_FILE"));
 }
 
 #[test]
@@ -64,6 +86,7 @@ fn without_a_token_it_says_where_to_get_one() {
     let out = Command::new(env!("CARGO_BIN_EXE_qloudpulse"))
         .args(["estimate", "tests/fixtures/preview-update.json"])
         .env_remove("QLOUDPULSE_TOKEN")
+        .env("QLOUDPULSE_CREDENTIALS_FILE", "/nonexistent/qloudpulse-credentials")
         // The shipped list, so the test reaches no network even if the token were asked for late.
         .env(
             "QLOUDPULSE_CATALOGUE",

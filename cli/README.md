@@ -81,6 +81,8 @@ qloudpulse pulumi up -s payments-prod
 |---|---|
 | `qloudpulse estimate [FILE]` | Prices the JSON of `pulumi preview --json`, from `FILE` or stdin, and prints the comment |
 | `qloudpulse pulumi preview [PULUMI_ARGS...]` | Runs `pulumi preview` with your arguments, its usual diff on your terminal, then `pulumi preview --json --show-sames` with the same arguments, and prints the estimate after the diff. Pulumi prints its diff or its JSON, never both, so the stack is previewed twice. A preview that fails ends with Pulumi's exit code; an estimate that fails exits 1, after the diff |
+| `qloudpulse login` | Signs in with your browser and keeps a token on this machine, in the system keychain. See [Signing in on your own machine](#signing-in-on-your-own-machine) |
+| `qloudpulse logout` | Removes the token `login` kept on this machine. It still works until it expires or you remove it under Your tokens |
 | `qloudpulse pulumi up [PULUMI_ARGS...]` | Runs `pulumi preview --json --show-sames` with your arguments, less those only `up` takes (`-y`/`--yes`, `-f`/`--skip-preview`, `--continue-on-error`, `--strict`, `--plan`, `--secrets-provider`, `--expect-no-changes`), prints the estimate, then runs `pulumi up` with your arguments as they are, on your terminal: its own preview, diff and "Do you want to perform this update?" as usual, so the stack is previewed twice. Ends with Pulumi's exit code. With `--yes` the estimate is printed and the update goes ahead without a pause; with `--skip-preview` nothing is priced. An estimate that fails (no token, the network, a refused version) is one line on stderr, and the update goes on |
 
 | Option | |
@@ -111,15 +113,46 @@ The token is read from `QLOUDPULSE_TOKEN`, never from an option: a token of your
 the company, a viewer too, makes under Your tokens, under their name in qloudpulse (on hosted qloudpulse,
 [app.qloudpulse.com/ui/?profile#my-tokens](https://app.qloudpulse.com/ui/?profile#my-tokens)). It lasts 30, 90 or 365
 days, as you choose. An admin's event-source token from Settings, Events works too, and that source can send the
-change event after `pulumi up`. Every run but
-`--dry-run` needs it, even one whose preview holds nothing to price. When it is unset and you run the client at a
-terminal, it asks for the token there, with the input hidden, and reads the answer from the terminal itself
-(`/dev/tty`, or the console on Windows), never from stdin, so `pulumi preview --json | qloudpulse estimate` still
-works. It takes three tries at a value shaped like a token, uses it for that run only, writes it nowhere, and suggests
-`export QLOUDPULSE_TOKEN` for next time. `qloudpulse pulumi preview` asks after Pulumi's diff, and `qloudpulse pulumi
-up` before its priced preview. In CI, or with no terminal, `estimate` stops with an error before it reads the preview
-or asks for the catalogue, `pulumi preview` exits 1 after the diff without previewing again, and `pulumi up` says so
-in a line on stderr and goes on with the update (with `--require-estimate`, stops).
+change event after `pulumi up`. Every run but `--dry-run` needs a token, even one whose preview holds nothing to price.
+When `QLOUDPULSE_TOKEN` is unset, the client uses the token `qloudpulse login` kept on this machine for the same
+qloudpulse, unless it has expired.
+
+With neither, at a terminal, the client asks `Sign in with your browser? [Y/n]`. Yes is `qloudpulse login`, below,
+and the run goes on with the token it keeps. No asks for a token to paste, with the input hidden; it takes three tries
+at a value shaped like a token, uses it for that run only, and writes it nowhere. Both answers are read from the
+terminal itself (`/dev/tty`, or the console on Windows), never from stdin, so
+`pulumi preview --json | qloudpulse estimate` still works. `qloudpulse pulumi preview` asks after Pulumi's diff, and
+`qloudpulse pulumi up` before its priced preview. In CI, or with no terminal, `estimate` stops with an error that names
+`QLOUDPULSE_TOKEN` and `qloudpulse login` before it reads the preview or asks for the catalogue, `pulumi preview`
+exits 1 after the diff without previewing again, and `pulumi up` says so in a line on stderr and goes on with the
+update (with `--require-estimate`, stops).
+
+### Signing in on your own machine
+
+```bash
+qloudpulse login
+```
+
+`login` shows a one-time code such as `WDJB-MJHT` and opens qloudpulse's page in your browser
+(`https://app.qloudpulse.com/ui/?cli-login` on hosted qloudpulse). Sign in there as usual, check that the page shows
+the same code as your terminal, pick how long the token lasts (30, 90 or 365 days), and approve. Approve only a login
+you started yourself just now: whoever started it gets the token. The code lasts 10 minutes. Nothing listens on a port,
+so over SSH, or where no browser opens, open the address on any device.
+
+qloudpulse then makes a token of your own, listed under Your tokens with the client's version and system (such as
+`qloudpulse <version> on macOS arm64`) and never your computer's name. The client keeps it in the macOS Keychain, the
+Windows Credential Manager or Linux's Secret Service, one for each qloudpulse address (`--endpoint`, or
+`QLOUDPULSE_ENDPOINT`), and says until when it lasts. Where there is no keychain, as on a headless Linux machine, it
+keeps it in a file only you can read (0600): `~/.config/qloudpulse/credentials` (`$XDG_CONFIG_HOME` if set;
+`%APPDATA%\qloudpulse\credentials` on Windows). `QLOUDPULSE_CREDENTIALS_FILE=<path>` names another file and leaves
+the keychain alone. `QLOUDPULSE_TOKEN`, when set, always wins over a kept token, so CI is unchanged.
+
+```bash
+qloudpulse logout
+```
+
+`logout` removes the kept token from this machine. The token itself still works until it expires or you remove it
+under Your tokens.
 
 In GitHub Actions:
 
@@ -236,7 +269,8 @@ licences in [`deny.toml`](deny.toml), crates.io as the only source) and `cargo a
 [`.github/workflows/cli-checks.yml`](../.github/workflows/cli-checks.yml); the same checks run weekly on `main`.
 
 **4. Run it where it can do no harm.** The client reads two things: the preview's JSON (a file or stdin) and
-`QLOUDPULSE_TOKEN`; and `QLOUDPULSE_ENDPOINT` and `QLOUDPULSE_CATALOGUE` if you set them. It needs no cloud
+`QLOUDPULSE_TOKEN`; and `QLOUDPULSE_ENDPOINT` and `QLOUDPULSE_CATALOGUE` if you set them. With `QLOUDPULSE_TOKEN` set
+it never reads the keychain. It needs no cloud
 credentials, no Pulumi access token and no repository token, and it talks to one host, `api.qloudpulse.com` (the
 estimates and their `/catalogue`), over HTTPS. So run `pulumi preview` in one job, with the cloud credentials, and the
 client in another that has only the qloudpulse token:

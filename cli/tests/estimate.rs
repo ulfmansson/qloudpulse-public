@@ -14,6 +14,9 @@ const UPDATE: &str = include_str!("fixtures/preview-update.json");
 
 const CATALOGUE: &str = include_str!("fixtures/catalogue.json");
 const CATALOGUE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/catalogue.json");
+/// A credentials file that does not exist, so a run finds no token kept by `qloudpulse login` and never reads this
+/// machine's keychain.
+const NO_CREDENTIALS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/no-such-credentials");
 
 fn estimate(json: &str, options: &Options) -> pulumi::Estimate {
     estimate_with(json, CATALOGUE, options)
@@ -324,6 +327,8 @@ fn run(args: &[&str], stdin: &str, token: Option<&str>) -> (bool, String, String
     cmd.args(args)
         .env_remove("QLOUDPULSE_TOKEN")
         .env_remove("QLOUDPULSE_ENDPOINT")
+        // Never this machine's keychain: a file that is not there, so nothing is kept.
+        .env("QLOUDPULSE_CREDENTIALS_FILE", NO_CREDENTIALS)
         // The shipped list, so the tests reach no network; a test can still name another with --catalogue.
         .env("QLOUDPULSE_CATALOGUE", CATALOGUE_PATH)
         .stdin(Stdio::piped())
@@ -417,8 +422,8 @@ fn nothing_to_price_still_needs_a_token() {
     assert_eq!(
         stderr.trim(),
         "qloudpulse: set QLOUDPULSE_TOKEN to a token of your own (qpev_...). Make one at \
-         https://app.qloudpulse.com/ui/?profile#my-tokens (Your tokens, under your name), or use --dry-run to see \
-         what would be sent.",
+         https://app.qloudpulse.com/ui/?profile#my-tokens (Your tokens, under your name), or run `qloudpulse login` at \
+         a terminal to sign in with your browser, or use --dry-run to see what would be sent.",
         "the default endpoint is hosted qloudpulse: the page is linked"
     );
 
@@ -431,7 +436,8 @@ fn nothing_to_price_still_needs_a_token() {
     assert_eq!(
         stderr.trim(),
         "qloudpulse: set QLOUDPULSE_TOKEN to a token of your own (qpev_...). Make one under Your tokens, under your \
-         name in your qloudpulse, or use --dry-run to see what would be sent.",
+         name in your qloudpulse, or run `qloudpulse login` at a terminal to sign in with your browser, or use \
+         --dry-run to see what would be sent.",
         "an install of its own: no address guessed"
     );
 
@@ -459,6 +465,7 @@ fn a_missing_token_is_said_before_the_preview_is_read_or_the_catalogue_asked() {
         .env_remove("QLOUDPULSE_TOKEN")
         .env_remove("QLOUDPULSE_CATALOGUE")
         .env_remove("QLOUDPULSE_ENDPOINT")
+        .env("QLOUDPULSE_CREDENTIALS_FILE", NO_CREDENTIALS)
         .output()
         .unwrap();
     assert!(!out.status.success());
@@ -581,6 +588,7 @@ fn without_a_catalogue_file_it_is_read_from_the_endpoint() {
         ])
         .env_remove("QLOUDPULSE_CATALOGUE")
         .env_remove("QLOUDPULSE_ENDPOINT")
+        .env("QLOUDPULSE_CREDENTIALS_FILE", NO_CREDENTIALS)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -65,6 +65,8 @@ impl Fake {
             .env("FAKE_PULUMI_JSON", preview)
             .env_remove("QLOUDPULSE_TOKEN")
             .env_remove("QLOUDPULSE_ENDPOINT")
+            // Never this machine's keychain: a file that is not there, so nothing is kept.
+            .env("QLOUDPULSE_CREDENTIALS_FILE", self.dir.join("no-credentials"))
             .env("QLOUDPULSE_CATALOGUE", CATALOGUE_PATH)
             .stdin(Stdio::null());
         cmd
