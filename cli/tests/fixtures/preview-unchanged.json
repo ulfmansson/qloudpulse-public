@@ -1,0 +1,19 @@
+{
+  "config": {"aws:region": "eu-west-1"},
+  "steps": [
+    {
+      "op": "same",
+      "urn": "urn:pulumi:prod::shop::pulumi:pulumi:Stack::shop-prod",
+      "oldState": {"urn": "urn:pulumi:prod::shop::pulumi:pulumi:Stack::shop-prod", "custom": false, "type": "pulumi:pulumi:Stack"},
+      "newState": {"urn": "urn:pulumi:prod::shop::pulumi:pulumi:Stack::shop-prod", "custom": false, "type": "pulumi:pulumi:Stack"},
+      "detailedDiff": null
+    },
+    {
+      "op": "same",
+      "urn": "urn:pulumi:prod::shop::pulumi:providers:aws::default_7_10_0",
+      "oldState": {"urn": "urn:pulumi:prod::shop::pulumi:providers:aws::default_7_10_0", "custom": true, "id": "0a1b", "type": "pulumi:providers:aws", "inputs": {"region": "eu-west-1"}},
+      "newState": {"urn": "urn:pulumi:prod::shop::pulumi:providers:aws::default_7_10_0", "custom": true, "id": "0a1b", "type": "pulumi:providers:aws", "inputs": {"region": "eu-west-1"}},
+      "detailedDiff": null
+    }
+  ]
+}
