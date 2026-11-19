@@ -1,6 +1,6 @@
 //! The estimate command against Pulumi previews written to Pulumi's `display.PreviewDigest` format.
 
-use std::io::Write as _;
+use std::io::Write;
 use std::process::{Command, Stdio};
 
 use qloudpulse_cli::catalogue::Catalogue;
@@ -319,6 +319,14 @@ fn a_change_that_saves_says_so() {
     assert!(comment.contains("`orders` RDS instance: no answer for it"), "{comment}");
 }
 
+/// Writes a run's input. A run that stops before reading it (no token, say) may have closed its end already: the
+/// write then fails with a broken pipe, which is the run's answer to check, not a failure of the test.
+fn feed(mut stdin: impl Write, input: &str) {
+    if let Err(e) = stdin.write_all(input.as_bytes()) {
+        assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "writing the run's input: {e}");
+    }
+}
+
 fn run(args: &[&str], stdin: &str, token: Option<&str>) -> (bool, String, String) {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_qloudpulse"));
     cmd.args(args)
@@ -333,7 +341,7 @@ fn run(args: &[&str], stdin: &str, token: Option<&str>) -> (bool, String, String
         cmd.env("QLOUDPULSE_TOKEN", t);
     }
     let mut child = cmd.spawn().unwrap();
-    child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+    feed(child.stdin.take().unwrap(), stdin);
     let out = child.wait_with_output().unwrap();
     (
         out.status.success(),
@@ -572,7 +580,7 @@ fn the_shipped_catalogue_sends_a_service_with_its_task_definition() {
 #[test]
 fn without_a_catalogue_file_it_is_read_from_the_endpoint() {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_qloudpulse"));
-    let out = cmd
+    let mut out = cmd
         .args([
             "estimate",
             "--dry-run",
@@ -586,7 +594,7 @@ fn without_a_catalogue_file_it_is_read_from_the_endpoint() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    out.stdin.as_ref().unwrap().write_all(UPDATE.as_bytes()).unwrap();
+    feed(out.stdin.take().unwrap(), UPDATE);
     let out = out.wait_with_output().unwrap();
     assert!(!out.status.success());
     let err = String::from_utf8(out.stderr).unwrap();
