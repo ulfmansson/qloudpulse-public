@@ -92,3 +92,28 @@ jobs:
           if strings target/debug/qloudpulse-collect | grep -i 'qloudpulse\.com'; then
             echo "::error::the offline build holds a qloudpulse host"; exit 1
           fi
+
+  changelog:
+    name: CHANGELOG.md
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2 # a pull request's merge commit and the base it merges into
+      # The crate's version has a section, dated once released or "Unreleased" until then: the release notes come
+      # from it, and cli/collect/release.sh refuses to release without its date.
+      - name: The version has a section
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          grep -Fq "## [$version] - " CHANGELOG.md \
+            || { echo "::error file=cli/collect/CHANGELOG.md::no section for $version, the version in cli/collect/Cargo.toml; add '## [$version] - Unreleased'"; exit 1; }
+      # A warning, not a failure: not every change to the source is one a user would read about.
+      - name: A change to the client says so under Unreleased
+        if: github.event_name == 'pull_request'
+        run: |
+          changed=$(git diff --name-only HEAD^1 HEAD -- .)
+          if grep -q '^cli/collect/src/' <<<"$changed" && ! grep -qx 'cli/collect/CHANGELOG.md' <<<"$changed"; then
+            echo "::warning file=cli/collect/CHANGELOG.md::this pull request changes cli/collect/src; add a line under Unreleased in cli/collect/CHANGELOG.md if users would notice"
+          fi
