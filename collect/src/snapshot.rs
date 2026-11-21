@@ -13,7 +13,7 @@ pub struct SnapshotMeta {
     pub tool_version: String,
     pub call_plan_version: String,
     pub window: Window,
-    pub collected_at: chrono::DateTime<chrono::Utc>,
+    pub collected_at: jiff::Timestamp,
     pub outcome: Outcome,
 }
 

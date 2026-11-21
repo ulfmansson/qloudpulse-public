@@ -18,7 +18,15 @@ impl CredentialSource {
             .enable_all()
             .build()
             .context("async runtime")?;
-        let mut loader = aws_config::defaults(BehaviorVersion::latest()).region(Region::new(region.to_string()));
+        // rustls on ring, for IMDS, SSO and STS: the only HTTP aws-config makes.
+        let http = aws_smithy_http_client::Builder::new()
+            .tls_provider(aws_smithy_http_client::tls::Provider::Rustls(
+                aws_smithy_http_client::tls::rustls_provider::CryptoMode::Ring,
+            ))
+            .build_https();
+        let mut loader = aws_config::defaults(BehaviorVersion::latest())
+            .region(Region::new(region.to_string()))
+            .http_client(http);
         if let Some(profile) = profile {
             loader = loader.profile_name(profile);
         }

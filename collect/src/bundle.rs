@@ -34,7 +34,7 @@ pub struct Manifest {
     pub call_plan_seed: bool,
     pub source_id: String,
     pub window: Window,
-    pub collected_at: chrono::DateTime<chrono::Utc>,
+    pub collected_at: jiff::Timestamp,
     pub accounts: Vec<String>,
     pub regions: Vec<String>,
     /// Collectors that stopped early, by account and region.
@@ -156,7 +156,7 @@ pub fn pack(config: &Config, config_bytes: &[u8], pseudonyms: &Pseudonymizer, sn
         .output_dir
         .join(file_name(&config.source_id, &snapshot.meta.window));
     let partial = path.with_extension("tgz.partial");
-    write_tgz(&partial, &contents, snapshot.meta.window.end.timestamp() as u64)?;
+    write_tgz(&partial, &contents, snapshot.meta.window.end.as_second() as u64)?;
     std::fs::rename(&partial, &path)?;
     if config.keep_pseudonym_map {
         pseudonyms.save_map(&config.work_dir.join("pseudonyms.tsv"))?;
@@ -258,9 +258,7 @@ mod tests {
         );
         let config: Config = toml::from_str(&text).unwrap();
         let pseudonyms = Pseudonymizer::new(vec![9; 32], false);
-        let now = chrono::DateTime::parse_from_rfc3339("2026-11-21T07:05:00Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc);
+        let now: jiff::Timestamp = "2026-11-21T07:05:00Z".parse().unwrap();
         let meta = SnapshotMeta {
             tool_version: "t".into(),
             call_plan_version: "p".into(),

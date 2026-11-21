@@ -152,7 +152,7 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::Collect => {
             let client = client(&cli.config)?;
-            let snapshot = client.collect(chrono::Utc::now())?;
+            let snapshot = client.collect(jiff::Timestamp::now())?;
             println!("{}", snapshot.dir.display());
         }
         Command::Analyze {
@@ -265,7 +265,7 @@ fn run(cli: Cli) -> Result<()> {
             }
             client.pseudonyms().context("the pseudonym key")?;
             if once {
-                let path = client.cycle(chrono::Utc::now())?;
+                let path = client.cycle(jiff::Timestamp::now())?;
                 println!("{}", path.display());
             } else {
                 client.run_forever();

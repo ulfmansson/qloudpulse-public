@@ -12,8 +12,9 @@ use crate::log;
 use crate::pseudonym::Pseudonymizer;
 use crate::snapshot::{Snapshot, SnapshotMeta};
 use crate::window::Window;
+use crate::window::{HOUR, trunc_hour, utc_hour};
 use anyhow::{Context, Result};
-use chrono::{DateTime, Duration, DurationRound, Timelike, Utc};
+use jiff::{SignedDuration, Timestamp};
 use std::path::PathBuf;
 
 pub struct Client {
@@ -25,7 +26,7 @@ pub struct Client {
 
 impl Client {
     /// Reads every configured account and region into a raw snapshot.
-    pub fn collect(&self, now: DateTime<Utc>) -> Result<Snapshot> {
+    pub fn collect(&self, now: Timestamp) -> Result<Snapshot> {
         let window = Window::last_full_hour(now);
         let caller = Caller::new(CallPlan::embedded(), self.transport.as_ref(), self.config.options());
         let home = &self.config.home_region;
@@ -61,7 +62,7 @@ impl Client {
         let run = Run {
             caller: &caller,
             window,
-            spot_history: now.hour() == self.config.run.daily_hour,
+            spot_history: utc_hour(now) == self.config.run.daily_hour,
         };
         log::info(
             "collecting",
@@ -115,7 +116,7 @@ impl Client {
     }
 
     /// Collect, pack, drop the raw snapshot (unless kept), deliver everything pending, prune.
-    pub fn cycle(&self, now: DateTime<Utc>) -> Result<PathBuf> {
+    pub fn cycle(&self, now: Timestamp) -> Result<PathBuf> {
         let snapshot = self.collect(now)?;
         let bundle = self.pack(&snapshot)?;
         if !self.config.run.keep_raw {
@@ -136,11 +137,11 @@ impl Client {
     /// Runs a cycle at each aligned time, forever. A failed cycle is logged and the loop goes on.
     pub fn run_forever(&self) -> ! {
         loop {
-            let now = Utc::now();
+            let now = Timestamp::now();
             let next = next_run(now, self.config.run.every_hours, self.config.run.minute);
-            log::info("waiting", &[("next", next.to_rfc3339())]);
-            std::thread::sleep((next - now).to_std().unwrap_or_default());
-            if let Err(e) = self.cycle(Utc::now()) {
+            log::info("waiting", &[("next", next.to_string())]);
+            std::thread::sleep(std::time::Duration::try_from(next.duration_since(now)).unwrap_or_default());
+            if let Err(e) = self.cycle(Timestamp::now()) {
                 log::warn("cycle failed", &[("error", format!("{e:#}"))]);
             }
         }
@@ -148,13 +149,10 @@ impl Client {
 }
 
 /// The next time after `now` at `minute` past an hour divisible by `every_hours`, in UTC.
-pub fn next_run(now: DateTime<Utc>, every_hours: u32, minute: u32) -> DateTime<Utc> {
-    let mut t = now
-        .duration_trunc(Duration::hours(1))
-        .expect("an hour divides a timestamp")
-        + Duration::minutes(minute as i64);
-    while t <= now || !t.hour().is_multiple_of(every_hours) {
-        t += Duration::hours(1);
+pub fn next_run(now: Timestamp, every_hours: u32, minute: u32) -> Timestamp {
+    let mut t = trunc_hour(now) + SignedDuration::from_mins(minute as i64);
+    while t <= now || !utc_hour(t).is_multiple_of(every_hours) {
+        t += HOUR;
     }
     t
 }
@@ -163,8 +161,8 @@ pub fn next_run(now: DateTime<Utc>, every_hours: u32, minute: u32) -> DateTime<U
 mod tests {
     use super::*;
 
-    fn at(s: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    fn at(s: &str) -> Timestamp {
+        s.parse().unwrap()
     }
 
     #[test]

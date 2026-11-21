@@ -3,7 +3,7 @@
 
 use anyhow::{Context, Result};
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
-use quick_xml::{Reader, Writer};
+use quick_xml::{Reader, Writer, XmlVersion};
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -124,13 +124,13 @@ fn parse_xml(text: &str) -> Result<Element> {
             }
             Event::Text(t) => {
                 if let Some(top) = stack.last_mut() {
-                    top.text.push_str(&t.decode().context("XML text")?);
+                    top.text.push_str(&t.xml_content(XmlVersion::default()));
                 }
             }
             Event::GeneralRef(r) => {
                 if let Some(top) = stack.last_mut() {
-                    let name = r.decode().context("XML entity")?;
-                    let resolved = match name.as_ref() {
+                    let name: &str = &r;
+                    let resolved = match name {
                         "amp" => "&".to_string(),
                         "lt" => "<".to_string(),
                         "gt" => ">".to_string(),
@@ -146,7 +146,7 @@ fn parse_xml(text: &str) -> Result<Element> {
             }
             Event::CData(c) => {
                 if let Some(top) = stack.last_mut() {
-                    top.text.push_str(&String::from_utf8_lossy(&c.into_inner()));
+                    top.text.push_str(&c.into_inner());
                 }
             }
             Event::Eof => break,
@@ -159,13 +159,15 @@ fn parse_xml(text: &str) -> Result<Element> {
 }
 
 fn element_from(start: &BytesStart) -> Result<Element> {
-    let name = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+    let name = start.name().as_ref().to_string();
     let mut attrs = Vec::new();
     for attr in start.attributes() {
         let attr = attr.context("XML attribute")?;
         attrs.push((
-            String::from_utf8_lossy(attr.key.as_ref()).into_owned(),
-            attr.unescape_value().context("XML attribute value")?.into_owned(),
+            attr.key.as_ref().to_string(),
+            attr.normalized_value(XmlVersion::default())
+                .context("XML attribute value")?
+                .into_owned(),
         ));
     }
     Ok(Element {

@@ -4,8 +4,9 @@
 use super::{Run, distinct, json_objects, json_strings};
 use crate::aws::caller::Account;
 use crate::body::Body;
+use crate::window::HOUR;
 use anyhow::Result;
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use serde_json::{Value, json};
 
 type Collector = fn(&Run, &Account, &str) -> Result<()>;
@@ -144,8 +145,8 @@ pub fn spot_query(pages: &[Body]) -> (Vec<String>, Vec<String>) {
     (types, platforms)
 }
 
-fn timestamp(t: DateTime<Utc>) -> String {
-    t.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+fn timestamp(t: Timestamp) -> String {
+    t.strftime("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 fn spot_prices(
@@ -154,8 +155,8 @@ fn spot_prices(
     region: &str,
     types: &[String],
     platforms: &[String],
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
+    start: Timestamp,
+    end: Timestamp,
 ) -> Result<()> {
     if types.is_empty() || platforms.is_empty() {
         return Ok(());
@@ -179,15 +180,7 @@ fn ec2(run: &Run, account: &Account, region: &str) -> Result<()> {
     let pages = run.call(account, region, "ec2", "DescribeInstances", params)?;
     let (types, platforms) = spot_query(&pages);
     let hour = run.window.start;
-    spot_prices(
-        run,
-        account,
-        region,
-        &types,
-        &platforms,
-        hour,
-        hour + Duration::hours(1),
-    )?;
+    spot_prices(run, account, region, &types, &platforms, hour, hour + HOUR)?;
     if run.spot_history {
         spot_prices(
             run,
@@ -195,7 +188,7 @@ fn ec2(run: &Run, account: &Account, region: &str) -> Result<()> {
             region,
             &types,
             &platforms,
-            hour - Duration::days(90),
+            hour - SignedDuration::from_hours(24 * 90),
             hour,
         )?;
     }

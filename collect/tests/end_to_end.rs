@@ -90,9 +90,7 @@ fn hourly_cycle_collects_redacts_packs_and_verifies() {
     };
     let mut caller = Caller::new(CallPlan::embedded(), &fake, vec![]);
     caller.backoff = std::time::Duration::ZERO;
-    let now = chrono::DateTime::parse_from_rfc3339("2026-11-21T07:05:00Z")
-        .unwrap()
-        .with_timezone(&chrono::Utc);
+    let now: jiff::Timestamp = "2026-11-21T07:05:00Z".parse().unwrap();
     let window = Window::last_full_hour(now);
     let account = Account {
         id: "111122223333".into(),

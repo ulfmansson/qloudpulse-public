@@ -16,7 +16,11 @@ targets = [
 [advisories]
 # Every RustSec advisory fails the check: a vulnerability, an unmaintained or unsound crate, or a yanked version. One
 # that does not apply is listed here with the reason, never silently.
-ignore = []
+ignore = [
+  # pin-utils is unmaintained, not vulnerable. It comes in only through AWS's own aws-smithy-http (via aws-config,
+  # for credentials), which has no release without it yet. Remove this when aws-smithy-http drops it.
+  { id = "RUSTSEC-2026-0441", reason = "unmaintained, not vulnerable; transitive via aws-smithy-http with no upgrade" },
+]
 
 [licenses]
 # The licences of the crates the client is built from today, all permissive and compatible with its Apache-2.0. A

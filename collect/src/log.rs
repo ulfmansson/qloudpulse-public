@@ -10,7 +10,7 @@ pub fn use_json(on: bool) {
 
 /// `fields` must not carry customer values: names of operations, counts, paths and error codes only.
 pub fn event(level: &str, message: &str, fields: &[(&str, String)]) {
-    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let now = jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
     if JSON.load(Ordering::Relaxed) {
         let mut line = serde_json::Map::new();
         line.insert("time".into(), now.into());
