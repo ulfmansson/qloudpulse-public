@@ -231,6 +231,21 @@ fn stack_line(answers: &HashMap<&str, &ResourceEstimate>, estimate: &Estimate, s
     ))
 }
 
+/// Why some resources cannot be priced, and how to give them a region: for the comment and stderr.
+pub fn no_region(n: usize, style: Style) -> String {
+    let (count, verb, them) = if n == 1 {
+        ("1 resource".to_string(), "has", "it")
+    } else {
+        (format!("{} resources", grouped(n as u64)), "have", "them")
+    };
+    format!(
+        "{count} {verb} no AWS region, so qloudpulse cannot price {them}: neither the preview, its provider, the \
+         stack's config nor this machine's AWS settings name one. Set one with {}, or run with {}.",
+        style.code("pulumi config set aws:region <region>"),
+        style.code("--region <region>")
+    )
+}
+
 /// The Markdown comment for a change: what the change adds, from the resources it changes, and what the whole stack
 /// costs, from those it leaves the same too.
 pub fn comment(response: &Response, estimate: &Estimate) -> String {
@@ -280,6 +295,14 @@ pub fn render(response: &Response, estimate: &Estimate, style: Style) -> String 
     }
     if let Some(line) = stack_line(&answers, estimate, style) {
         let _ = writeln!(out, "{line}\n");
+    }
+    if estimate.no_region > 0 {
+        let _ = writeln!(
+            out,
+            "{} {}\n",
+            style.strong("No region:"),
+            no_region(estimate.no_region, style)
+        );
     }
 
     if !priced.is_empty() {

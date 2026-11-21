@@ -51,6 +51,9 @@ pub struct State {
     pub id: Option<String>,
     #[serde(default)]
     pub inputs: Option<Value>,
+    /// What the provider holds after the last apply, the defaults it filled in included; in `newState`, what it plans.
+    #[serde(default)]
+    pub outputs: Option<Value>,
     #[serde(default)]
     pub provider: Option<String>,
     /// For each input, the URNs of the resources its value came from.
@@ -61,10 +64,91 @@ pub struct State {
 /// What the request is built with besides the preview.
 #[derive(Debug, Clone, Default)]
 pub struct Options {
-    /// The region for resources whose provider and stack name none.
+    /// `--region`: the region of a resource for which neither the preview nor its provider names one. It wins over the
+    /// stack's `aws:region` and this machine's AWS settings, as an option given on the command line is the more
+    /// deliberate choice.
     pub region: Option<String>,
+    /// This machine's AWS region settings, for resources whose provider, stack and `--region` name none.
+    pub aws: AwsEnvironment,
     /// Send the cloud ID of each resource that exists before the change.
     pub with_resource_ids: bool,
+}
+
+/// The AWS region settings of the machine the client runs on, as the AWS provider falls back to them: the
+/// environment, then the region of the profile in use in the shared config file. Only regions and a profile's name
+/// are kept; no credentials are read, and nothing here is sent but a region.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AwsEnvironment {
+    /// `AWS_REGION`.
+    pub region: Option<String>,
+    /// `AWS_DEFAULT_REGION`.
+    pub default_region: Option<String>,
+    /// `AWS_PROFILE`.
+    pub profile: Option<String>,
+    /// The `region` of each profile in `AWS_CONFIG_FILE`, else `~/.aws/config`, by profile name.
+    pub profile_regions: BTreeMap<String, String>,
+}
+
+impl AwsEnvironment {
+    /// Reads the environment and the shared config file. A file that is missing or cannot be read names no region.
+    pub fn from_system() -> AwsEnvironment {
+        let var = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+        let home = var("HOME").or_else(|| var("USERPROFILE"));
+        let path = match var("AWS_CONFIG_FILE") {
+            Some(file) => match (file.strip_prefix("~/"), &home) {
+                (Some(rest), Some(home)) => Some(std::path::Path::new(home).join(rest)),
+                _ => Some(file.into()),
+            },
+            None => home.map(|h| std::path::Path::new(&h).join(".aws").join("config")),
+        };
+        AwsEnvironment {
+            region: var("AWS_REGION"),
+            default_region: var("AWS_DEFAULT_REGION"),
+            profile: var("AWS_PROFILE"),
+            profile_regions: path
+                .and_then(|p| std::fs::read_to_string(p).ok())
+                .map(|text| profile_regions(&text))
+                .unwrap_or_default(),
+        }
+    }
+}
+
+/// The `region` of each profile in an AWS shared config file, by profile name: `[default]`, `[profile default]` and
+/// `[profile NAME]`. Every other key, and every other kind of section such as `[sso-session …]`, is passed over, so
+/// nothing but a region is kept, and only a value [`is_region`] takes.
+pub fn profile_regions(text: &str) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let mut profile: Option<String> = None;
+    for line in text.lines() {
+        // An indented line belongs to a nested setting, such as `s3 =`, and not to the profile itself.
+        if line.starts_with([' ', '\t']) {
+            continue;
+        }
+        let line = line.trim();
+        if line.is_empty() || line.starts_with(['#', ';']) {
+            continue;
+        }
+        if let Some(section) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            let section = section.trim();
+            profile = if section == "default" {
+                Some("default".to_string())
+            } else {
+                section
+                    .strip_prefix("profile ")
+                    .map(|name| name.trim().to_string())
+                    .filter(|name| !name.is_empty())
+            };
+            continue;
+        }
+        let (Some(name), Some((key, value))) = (&profile, line.split_once('=')) else {
+            continue;
+        };
+        let value = value.split([' ', '\t', '#', ';']).find(|v| !v.is_empty()).unwrap_or("");
+        if key.trim() == "region" && is_region(value) {
+            out.insert(name.clone(), value.to_string());
+        }
+    }
+    out
 }
 
 /// What the client keeps in CI about a resource it sends: the answer names it by key, and the comment by these.
@@ -93,6 +177,9 @@ pub struct Estimate {
     /// The changed resources of types AWS charges nothing for of their own, by type, in the order first met. They are
     /// not sent; unchanged ones of such types are neither sent nor counted.
     pub free: Vec<Free>,
+    /// How many of the resources sent, those left the same included, have no region: neither the preview, its
+    /// provider, `--region`, the stack nor this machine names one, and qloudpulse cannot price them.
+    pub no_region: usize,
 }
 
 /// Changed resources of one type AWS charges nothing for of its own.
@@ -225,23 +312,140 @@ fn pick_into(src: &Value, path: &[&str], dst: &mut Value) -> bool {
 }
 
 /// The priced attributes of a resource's inputs, and the ones that were hidden.
+#[cfg(test)]
 fn priced_attributes<S: AsRef<str>>(inputs: Option<&Value>, attributes: &[S]) -> (Map<String, Value>, Vec<String>) {
-    let mut out = Value::Object(Map::new());
-    let mut hidden = Vec::new();
-    if let Some(inputs) = inputs {
-        for attribute in attributes {
-            let attribute = attribute.as_ref();
-            let path: Vec<&str> = attribute.split('.').collect();
-            if pick_into(inputs, &path, &mut out) {
-                hidden.push(attribute.to_string());
+    priced_attributes_filled(inputs, &Fill::default(), attributes)
+}
+
+/// Where a priced attribute the inputs leave out is taken from: the outputs of a state that exists, which hold the
+/// defaults the provider filled in, such as an EBS volume's `type` or a Lambda function's `memorySize`.
+#[derive(Default)]
+struct Fill<'a> {
+    /// The outputs to take it from, the first that holds it.
+    from: Vec<&'a Value>,
+    /// Inputs that, when they set the attribute, mean the outputs no longer say what it will be: the old inputs, for
+    /// the side after an update or a replacement. Then only an attribute neither side sets, which the change leaves to
+    /// the provider as before, is taken from the old outputs.
+    unless_set_in: Option<&'a Value>,
+}
+
+/// Whether `v` holds a value at `path`, a hidden one included.
+fn has_value(v: &Value, path: &[&str]) -> bool {
+    let Some((first, rest)) = path.split_first() else {
+        return !v.is_null();
+    };
+    match v {
+        Value::Object(m) => m.get(*first).is_some_and(|c| has_value(c, rest)),
+        Value::Array(items) => items.iter().any(|i| has_value(i, path)),
+        // An object Pulumi knows only after apply, or a secret one, sets everything under it.
+        Value::String(_) => is_hidden(v),
+        _ => false,
+    }
+}
+
+/// Adds to `dst` what `src` holds and `dst` does not, never changing a value `dst` already has. Two lists are merged
+/// only when each holds one item: Pulumi may list a set's items in another order in the outputs than in the inputs.
+fn merge_missing(dst: &mut Value, src: Value) {
+    if src.is_null() {
+        return;
+    }
+    if dst.is_null() {
+        *dst = src;
+        return;
+    }
+    match (dst, src) {
+        (Value::Object(d), Value::Object(s)) => {
+            for (k, v) in s {
+                match d.get_mut(&k) {
+                    Some(slot) => merge_missing(slot, v),
+                    None if !v.is_null() => {
+                        d.insert(k, v);
+                    }
+                    None => {}
+                }
             }
         }
+        (Value::Array(d), Value::Array(mut s)) if d.len() == 1 && s.len() == 1 => {
+            merge_missing(&mut d[0], s.remove(0));
+        }
+        _ => {}
     }
+}
+
+/// The priced attributes of a resource's inputs, those they leave out taken as `fill` says, and the ones that were
+/// hidden. A hidden input is never filled from the outputs, and a hidden output is named, not sent, like an input.
+fn priced_attributes_filled<S: AsRef<str>>(
+    inputs: Option<&Value>,
+    fill: &Fill,
+    attributes: &[S],
+) -> (Map<String, Value>, Vec<String>) {
+    let paths: Vec<Vec<&str>> = attributes.iter().map(|a| a.as_ref().split('.').collect()).collect();
+    let mut out = Value::Object(Map::new());
+    let mut hidden_input = vec![false; paths.len()];
+    for (path, hidden) in paths.iter().zip(hidden_input.iter_mut()) {
+        *hidden = inputs.is_some_and(|inputs| pick_into(inputs, path, &mut out));
+    }
+    // What may be filled: neither hidden in the inputs nor set in the inputs that say the outputs no longer hold.
+    let fills: Vec<bool> = paths
+        .iter()
+        .zip(&hidden_input)
+        .map(|(path, hidden)| !hidden && !fill.unless_set_in.is_some_and(|set| has_value(set, path)))
+        .collect();
+    // Each source's attributes are picked together, so that two of one list, such as each EBS device's size and type,
+    // stay in the same items.
+    let mut hidden_output = vec![false; paths.len()];
+    for outputs in &fill.from {
+        let mut found = Value::Null;
+        for (i, path) in paths.iter().enumerate() {
+            if fills[i] {
+                hidden_output[i] |= pick_into(outputs, path, &mut found);
+            }
+        }
+        merge_missing(&mut out, found);
+    }
+    let hidden = attributes
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| hidden_input[i] || (hidden_output[i] && !has_value(&out, &paths[i])))
+        .map(|(_, a)| a.as_ref().to_string())
+        .collect();
     let map = match out {
         Value::Object(m) => m,
         _ => Map::new(),
     };
     (map, hidden)
+}
+
+/// The AWS region a resource or provider state names as its `region`, from its inputs, else its outputs.
+fn region_in(state: Option<&State>) -> Option<String> {
+    let state = state?;
+    [&state.inputs, &state.outputs]
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.get("region").and_then(Value::as_str))
+        .find(|r| is_region(r))
+        .map(str::to_string)
+}
+
+/// A string a provider state names under `key`, unless it is hidden or empty.
+fn named_in(state: Option<&State>, key: &str) -> Option<String> {
+    let state = state?;
+    [&state.inputs, &state.outputs]
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.get(key).and_then(Value::as_str))
+        .find(|s| !s.is_empty() && *s != UNKNOWN && *s != SECRET)
+        .map(str::to_string)
+}
+
+/// What an AWS provider in the preview says about the region of its resources.
+#[derive(Debug, Default)]
+struct ProviderRegion {
+    /// Its `region`: the new state's, else the old one's, so that a provider whose region is known only after apply
+    /// keeps the one it had.
+    region: Option<String>,
+    /// Its `profile`, whose region the AWS SDK falls back to.
+    profile: Option<String>,
 }
 
 /// One resource's steps, gathered: a replacement can come as `create-replacement`, `replace` and `delete-replaced`.
@@ -305,23 +509,8 @@ fn references_of<'a>(
 pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> Estimate {
     let mut order: Vec<&str> = Vec::new();
     let mut gathered: HashMap<&str, Gathered> = HashMap::new();
-    let mut provider_regions: HashMap<&str, String> = HashMap::new();
 
     for step in &preview.steps {
-        for state in [&step.new_state, &step.old_state].into_iter().flatten() {
-            if state.type_token.starts_with("pulumi:providers:aws")
-                && let Some(region) = state
-                    .inputs
-                    .as_ref()
-                    .and_then(|i| i.get("region"))
-                    .and_then(Value::as_str)
-                    .filter(|r| is_region(r))
-            {
-                provider_regions
-                    .entry(step.urn.as_str())
-                    .or_insert_with(|| region.to_string());
-            }
-        }
         let g = gathered.entry(step.urn.as_str()).or_insert_with(|| {
             order.push(step.urn.as_str());
             Gathered::default()
@@ -338,24 +527,64 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
         }
     }
 
-    let stack_region = preview
-        .config
-        .get("aws:region")
-        .and_then(Value::as_str)
-        .filter(|r| is_region(r))
-        .map(str::to_string);
-    let fallback_region = stack_region.or_else(|| options.region.clone().filter(|r| is_region(r)));
-    let region_of = |g: &Gathered| {
+    // An AWS provider's region and profile: the new state's, else the old one's.
+    let providers: HashMap<&str, ProviderRegion> = gathered
+        .iter()
+        .filter_map(|(&urn, g)| {
+            let state = g.new.as_ref().or(g.old.as_ref())?;
+            state.type_token.starts_with("pulumi:providers:aws").then(|| {
+                let (new, old) = (g.new.as_ref(), g.old.as_ref());
+                let provider = ProviderRegion {
+                    region: region_in(new).or_else(|| region_in(old)),
+                    profile: named_in(new, "profile").or_else(|| named_in(old, "profile")),
+                };
+                (urn, provider)
+            })
+        })
+        .collect();
+
+    // The order the AWS provider itself takes, most specific first, with --region before the stack's and this
+    // machine's settings: the resource's own region, its provider's, --region, the stack's aws:region, AWS_REGION,
+    // AWS_DEFAULT_REGION, and the region of the AWS profile in use (the provider's, else the stack's aws:profile, else
+    // AWS_PROFILE, else default).
+    let config = |name: &str| {
+        preview
+            .config
+            .get(name)
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty() && *v != SECRET && *v != UNKNOWN)
+    };
+    let region_flag = options.region.as_deref().filter(|r| is_region(r));
+    let stack_region = config("aws:region").filter(|r| is_region(r));
+    let env_region = [&options.aws.region, &options.aws.default_region]
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+        .find(|r| is_region(r));
+    let stack_profile = config("aws:profile");
+    let region_of = |g: &Gathered| -> Option<String> {
+        if let Some(own) = region_in(g.new.as_ref()).or_else(|| region_in(g.old.as_ref())) {
+            return Some(own);
+        }
         let provider = g
             .new
             .as_ref()
             .and_then(|s| s.provider.as_deref())
             .or_else(|| g.old.as_ref().and_then(|s| s.provider.as_deref()))
-            .or(g.provider.as_deref());
-        provider
-            .and_then(|p| provider_regions.get(provider_urn(p)))
-            .cloned()
-            .or_else(|| fallback_region.clone())
+            .or(g.provider.as_deref())
+            .and_then(|p| providers.get(provider_urn(p)));
+        if let Some(region) = provider.and_then(|p| p.region.clone()) {
+            return Some(region);
+        }
+        if let Some(region) = region_flag.or(stack_region).or(env_region) {
+            return Some(region.to_string());
+        }
+        let profile = provider
+            .and_then(|p| p.profile.as_deref())
+            .or(stack_profile)
+            .or(options.aws.profile.as_deref())
+            .unwrap_or("default");
+        options.aws.profile_regions.get(profile).cloned()
     };
 
     let mut resources = Vec::new();
@@ -393,15 +622,36 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
         };
         let region = region_of(g);
 
+        let old_inputs = g.old.as_ref().and_then(|s| s.inputs.as_ref());
+        let old_outputs: Vec<&Value> = g.old.as_ref().and_then(|s| s.outputs.as_ref()).into_iter().collect();
+        // The side before the change is what exists: an attribute its inputs leave out, its outputs hold.
         let before = match change {
             ChangeKind::Create => None,
-            _ => Some(priced_attributes(g.old.as_ref().and_then(|s| s.inputs.as_ref()), &priced.attributes).0),
+            _ => {
+                let fill = Fill {
+                    from: old_outputs.clone(),
+                    unless_set_in: None,
+                };
+                Some(priced_attributes_filled(old_inputs, &fill, &priced.attributes).0)
+            }
         };
+        // The side after: an attribute neither side's inputs set is one the change leaves as it was, so it is taken
+        // from the old outputs too, and the two sides do not differ by a default only one of them names.
         let (after, unknown) = match change {
             ChangeKind::Delete => (None, Vec::new()),
             _ => {
-                let (attrs, hidden) =
-                    priced_attributes(g.new.as_ref().and_then(|s| s.inputs.as_ref()), &priced.attributes);
+                let fill = match change {
+                    ChangeKind::Create => Fill::default(),
+                    _ => Fill {
+                        from: old_outputs,
+                        unless_set_in: old_inputs,
+                    },
+                };
+                let (attrs, hidden) = priced_attributes_filled(
+                    g.new.as_ref().and_then(|s| s.inputs.as_ref()),
+                    &fill,
+                    &priced.attributes,
+                );
                 (Some(attrs), hidden)
             }
         };
@@ -490,7 +740,16 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
         let Some(priced) = catalogue.priced(&state.type_token) else {
             continue;
         };
-        let (attrs, hidden) = priced_attributes(state.inputs.as_ref(), &priced.attributes);
+        // What exists: an attribute its inputs leave out, its outputs hold.
+        let fill = Fill {
+            from: [&g.new, &g.old]
+                .into_iter()
+                .flatten()
+                .filter_map(|s| s.outputs.as_ref())
+                .collect(),
+            unless_set_in: None,
+        };
+        let (attrs, hidden) = priced_attributes_filled(state.inputs.as_ref(), &fill, &priced.attributes);
         let key = key(urn);
         locals.push(Local {
             key: key.clone(),
@@ -511,6 +770,7 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
         });
     }
 
+    let no_region = resources.iter().filter(|r| r.region.is_none()).count();
     Estimate {
         request: Request {
             format_version: FORMAT_VERSION,
@@ -527,6 +787,7 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
         stack_not_priced,
         stack_too_large,
         free,
+        no_region,
     }
 }
 
@@ -605,6 +866,368 @@ mod tests {
         let (attrs, hidden) = priced_attributes(Some(&inputs), &["instanceTypes"]);
         assert!(attrs.is_empty());
         assert_eq!(hidden, vec!["instanceTypes"]);
+    }
+
+    const VOLUME: &str = "aws:ebs/volume:Volume";
+    const INSTANCE: &str = "aws:ec2/instance:Instance";
+
+    fn catalogue() -> Catalogue {
+        Catalogue::parse(
+            r#"{"formatVersion": 1, "providers": ["aws"], "types": [
+                {"type": "aws:ebs/volume:Volume", "label": "EBS volume", "attributes": ["size", "type", "iops"]},
+                {"type": "aws:ec2/instance:Instance", "label": "EC2 instance", "attributes": ["instanceType",
+                 "rootBlockDevice.volumeSize", "rootBlockDevice.volumeType", "ebsBlockDevices.volumeSize",
+                 "ebsBlockDevices.volumeType"]}]}"#,
+        )
+        .unwrap()
+    }
+
+    fn urn(type_token: &str, name: &str) -> String {
+        format!("urn:pulumi:dev::shop::{type_token}::{name}")
+    }
+
+    fn provider_ref(name: &str) -> String {
+        format!("{}::0a1b", urn("pulumi:providers:aws", name))
+    }
+
+    /// A state of `type_token`, with its inputs and outputs, and its provider when one is named.
+    fn state(type_token: &str, inputs: Value, outputs: Value, provider: Option<&str>) -> Value {
+        let mut s = json!({"type": type_token, "custom": true, "inputs": inputs, "outputs": outputs});
+        if let Some(p) = provider {
+            s["provider"] = json!(provider_ref(p));
+        }
+        s
+    }
+
+    /// A step that leaves a resource or provider the same, its old and new state alike.
+    fn same(name: &str, state: Value) -> Value {
+        let t = state["type"].as_str().unwrap().to_string();
+        json!({"op": "same", "urn": urn(&t, name), "oldState": state, "newState": state})
+    }
+
+    /// A step that creates a volume of 100 GiB with the provider named.
+    fn new_volume(name: &str, inputs: Value, provider: Option<&str>) -> Value {
+        json!({"op": "create", "urn": urn(VOLUME, name), "newState": state(VOLUME, inputs, json!({}), provider)})
+    }
+
+    fn aws_provider(name: &str, inputs: Value, outputs: Value) -> Value {
+        same(name, state("pulumi:providers:aws", inputs, outputs, None))
+    }
+
+    fn run(config: Value, steps: Vec<Value>, options: &Options) -> Estimate {
+        let preview: Preview = serde_json::from_value(json!({"config": config, "steps": steps})).unwrap();
+        estimate(&preview, &catalogue(), options)
+    }
+
+    fn region_of(e: &Estimate, type_token: &str, name: &str) -> Option<String> {
+        let k = key(&urn(type_token, name));
+        e.request.resources.iter().find(|r| r.key == k).unwrap().region.clone()
+    }
+
+    /// Every source of a region at once, each its own value, so that what a resource gets says where it came from.
+    fn every_source() -> (Value, Options) {
+        let config = json!({"aws:region": "eu-west-3", "aws:profile": "stack"});
+        let options = Options {
+            region: Some("ap-south-1".into()),
+            aws: AwsEnvironment {
+                region: Some("us-west-1".into()),
+                default_region: Some("us-west-2".into()),
+                profile: Some("shell".into()),
+                profile_regions: [
+                    ("default", "ca-central-1"),
+                    ("stack", "sa-east-1"),
+                    ("shell", "af-south-1"),
+                    ("provider", "me-south-1"),
+                ]
+                .into_iter()
+                .map(|(p, r)| (p.to_string(), r.to_string()))
+                .collect(),
+            },
+            with_resource_ids: false,
+        };
+        (config, options)
+    }
+
+    #[test]
+    fn the_resources_own_region_comes_first_from_its_inputs_or_outputs() {
+        let (config, options) = every_source();
+        let steps = vec![
+            aws_provider("p", json!({"region": "eu-north-1"}), json!({})),
+            new_volume("own", json!({"size": 10, "region": "us-east-2"}), Some("p")),
+            same(
+                "v7",
+                state(
+                    VOLUME,
+                    json!({"size": 10}),
+                    json!({"size": 10, "region": "ap-northeast-1"}),
+                    Some("p"),
+                ),
+            ),
+            new_volume("secret", json!({"size": 10, "region": SECRET}), Some("p")),
+        ];
+        let e = run(config, steps, &options);
+        assert_eq!(region_of(&e, VOLUME, "own").as_deref(), Some("us-east-2"));
+        assert_eq!(
+            region_of(&e, VOLUME, "v7").as_deref(),
+            Some("ap-northeast-1"),
+            "AWS provider v7 writes every resource's region in its outputs"
+        );
+        assert_eq!(
+            region_of(&e, VOLUME, "secret").as_deref(),
+            Some("eu-north-1"),
+            "a region that is not a region name is passed over: its provider's"
+        );
+    }
+
+    #[test]
+    fn the_providers_region_comes_next_from_its_new_state_else_its_old_one() {
+        let (config, options) = every_source();
+        let provider_step = |name: &str, old: Value, new: Value| {
+            json!({"op": "update", "urn": urn("pulumi:providers:aws", name),
+                   "oldState": state("pulumi:providers:aws", old.clone(), old, None),
+                   "newState": state("pulumi:providers:aws", new, json!({}), None)})
+        };
+        let steps = vec![
+            provider_step(
+                "moved",
+                json!({"region": "eu-north-1"}),
+                json!({"region": "eu-south-1"}),
+            ),
+            provider_step("unknown", json!({"region": "eu-central-1"}), json!({"region": UNKNOWN})),
+            aws_provider("outputs", json!({}), json!({"region": "eu-central-2"})),
+            new_volume("moved", json!({"size": 10}), Some("moved")),
+            new_volume("unknown", json!({"size": 10}), Some("unknown")),
+            new_volume("outputs", json!({"size": 10}), Some("outputs")),
+        ];
+        let e = run(config, steps, &options);
+        assert_eq!(region_of(&e, VOLUME, "moved").as_deref(), Some("eu-south-1"));
+        assert_eq!(
+            region_of(&e, VOLUME, "unknown").as_deref(),
+            Some("eu-central-1"),
+            "a provider whose region is known only after apply: the one it had"
+        );
+        assert_eq!(region_of(&e, VOLUME, "outputs").as_deref(), Some("eu-central-2"));
+    }
+
+    #[test]
+    fn then_region_flag_then_the_stack_then_the_environment_then_the_profile() {
+        let steps = || {
+            vec![
+                aws_provider("p", json!({}), json!({})),
+                new_volume("v", json!({"size": 10}), Some("p")),
+            ]
+        };
+        let (config, mut options) = every_source();
+        let mut config = config;
+        let next = |config: &Value, options: &Options| region_of(&run(config.clone(), steps(), options), VOLUME, "v");
+
+        assert_eq!(next(&config, &options).as_deref(), Some("ap-south-1"), "--region");
+        options.region = None;
+        assert_eq!(
+            next(&config, &options).as_deref(),
+            Some("eu-west-3"),
+            "the stack's aws:region"
+        );
+        config["aws:region"] = json!(SECRET);
+        assert_eq!(next(&config, &options).as_deref(), Some("us-west-1"), "AWS_REGION");
+        options.aws.region = Some("not-a-region".into());
+        assert_eq!(
+            next(&config, &options).as_deref(),
+            Some("us-west-2"),
+            "AWS_DEFAULT_REGION"
+        );
+        options.aws.default_region = None;
+        assert_eq!(
+            next(&config, &options).as_deref(),
+            Some("sa-east-1"),
+            "the aws:profile's region"
+        );
+        config.as_object_mut().unwrap().remove("aws:profile");
+        assert_eq!(
+            next(&config, &options).as_deref(),
+            Some("af-south-1"),
+            "AWS_PROFILE's region"
+        );
+        options.aws.profile = None;
+        assert_eq!(
+            next(&config, &options).as_deref(),
+            Some("ca-central-1"),
+            "the default profile's region"
+        );
+        options.aws.profile_regions.clear();
+        assert_eq!(next(&config, &options), None);
+    }
+
+    #[test]
+    fn a_providers_profile_comes_before_the_stacks_and_the_shells() {
+        let (config, mut options) = every_source();
+        options.region = None;
+        options.aws.region = None;
+        options.aws.default_region = None;
+        let config = json!({"aws:profile": config["aws:profile"]});
+        let steps = vec![
+            aws_provider("p", json!({"profile": "provider"}), json!({})),
+            new_volume("v", json!({"size": 10}), Some("p")),
+        ];
+        let e = run(config, steps, &options);
+        assert_eq!(region_of(&e, VOLUME, "v").as_deref(), Some("me-south-1"));
+    }
+
+    #[test]
+    fn a_resource_without_a_region_is_counted() {
+        let steps = vec![
+            new_volume("none", json!({"size": 10}), None),
+            new_volume("own", json!({"size": 10, "region": "eu-west-1"}), None),
+            same(
+                "unchanged",
+                state(VOLUME, json!({"size": 10}), json!({"size": 10}), None),
+            ),
+        ];
+        let e = run(json!({}), steps, &Options::default());
+        assert_eq!(e.no_region, 2, "the unchanged one too: the stack's cost needs it");
+        assert_eq!(region_of(&e, VOLUME, "none"), None);
+    }
+
+    #[test]
+    fn the_aws_config_file_gives_each_profiles_region_and_nothing_else() {
+        let text = "\
+# a comment
+[default]
+region = eu-west-1
+aws_access_key_id = AKIAEXAMPLE
+
+[profile prod]
+output = json
+region=us-east-1 ; why
+s3 =
+  region = ap-south-1
+
+[profile default]
+[sso-session corp]
+region = eu-north-1
+[shell]
+region = eu-south-1
+[profile broken]
+region = europe
+";
+        let regions = profile_regions(text);
+        assert_eq!(
+            regions.into_iter().collect::<Vec<_>>(),
+            [
+                ("default".to_string(), "eu-west-1".to_string()),
+                ("prod".to_string(), "us-east-1".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unchanged_resource_sends_what_its_outputs_hold_and_its_inputs_leave_out() {
+        let instance = state(
+            INSTANCE,
+            json!({"instanceType": "m5.large", "rootBlockDevice": {"volumeSize": 50}}),
+            json!({"instanceType": "m5.large", "privateIp": "10.0.0.1",
+                   "rootBlockDevice": {"volumeSize": 50, "volumeType": "gp3", "kmsKeyId": "k"},
+                   "ebsBlockDevices": [{"volumeSize": 100, "volumeType": "io2"}, {"volumeSize": 200}]}),
+            None,
+        );
+        let volume = state(
+            VOLUME,
+            json!({"size": 10, "iops": SECRET}),
+            json!({"size": 10, "type": "gp2", "iops": SECRET}),
+            None,
+        );
+        let steps = vec![same("web", instance), same("data", volume)];
+        let e = run(json!({}), steps, &Options::default());
+        let web = &e.request.resources[0];
+        assert_eq!(web.change, ChangeKind::Same);
+        assert_eq!(
+            Value::Object(web.after.clone().unwrap()),
+            json!({"instanceType": "m5.large",
+                   "rootBlockDevice": {"volumeSize": 50, "volumeType": "gp3"},
+                   "ebsBlockDevices": [{"volumeSize": 100, "volumeType": "io2"}, {"volumeSize": 200}]}),
+            "only the catalogue's attributes, from the outputs where the inputs have none"
+        );
+        let data = &e.request.resources[1];
+        assert_eq!(
+            Value::Object(data.after.clone().unwrap()),
+            json!({"size": 10, "type": "gp2"})
+        );
+        assert_eq!(
+            data.unknown,
+            ["iops"],
+            "a secret is named, not sent, from the outputs as from the inputs"
+        );
+    }
+
+    #[test]
+    fn an_update_takes_from_the_old_outputs_what_neither_side_sets() {
+        let old = state(
+            VOLUME,
+            json!({"size": 10}),
+            json!({"size": 10, "type": "gp2", "iops": 100}),
+            None,
+        );
+        let new = state(VOLUME, json!({"size": 20, "iops": 3000}), json!({}), None);
+        let steps = vec![json!({"op": "update", "urn": urn(VOLUME, "data"), "oldState": old, "newState": new})];
+        let e = run(json!({}), steps, &Options::default());
+        let data = &e.request.resources[0];
+        assert_eq!(
+            Value::Object(data.before.clone().unwrap()),
+            json!({"size": 10, "type": "gp2", "iops": 100}),
+            "the old side is what exists: its outputs fill in the default type"
+        );
+        assert_eq!(
+            Value::Object(data.after.clone().unwrap()),
+            json!({"size": 20, "iops": 3000, "type": "gp2"}),
+            "the type neither side sets stays what it was, so the two sides do not differ by it"
+        );
+    }
+
+    #[test]
+    fn an_update_does_not_fill_what_the_old_inputs_set_or_the_new_ones_hide() {
+        let old = state(
+            VOLUME,
+            json!({"size": 10, "type": "io2"}),
+            json!({"size": 10, "type": "io2", "iops": 100}),
+            None,
+        );
+        let new = state(VOLUME, json!({"size": UNKNOWN}), json!({}), None);
+        let steps = vec![json!({"op": "update", "urn": urn(VOLUME, "data"), "oldState": old, "newState": new})];
+        let e = run(json!({}), steps, &Options::default());
+        let data = &e.request.resources[0];
+        assert_eq!(
+            Value::Object(data.after.clone().unwrap()),
+            json!({"iops": 100}),
+            "a type the change stops setting is the provider's default again, and an unknown size is not the old one"
+        );
+        assert_eq!(data.unknown, ["size"]);
+    }
+
+    #[test]
+    fn a_create_sends_its_inputs_only() {
+        let new = state(VOLUME, json!({"size": 10}), json!({"size": 10, "type": UNKNOWN}), None);
+        let steps = vec![json!({"op": "create", "urn": urn(VOLUME, "data"), "newState": new})];
+        let e = run(json!({}), steps, &Options::default());
+        let data = &e.request.resources[0];
+        assert_eq!(Value::Object(data.after.clone().unwrap()), json!({"size": 10}));
+        assert!(
+            data.unknown.is_empty(),
+            "what the provider plans is not read for a resource that does not exist yet"
+        );
+    }
+
+    #[test]
+    fn lists_are_merged_only_one_item_to_one() {
+        let mut one = json!({"d": [{"a": 1}]});
+        merge_missing(&mut one, json!({"d": [{"a": 2, "b": 3}]}));
+        assert_eq!(one, json!({"d": [{"a": 1, "b": 3}]}));
+        let mut two = json!({"d": [{"a": 1}, {"a": 2}]});
+        merge_missing(&mut two, json!({"d": [{"b": 3}, {"b": 4}]}));
+        assert_eq!(
+            two,
+            json!({"d": [{"a": 1}, {"a": 2}]}),
+            "a set's items may come in another order"
+        );
     }
 
     #[test]
