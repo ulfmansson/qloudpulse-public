@@ -17,5 +17,6 @@ pub mod pseudonym;
 pub mod record;
 pub mod redact;
 pub mod run;
+pub mod scan;
 pub mod snapshot;
 pub mod window;

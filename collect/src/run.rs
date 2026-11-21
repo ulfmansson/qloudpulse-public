@@ -173,9 +173,9 @@ impl Client {
         Pseudonymizer::load(&self.config.key_file, self.config.keep_pseudonym_map)
     }
 
-    pub fn pack(&self, snapshot: &Snapshot) -> Result<PathBuf> {
+    pub fn pack(&self, snapshot: &Snapshot, allow_findings: bool) -> Result<PathBuf> {
         let pseudonyms = self.pseudonyms()?;
-        let path = bundle::pack(&self.config, &self.config_bytes, &pseudonyms, snapshot)?;
+        let path = bundle::pack(&self.config, &self.config_bytes, &pseudonyms, snapshot, allow_findings)?;
         log::info("packed", &[("bundle", path.display().to_string())]);
         for line in self.config.feature_impact() {
             log::warn("rule cost", &[("impact", line)]);
@@ -194,7 +194,10 @@ impl Client {
     /// Collect, pack, drop the raw snapshot (unless kept), deliver everything pending, prune.
     pub fn cycle(&self, now: Timestamp) -> Result<PathBuf> {
         let snapshot = self.collect(now)?;
-        let bundle = self.pack(&snapshot)?;
+        // A bundle the scan stops is not written, and its raw snapshot is kept so you can look at it.
+        let bundle = self
+            .pack(&snapshot, false)
+            .with_context(|| format!("raw snapshot kept in {}", snapshot.dir.display()))?;
         if !self.config.run.keep_raw {
             std::fs::remove_dir_all(&snapshot.dir).with_context(|| format!("removing {}", snapshot.dir.display()))?;
         }

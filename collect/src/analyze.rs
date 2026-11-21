@@ -19,6 +19,8 @@ pub struct Report {
     pub errors: BTreeMap<String, usize>,
     pub tags: Vec<TagReport>,
     pub feature_impact: Vec<String>,
+    /// Secrets and personal data in this input. On a raw snapshot: before your rules.
+    pub scan: crate::scan::ScanReport,
 }
 
 #[derive(Debug, Serialize)]
@@ -113,6 +115,7 @@ pub fn analyze(source: &str, records: &[Record], config: Option<&Config>, show_v
         errors,
         tags,
         feature_impact: config.map(Config::feature_impact).unwrap_or_default(),
+        scan: crate::scan::scan(records, &config.map(|c| c.scan.clone()).unwrap_or_default()),
     }
 }
 
@@ -155,6 +158,10 @@ impl Report {
             for line in &self.feature_impact {
                 let _ = writeln!(out, "  - {line}");
             }
+        }
+        if !self.scan.kinds.is_empty() {
+            let _ = writeln!(out, "\nSecrets and personal data found (masked):");
+            out.push_str(&self.scan.text());
         }
         if !self.errors.is_empty() {
             let _ = writeln!(out, "\nErrors recorded (replayed to qloudpulse as the same error):");

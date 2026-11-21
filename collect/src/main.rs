@@ -59,6 +59,9 @@ enum Command {
     Pack {
         /// The newest raw snapshot when absent.
         snapshot: Option<PathBuf>,
+        /// Write the bundle even when the scan finds keys, tokens or personal data in it.
+        #[arg(long)]
+        allow_findings: bool,
     },
     /// Check a bundle against its manifest and summarize it.
     Verify { bundle: PathBuf },
@@ -190,13 +193,16 @@ fn run(cli: Cli) -> Result<()> {
                 print!("{}", report.text());
             }
         }
-        Command::Pack { snapshot } => {
+        Command::Pack {
+            snapshot,
+            allow_findings,
+        } => {
             let client = client(&cli.config)?;
             let dir = match snapshot {
                 Some(d) => d,
                 None => newest_snapshot(&client.config)?,
             };
-            let path = client.pack(&Snapshot::read(&dir)?)?;
+            let path = client.pack(&Snapshot::read(&dir)?, allow_findings)?;
             println!("{}", path.display());
         }
         Command::Verify { bundle: path } => {

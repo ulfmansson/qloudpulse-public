@@ -145,7 +145,7 @@ fn hourly_cycle_collects_redacts_packs_and_verifies() {
     );
 
     let pseudonyms = Pseudonymizer::new(vec![3; 32], false);
-    let path = bundle::pack(&config, config_text.as_bytes(), &pseudonyms, &snapshot).unwrap();
+    let path = bundle::pack(&config, config_text.as_bytes(), &pseudonyms, &snapshot, false).unwrap();
     let opened = bundle::open(&path).unwrap();
     let all: String = opened.records.iter().map(|r| r.response.body.clone()).collect();
     assert!(!all.contains("alice@example.com"), "pseudonymized");

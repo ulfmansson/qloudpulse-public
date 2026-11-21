@@ -36,6 +36,9 @@ pub struct Config {
     /// Account IDs and resource IDs, kept or pseudonymized with their format.
     #[serde(default)]
     pub identifiers: IdentifierConfig,
+    /// The last look before packing: what to allow among the secrets and personal data it finds.
+    #[serde(default)]
+    pub scan: crate::scan::ScanConfig,
     /// The bill: CUR 2.0 through Athena, read once a day. Absent: no bill is read.
     #[serde(default)]
     pub cur: Option<CurConfig>,
@@ -537,6 +540,12 @@ pseudonymize = []   # e.g. ["Owner"]: the same value always gives the same pseud
 [identifiers]
 account_ids = "keep"
 resource_ids = "keep"
+
+# Before a bundle is written, what would leave is scanned for keys, tokens, passwords and email addresses: pack stops
+# until each is redacted by a rule above, or allowed here. Public IP addresses are reported, never blocking.
+[scan]
+allow = []          # kinds to report without blocking, e.g. ["email"]
+allow_values = []   # whole-value regexes to skip, e.g. ["^noreply@example\\.com$"]
 
 [run]
 every_hours = 1

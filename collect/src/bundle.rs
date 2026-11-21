@@ -58,6 +58,9 @@ pub struct Manifest {
     pub key_fingerprint: String,
     /// What the rules cost in qloudpulse's reports.
     pub feature_impact: Vec<String>,
+    /// What the last look before packing found in what leaves: kinds, counts, masked samples.
+    #[serde(default)]
+    pub scan: crate::scan::ScanReport,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -105,7 +108,14 @@ pub fn file_name(source_id: &str, window: &Window) -> String {
 }
 
 /// Redacts the snapshot by `config` and writes the bundle into `config.output_dir`.
-pub fn pack(config: &Config, config_bytes: &[u8], pseudonyms: &Pseudonymizer, snapshot: &Snapshot) -> Result<PathBuf> {
+/// Stops before writing when the scan finds a blocking kind, unless `allow_findings`.
+pub fn pack(
+    config: &Config,
+    config_bytes: &[u8],
+    pseudonyms: &Pseudonymizer,
+    snapshot: &Snapshot,
+    allow_findings: bool,
+) -> Result<PathBuf> {
     let mut records: Vec<Record> = dedupe(snapshot.records.clone())
         .into_iter()
         .filter(|r| r.collector != "client")
@@ -118,6 +128,17 @@ pub fn pack(config: &Config, config_bytes: &[u8], pseudonyms: &Pseudonymizer, sn
         pseudonyms,
     }
     .apply(&mut records, &mut outcome);
+    let scan = crate::scan::scan(&records, &config.scan);
+    let blocking = scan.blocking();
+    if !blocking.is_empty() && !allow_findings {
+        let kinds: Vec<String> = blocking.iter().map(|(k, s)| format!("{k} ({})", s.count)).collect();
+        bail!(
+            "not packed: the bundle would carry {}.\n{}Redact them with a [tags] or [[fields]] rule, allow them in [scan], \
+             or pack with --allow-findings. `analyze` shows where they are.",
+            kinds.join(", "),
+            scan.text()
+        );
+    }
 
     let mut by_collector: BTreeMap<String, Vec<&Record>> = BTreeMap::new();
     for r in &records {
@@ -170,6 +191,7 @@ pub fn pack(config: &Config, config_bytes: &[u8], pseudonyms: &Pseudonymizer, sn
         identifiers: id_stats,
         key_fingerprint: pseudonyms.fingerprint(),
         feature_impact: config.feature_impact(),
+        scan,
     };
     contents.insert(0, (MANIFEST.to_string(), serde_json::to_vec_pretty(&manifest)?));
 
@@ -271,6 +293,41 @@ mod tests {
     }
 
     #[test]
+    fn refuses_to_pack_an_email_until_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = format!(
+            "source_id = \"main\"\noutput_dir = \"{}\"\n[tags]\ndefault = \"allow\"\n",
+            dir.path().join("out").display()
+        );
+        let config: Config = toml::from_str(&text).unwrap();
+        let pseudonyms = Pseudonymizer::new(vec![9; 32], false);
+        let now: jiff::Timestamp = "2026-11-21T07:05:00Z".parse().unwrap();
+        let meta = SnapshotMeta {
+            tool_version: "t".into(),
+            call_plan_version: "p".into(),
+            window: Window::last_full_hour(now),
+            collected_at: now,
+            outcome: Outcome::default(),
+        };
+        let tagged = "<R><tagSet><item><key>Owner</key><value>alice@corp.example</value></item></tagSet></R>";
+        let snapshot = Snapshot::write(dir.path().join("raw"), meta, vec![record("aws-cost-collect", tagged)]).unwrap();
+        let err = pack(&config, text.as_bytes(), &pseudonyms, &snapshot, false)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("email (1)") && err.contains("al…le") && !err.contains("alice@"),
+            "{err}"
+        );
+        assert!(!dir.path().join("out").exists(), "nothing written");
+        let path = pack(&config, text.as_bytes(), &pseudonyms, &snapshot, true).unwrap();
+        assert_eq!(
+            open(&path).unwrap().manifest.scan.kinds["email"].count,
+            1,
+            "the manifest says what was let through"
+        );
+    }
+
+    #[test]
     fn packs_redacted_deterministic_and_verifiable() {
         let dir = tempfile::tempdir().unwrap();
         let text = format!(
@@ -302,9 +359,9 @@ mod tests {
         ];
         let snapshot = Snapshot::write(dir.path().join("raw"), meta, records).unwrap();
 
-        let first = pack(&config, text.as_bytes(), &pseudonyms, &snapshot).unwrap();
+        let first = pack(&config, text.as_bytes(), &pseudonyms, &snapshot, false).unwrap();
         let first_bytes = std::fs::read(&first).unwrap();
-        let again = pack(&config, text.as_bytes(), &pseudonyms, &snapshot).unwrap();
+        let again = pack(&config, text.as_bytes(), &pseudonyms, &snapshot, false).unwrap();
         assert_eq!(first_bytes, std::fs::read(&again).unwrap(), "same input, same bytes");
         assert!(first.ends_with("qloudpulse-main-20261121T0600Z.tgz"));
 
