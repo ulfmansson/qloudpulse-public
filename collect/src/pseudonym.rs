@@ -72,6 +72,28 @@ impl Pseudonymizer {
         out
     }
 
+    /// An account ID as another 12-digit number. Its own domain, so it never equals a value's pseudonym.
+    pub fn account_id(&self, id: &str) -> String {
+        let mac = self.mac(&[b"qloudpulse-collect/v1\0account\0", id.as_bytes()]);
+        let n = u64::from_be_bytes(mac[..8].try_into().expect("8 bytes")) % 1_000_000_000_000;
+        let out = format!("{n:012}");
+        if let Some(seen) = &self.seen {
+            seen.lock().expect("pseudonym map").insert(out.clone(), id.to_string());
+        }
+        out
+    }
+
+    /// A resource ID with its prefix and as many hex digits as the original: `i-0abc…` → `i-` + 17 hex digits.
+    pub fn resource_id(&self, prefix: &str, hex: &str) -> String {
+        let full = format!("{prefix}-{hex}");
+        let mac = hex::encode(self.mac(&[b"qloudpulse-collect/v1\0resource\0", full.as_bytes()]));
+        let out = format!("{prefix}-{}", &mac[..hex.len()]);
+        if let Some(seen) = &self.seen {
+            seen.lock().expect("pseudonym map").insert(out.clone(), full);
+        }
+        out
+    }
+
     /// Names the key without revealing it, for the manifest: a changed fingerprint means every pseudonym changed.
     pub fn fingerprint(&self) -> String {
         hex::encode(self.mac(&[b"qloudpulse-collect/v1\0fingerprint"]))[..16].to_string()

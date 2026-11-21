@@ -11,6 +11,7 @@ pub mod callplan;
 pub mod collect;
 pub mod config;
 pub mod deliver;
+pub mod identifiers;
 pub mod log;
 pub mod pseudonym;
 pub mod record;

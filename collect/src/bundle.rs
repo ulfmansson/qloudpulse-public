@@ -6,6 +6,7 @@
 use crate::callplan::CallPlan;
 use crate::collect::Outcome;
 use crate::config::{Config, TagDefault};
+use crate::identifiers::{IdStats, Identifiers};
 use crate::pseudonym::Pseudonymizer;
 use crate::record::{Record, dedupe};
 use crate::redact::{Redactor, Stats};
@@ -44,6 +45,9 @@ pub struct Manifest {
     pub config_sha256: String,
     pub rules: RulesSummary,
     pub redaction: Stats,
+    /// How many distinct account and resource IDs were pseudonymized (0 when kept).
+    #[serde(default)]
+    pub identifiers: IdStats,
     /// Names the pseudonym key without revealing it. When it changes, every pseudonym changed.
     pub key_fingerprint: String,
     /// What the rules cost in qloudpulse's reports.
@@ -101,6 +105,13 @@ pub fn pack(config: &Config, config_bytes: &[u8], pseudonyms: &Pseudonymizer, sn
         .filter(|r| r.collector != "client")
         .collect();
     let stats = Redactor::new(config, pseudonyms).records(&mut records);
+    let mut outcome = snapshot.meta.outcome.clone();
+    let id_stats = Identifiers {
+        accounts: config.identifiers.account_ids,
+        resources: config.identifiers.resource_ids,
+        pseudonyms,
+    }
+    .apply(&mut records, &mut outcome);
 
     let mut by_collector: BTreeMap<String, Vec<&Record>> = BTreeMap::new();
     for r in &records {
@@ -129,7 +140,7 @@ pub fn pack(config: &Config, config_bytes: &[u8], pseudonyms: &Pseudonymizer, sn
         accounts,
         regions,
         failures,
-    } = snapshot.meta.outcome.clone();
+    } = outcome;
     let manifest = Manifest {
         schema_version: SCHEMA_VERSION.into(),
         tool: "qloudpulse-collect".into(),
@@ -146,6 +157,7 @@ pub fn pack(config: &Config, config_bytes: &[u8], pseudonyms: &Pseudonymizer, sn
         config_sha256: hex::encode(Sha256::digest(config_bytes)),
         rules: RulesSummary::of(config),
         redaction: stats,
+        identifiers: id_stats,
         key_fingerprint: pseudonyms.fingerprint(),
         feature_impact: config.feature_impact(),
     };

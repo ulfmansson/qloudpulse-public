@@ -33,6 +33,9 @@ pub struct Config {
     pub tags: TagRules,
     #[serde(default)]
     pub fields: Vec<FieldRule>,
+    /// Account IDs and resource IDs, kept or pseudonymized with their format.
+    #[serde(default)]
+    pub identifiers: IdentifierConfig,
     #[serde(default)]
     pub run: RunConfig,
     #[serde(default)]
@@ -117,6 +120,25 @@ pub struct FieldRule {
     pub pattern: Option<String>,
     #[serde(default)]
     pub with: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IdAction {
+    #[default]
+    Keep,
+    Pseudonymize,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct IdentifierConfig {
+    /// 12-digit account IDs, wherever they appear (ARNs included): another 12-digit number when pseudonymized.
+    #[serde(default)]
+    pub account_ids: IdAction,
+    /// EC2-style resource IDs (`i-`, `vol-`, `eni-`, …): the same prefix and length when pseudonymized.
+    #[serde(default)]
+    pub resource_ids: IdAction,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -425,6 +447,12 @@ pseudonymize = []   # e.g. ["Owner"]: the same value always gives the same pseud
 # [[fields]]
 # path = "privateDnsName"
 # action = "pseudonymize"
+
+# Account IDs and resource IDs: "keep", or "pseudonymize" with their format kept (12 digits; i- and 17 hex digits),
+# the same everywhere they appear, ARNs and requests included, so the bill and the inventory still join.
+[identifiers]
+account_ids = "keep"
+resource_ids = "keep"
 
 [run]
 every_hours = 1

@@ -445,7 +445,7 @@ fn swap_json(value: &mut Value, changed: &HashMap<String, String>) -> bool {
     }
 }
 
-fn percent_decode(s: &str) -> String {
+pub fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
