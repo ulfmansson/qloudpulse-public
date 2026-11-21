@@ -49,25 +49,46 @@ pub fn analyze(source: &str, records: &[Record], config: Option<&Config>, show_v
     let mut tags: BTreeMap<String, Acc> = BTreeMap::new();
     let mut operations = BTreeMap::new();
     let mut errors = BTreeMap::new();
+    let bill_tag_columns = crate::collect::cur::tag_columns(
+        config
+            .and_then(|c| c.cur.as_ref())
+            .map(|c| c.scope_tag_keys.as_slice())
+            .unwrap_or_default(),
+    );
+    let mut bill_columns: std::collections::HashMap<String, Vec<String>> = Default::default();
     for r in records {
         let op = format!("{}:{}", r.service, r.operation);
         *operations.entry(op.clone()).or_insert(0) += 1;
         if let Some(code) = &r.error_code {
             *errors.entry(format!("{op} {code}")).or_insert(0) += 1;
         }
-        let body = Body::parse(r.response.body.as_bytes());
-        visit_tags(&body, &mut |t| {
-            let acc = tags.entry(t.key.to_string()).or_insert_with(|| Acc {
+        let mut add = |key: &str, value: &str| {
+            let acc = tags.entry(key.to_string()).or_insert_with(|| Acc {
                 count: 0,
                 values: BTreeSet::new(),
                 operations: BTreeSet::new(),
             });
             acc.count += 1;
             if acc.values.len() < DISTINCT_CAP {
-                acc.values.insert(t.value.to_string());
+                acc.values.insert(value.to_string());
             }
             acc.operations.insert(op.clone());
-        });
+        };
+        if r.service == "athena" && r.operation == "GetQueryResults" {
+            if let Ok(mut answer) = serde_json::from_str::<serde_json::Value>(&r.response.body) {
+                let id = serde_json::from_str::<serde_json::Value>(&r.request.body)
+                    .ok()
+                    .and_then(|v| v["QueryExecutionId"].as_str().map(str::to_string))
+                    .unwrap_or_default();
+                let columns = bill_columns.entry(id).or_default();
+                crate::collect::cur::for_each_tag_cell(&mut answer, columns, &bill_tag_columns, &mut |key, cell| {
+                    add(key, cell["VarCharValue"].as_str().unwrap_or_default())
+                });
+            }
+            continue;
+        }
+        let body = Body::parse(r.response.body.as_bytes());
+        visit_tags(&body, &mut |t| add(t.key, t.value));
     }
     let tags = tags
         .into_iter()

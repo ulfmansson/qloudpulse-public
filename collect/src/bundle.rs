@@ -40,6 +40,9 @@ pub struct Manifest {
     pub regions: Vec<String>,
     /// Collectors that stopped early, by account and region.
     pub failures: Vec<String>,
+    /// The bill queries this bundle answers: qloudpulse replays them with these periods and scope tag keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cur: Option<crate::collect::cur::CurOutcome>,
     pub files: Vec<FileEntry>,
     /// SHA-256 of the config file as it was when packing.
     pub config_sha256: String,
@@ -140,6 +143,7 @@ pub fn pack(config: &Config, config_bytes: &[u8], pseudonyms: &Pseudonymizer, sn
         accounts,
         regions,
         failures,
+        cur,
     } = outcome;
     let manifest = Manifest {
         schema_version: SCHEMA_VERSION.into(),
@@ -153,6 +157,7 @@ pub fn pack(config: &Config, config_bytes: &[u8], pseudonyms: &Pseudonymizer, sn
         accounts,
         regions,
         failures,
+        cur,
         files,
         config_sha256: hex::encode(Sha256::digest(config_bytes)),
         rules: RulesSummary::of(config),
@@ -280,6 +285,7 @@ mod tests {
                 accounts: vec!["111122223333".into()],
                 regions: vec!["eu-west-1".into()],
                 failures: vec![],
+                cur: None,
             },
         };
         let tagged = "<R><tagSet><item><key>Owner</key><value>alice</value></item></tagSet></R>";

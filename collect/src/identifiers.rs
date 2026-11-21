@@ -26,6 +26,8 @@ fn account_sources() -> &'static [Regex] {
             Regex::new(r"arn:aws[a-z-]*:[a-z0-9-]*:[a-z0-9-]*:(\d{12}):").expect("valid"),
             Regex::new(r"<(?:ownerId|OwnerId|requesterId|accountId|AccountId)>(\d{12})<").expect("valid"),
             Regex::new(r#""(?:ownerId|OwnerId|AccountId|accountId|Account)"\s*:\s*"(\d{12})""#).expect("valid"),
+            // Athena results: the bill's account_id column holds linked accounts no other answer names.
+            Regex::new(r#""VarCharValue"\s*:\s*"(\d{12})""#).expect("valid"),
         ]
     })
 }
@@ -142,6 +144,9 @@ impl Identifiers<'_> {
         }
         outcome.accounts = outcome.accounts.iter().map(|a| rewrite(a, &mut resources)).collect();
         outcome.failures = outcome.failures.iter().map(|f| rewrite(f, &mut resources)).collect();
+        if let Some(cur) = &mut outcome.cur {
+            cur.account = rewrite(&cur.account, &mut resources);
+        }
         IdStats {
             account_ids: accounts.len(),
             resource_ids: resources.len(),
@@ -200,6 +205,7 @@ mod tests {
             body,
         )];
         let mut outcome = Outcome {
+            cur: None,
             accounts: vec!["111122223333".into()],
             regions: vec![],
             failures: vec!["111122223333 eu-west-1 x: y".into()],

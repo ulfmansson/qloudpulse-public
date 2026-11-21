@@ -64,6 +64,22 @@ A bundle is plain text, so `tar -xzf` and `jq` work on it:
   config, a summary of your rules, what each rule changed, and your key's fingerprint.
 - `calls/*.ndjson` holds one recorded AWS answer per line, after redaction.
 
+## The bill
+
+With `[cur]` set, the run at `daily_hour` also reads the bill: the same Athena SQL qloudpulse runs, over your CUR 2.0
+table in the payer account, for the previous and the current month (`periods_back`). Only the query results are
+recorded, never the CUR files: about one row per day, account, product, resource and usage type.
+
+The role needs, besides what `policy` prints:
+- Athena on the workgroup (`qloudpulse-cost` unless you name another),
+- Glue `GetDatabase` and `GetTable` on the database and table (`policy` prints these),
+- read on the CUR export bucket, and write on the workgroup's results location.
+
+`scope_tag_keys` must be the scope tag keys you set in qloudpulse: they are columns in the query, and qloudpulse's
+replay matches the query text. The bill's tag columns (`Name`, the EKS cluster tags and your scope keys) follow your
+tag rules like tags anywhere else; a dropped value is left empty. Use `collect --daily` to read the bill outside the
+daily hour.
+
 ## Rules
 
 Under `[tags]`, a tag no rule names is dropped (`default = "deny"`) or kept (`"allow"`). Each tag key can have one
@@ -72,6 +88,10 @@ action:
 - `drop`
 - `pseudonymize`: the same value always gives the same `p_…`, and only your key can reverse it
 - `replace`: a regex with `$1`, or a fixed value
+
+`[identifiers]` pseudonymizes account IDs and resource IDs while keeping their format: an account ID becomes another
+12-digit number, `i-0abc…` becomes `i-` and as many other hex digits. The same ID gets the same pseudonym everywhere,
+inside ARNs and requests too, so the bill and the inventory still join. Both are kept by default.
 
 `[[fields]]` rules apply the same actions to any field, matched by the end of its path. The client refuses rules
 for fields qloudpulse prices from, such as instance type, size or engine. When a rule changes a value, for example a

@@ -77,7 +77,18 @@ impl<'a> Redactor<'a> {
     pub fn records(&self, records: &mut [Record]) -> Stats {
         let mut stats = Stats::default();
         let mut changed: HashMap<String, String> = HashMap::new();
+        let tag_columns = crate::collect::cur::tag_columns(
+            self.config
+                .cur
+                .as_ref()
+                .map(|c| c.scope_tag_keys.as_slice())
+                .unwrap_or_default(),
+        );
+        let mut columns_by_query: HashMap<String, Vec<String>> = HashMap::new();
         for record in records.iter_mut() {
+            if record.service == "athena" && record.operation == "GetQueryResults" {
+                self.bill_tags(record, &tag_columns, &mut columns_by_query, &mut stats);
+            }
             let mut body = Body::parse(record.response.body.as_bytes());
             let mut touched = false;
             match &mut body {
@@ -95,6 +106,43 @@ impl<'a> Redactor<'a> {
             }
         }
         stats
+    }
+
+    /// Tag values in the bill's tag columns (`resource_tags_user_name`, `scope_tag_0`, …) get the same rules as
+    /// tags anywhere else; a dropped value becomes an empty cell, which Athena uses for null.
+    fn bill_tags(
+        &self,
+        record: &mut Record,
+        tag_columns: &[(String, String)],
+        columns_by_query: &mut HashMap<String, Vec<String>>,
+        stats: &mut Stats,
+    ) {
+        let Ok(mut answer) = serde_json::from_str::<Value>(&record.response.body) else {
+            return;
+        };
+        let id = serde_json::from_str::<Value>(&record.request.body)
+            .ok()
+            .and_then(|v| v["QueryExecutionId"].as_str().map(str::to_string))
+            .unwrap_or_default();
+        let columns = columns_by_query.entry(id).or_default();
+        let mut touched = false;
+        crate::collect::cur::for_each_tag_cell(&mut answer, columns, tag_columns, &mut |key, cell| {
+            let old = cell["VarCharValue"].as_str().unwrap_or_default().to_string();
+            match self.tag_value(key, &old, stats) {
+                None => {
+                    *cell = Value::Object(Default::default());
+                    touched = true;
+                }
+                Some(new) if new != old => {
+                    cell["VarCharValue"] = Value::String(new);
+                    touched = true;
+                }
+                Some(_) => {}
+            }
+        });
+        if touched {
+            record.response.body = answer.to_string();
+        }
     }
 
     fn tag_value(&self, key: &str, value: &str, stats: &mut Stats) -> Option<String> {
@@ -542,6 +590,44 @@ mod tests {
         assert_eq!(records[0].response.body, format!(r#"{{"TableNames":["{p}"]}}"#));
         assert_eq!(records[1].request.body, format!(r#"{{"TableName":"{p}"}}"#));
         assert_eq!(stats.fields["TableNames"], 1);
+    }
+
+    #[test]
+    fn bill_tag_columns_follow_the_tag_rules() {
+        let config = config(
+            "[tags]\ndefault = \"deny\"\npseudonymize = [\"Name\"]\n[cur]\naccount = \"111122223333\"\nscope_tag_keys = [\"Team\"]\n",
+        );
+        let pseudonyms = Pseudonymizer::new(vec![7; 32], false);
+        let answer = serde_json::json!({"ResultSet": {
+        "ResultSetMetadata": {"ColumnInfo": [{"Name": "resource_id"}, {"Name": "resource_tags_user_name"}, {"Name": "scope_tag_0"}]},
+        "Rows": [
+            {"Data": [{"VarCharValue": "resource_id"}, {"VarCharValue": "resource_tags_user_name"}, {"VarCharValue": "scope_tag_0"}]},
+            {"Data": [{"VarCharValue": "i-1"}, {"VarCharValue": "web-prod"}, {"VarCharValue": "payments"}]},
+            {"Data": [{"VarCharValue": "i-2"}, {}, {"VarCharValue": "search"}]}
+        ]}});
+        let mut r = record(
+            &answer.to_string(),
+            r#"{"QueryExecutionId":"q1","MaxResults":1000}"#,
+            "application/x-amz-json-1.1",
+        );
+        r.service = "athena".into();
+        r.operation = "GetQueryResults".into();
+        let mut records = vec![r];
+        let stats = Redactor::new(&config, &pseudonyms).records(&mut records);
+        let v: Value = serde_json::from_str(&records[0].response.body).unwrap();
+        let rows = &v["ResultSet"]["Rows"];
+        assert_eq!(
+            rows[0]["Data"][1]["VarCharValue"], "resource_tags_user_name",
+            "the header row stays"
+        );
+        assert_eq!(rows[1]["Data"][1]["VarCharValue"], pseudonyms.pseudonym("web-prod"));
+        assert_eq!(
+            rows[1]["Data"][2],
+            serde_json::json!({}),
+            "Team is denied: the cell becomes null"
+        );
+        assert_eq!(rows[2]["Data"][1], serde_json::json!({}), "a null stays null");
+        assert_eq!(stats.tags["Team"].1, 2);
     }
 
     #[test]

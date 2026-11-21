@@ -36,6 +36,9 @@ pub struct Config {
     /// Account IDs and resource IDs, kept or pseudonymized with their format.
     #[serde(default)]
     pub identifiers: IdentifierConfig,
+    /// The bill: CUR 2.0 through Athena, read once a day. Absent: no bill is read.
+    #[serde(default)]
+    pub cur: Option<CurConfig>,
     #[serde(default)]
     pub run: RunConfig,
     #[serde(default)]
@@ -122,6 +125,32 @@ pub struct FieldRule {
     pub with: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CurConfig {
+    /// The payer account, where the CUR 2.0 export and its Athena table are.
+    pub account: String,
+    /// A role to read the bill through; the payer's credentials from `accounts` when absent.
+    #[serde(default)]
+    pub role_arn: Option<String>,
+    #[serde(default)]
+    pub external_id: Option<String>,
+    #[serde(default = "default_region")]
+    pub region: String,
+    #[serde(default = "default_workgroup")]
+    pub workgroup: String,
+    #[serde(default = "default_database")]
+    pub database: String,
+    #[serde(default = "default_table")]
+    pub table: String,
+    /// Your scope tag keys as set in qloudpulse. They are part of the query, so they must match what qloudpulse has.
+    #[serde(default)]
+    pub scope_tag_keys: Vec<String>,
+    /// Months before the current one to read, 1 to 3. 1: the previous and the current month.
+    #[serde(default = "one")]
+    pub periods_back: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum IdAction {
@@ -149,7 +178,7 @@ pub struct RunConfig {
     /// Minutes past the hour to start, so the hour just ended is complete.
     #[serde(default = "five")]
     pub minute: u32,
-    /// The UTC hour whose run also reads the 90-day spot price history.
+    /// The UTC hour whose run also reads the daily parts: the bill and the 90-day spot price history.
     #[serde(default)]
     pub daily_hour: u32,
     /// Keep raw snapshots after packing. Off: they are deleted once the bundle is written.
@@ -253,6 +282,15 @@ pub const REQUIRED_FIELDS: &[&str] = &[
 fn default_region() -> String {
     "eu-west-1".into()
 }
+fn default_workgroup() -> String {
+    "qloudpulse-cost".into()
+}
+fn default_database() -> String {
+    "qloudpulse_cur".into()
+}
+fn default_table() -> String {
+    "cur2".into()
+}
 fn default_key_file() -> PathBuf {
     "qloudpulse-collect.key".into()
 }
@@ -338,6 +376,11 @@ impl Config {
             if let Some(p) = &r.pattern {
                 regex::Regex::new(p).with_context(|| format!("the pattern for tag {}", r.key))?;
             }
+        }
+        if let Some(c) = &self.cur
+            && (c.periods_back == 0 || c.periods_back > 3 || c.account.len() != 12)
+        {
+            bail!("[cur] needs a 12-digit account and periods_back from 1 to 3");
         }
         if self.run.every_hours == 0 || self.run.minute > 59 || self.run.daily_hour > 23 {
             bail!("[run] every_hours must be at least 1, minute 0-59 and daily_hour 0-23");
@@ -447,6 +490,19 @@ pseudonymize = []   # e.g. ["Owner"]: the same value always gives the same pseud
 # [[fields]]
 # path = "privateDnsName"
 # action = "pseudonymize"
+
+# The bill: CUR 2.0 through Athena in the payer account, once a day (the daily_hour run). Only query results are
+# recorded, never the CUR files. The role needs Athena on the workgroup, Glue on the database and table, read on the
+# CUR export bucket and write on the workgroup's results location.
+# [cur]
+# account = "111122223333"
+# role_arn = "arn:aws:iam::111122223333:role/qloudpulse-collect-bill"
+# region = "eu-west-1"
+# workgroup = "qloudpulse-cost"
+# database = "qloudpulse_cur"
+# table = "cur2"
+# scope_tag_keys = []     # the scope tag keys set in qloudpulse: they are part of the query
+# periods_back = 1
 
 # Account IDs and resource IDs: "keep", or "pseudonymize" with their format kept (12 digits; i- and 17 hex digits),
 # the same everywhere they appear, ARNs and requests included, so the bill and the inventory still join.

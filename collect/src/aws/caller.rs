@@ -29,6 +29,7 @@ impl std::fmt::Display for AwsError {
 
 impl std::error::Error for AwsError {}
 
+#[derive(Clone)]
 pub struct Account {
     pub id: String,
     pub credentials: Credentials,
@@ -92,6 +93,34 @@ impl<'a> Caller<'a> {
         operation: &str,
         params: Value,
     ) -> Result<Vec<Body>> {
+        self.call_inner(collector, account, region, service, operation, params, true)
+    }
+
+    /// Like [`Caller::call`], for a request repeated until its answer changes (Athena's GetQueryExecution): never
+    /// answered from memory, and only its latest answer is kept, so a replay answers every repeat with it.
+    pub fn call_latest(
+        &self,
+        collector: &str,
+        account: &Account,
+        region: &str,
+        service: &str,
+        operation: &str,
+        params: Value,
+    ) -> Result<Vec<Body>> {
+        self.call_inner(collector, account, region, service, operation, params, false)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn call_inner(
+        &self,
+        collector: &str,
+        account: &Account,
+        region: &str,
+        service: &str,
+        operation: &str,
+        params: Value,
+        memo: bool,
+    ) -> Result<Vec<Body>> {
         let (svc, op) = self.plan.operation(service, operation)?;
         if let Some(option) = &op.option
             && !self.options.contains(option)
@@ -101,7 +130,7 @@ impl<'a> Caller<'a> {
         let region = svc.global_region.as_deref().unwrap_or(region);
         let first = protocol::build(svc, op, region, &params, None)?;
         let key = serde_json::to_string(&(&account.id, region, service, operation, &first))?;
-        if let Some(answer) = self.memo.lock().expect("memo").get(&key) {
+        if memo && let Some(answer) = self.memo.lock().expect("memo").get(&key) {
             return answer.clone().map_err(Into::into);
         }
 
@@ -112,7 +141,17 @@ impl<'a> Caller<'a> {
             let response = self.send(&request, svc.signing_name(), region, &account.credentials)?;
             let body = Body::parse(&response.body);
             let error = error_of(&response, &body);
-            self.records.lock().expect("records").push(Record {
+            let mut records = self.records.lock().expect("records");
+            if !memo {
+                records.retain(|r| {
+                    !(r.account == account.id
+                        && r.region == region
+                        && r.service == service
+                        && r.operation == operation
+                        && r.request == request)
+                });
+            }
+            records.push(Record {
                 collector: collector.to_string(),
                 account: account.id.clone(),
                 region: region.to_string(),
@@ -127,6 +166,7 @@ impl<'a> Caller<'a> {
                 },
                 error_code: error.as_ref().map(|e| e.code.clone()),
             });
+            drop(records);
             if let Some(error) = error {
                 break Err(error);
             }
@@ -140,7 +180,9 @@ impl<'a> Caller<'a> {
                 _ => break Ok(pages),
             }
         };
-        self.memo.lock().expect("memo").insert(key, answer.clone());
+        if memo {
+            self.memo.lock().expect("memo").insert(key, answer.clone());
+        }
         answer.map_err(Into::into)
     }
 

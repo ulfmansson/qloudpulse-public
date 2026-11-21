@@ -5,6 +5,7 @@
 //! request that differs. collect-swamp's contract tests replay this client's fixtures to catch that.
 
 pub mod cost;
+pub mod cur;
 
 use crate::aws::Caller;
 use crate::aws::caller::{Account, AwsError};
@@ -21,6 +22,9 @@ pub struct Outcome {
     pub regions: Vec<String>,
     /// `account region collector: error`, for each collector that stopped early.
     pub failures: Vec<String>,
+    /// What the bill queries read, when this run read the bill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cur: Option<cur::CurOutcome>,
 }
 
 pub struct Run<'a> {
@@ -36,6 +40,7 @@ impl Run<'_> {
             accounts: accounts.iter().map(|a| a.id.clone()).collect(),
             regions: regions.to_vec(),
             failures: Vec::new(),
+            cur: None,
         };
         for account in accounts {
             for region in regions {

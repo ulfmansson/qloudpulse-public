@@ -37,7 +37,11 @@ enum Command {
     /// Write a starter config and create the pseudonym key.
     Init,
     /// Read the accounts into a raw snapshot (local only, never delivered).
-    Collect,
+    Collect {
+        /// Also read the daily parts (the bill, the 90-day spot history) whatever the hour.
+        #[arg(long)]
+        daily: bool,
+    },
     /// Show what a raw snapshot or a bundle holds: tag keys, values, what the rules do, what they cost.
     Analyze {
         /// A raw snapshot directory or a bundle (.tgz). The newest raw snapshot when absent.
@@ -115,6 +119,7 @@ fn client(path: &Path) -> Result<Client> {
         config_bytes,
         credentials,
         transport: Box::new(UreqTransport::new()),
+        force_daily: false,
     })
 }
 
@@ -150,8 +155,9 @@ fn run(cli: Cli) -> Result<()> {
                 );
             }
         }
-        Command::Collect => {
-            let client = client(&cli.config)?;
+        Command::Collect { daily } => {
+            let mut client = client(&cli.config)?;
+            client.force_daily = daily;
             let snapshot = client.collect(jiff::Timestamp::now())?;
             println!("{}", snapshot.dir.display());
         }
@@ -281,6 +287,20 @@ fn run(cli: Cli) -> Result<()> {
                 "Action": plan.iam_actions(&options),
                 "Resource": "*",
             })];
+            if let Some(cur) = config.as_ref().and_then(|c| c.cur.as_ref()) {
+                // Athena reads the table's definition with the caller's rights. Read on the CUR export bucket and
+                // write on the workgroup's results location are the bucket owner's to grant; see the README.
+                statements.push(serde_json::json!({
+                    "Sid": "QloudpulseCollectBill",
+                    "Effect": "Allow",
+                    "Action": ["glue:GetDatabase", "glue:GetTable"],
+                    "Resource": [
+                        format!("arn:aws:glue:{}:{}:catalog", cur.region, cur.account),
+                        format!("arn:aws:glue:{}:{}:database/{}", cur.region, cur.account, cur.database),
+                        format!("arn:aws:glue:{}:{}:table/{}/{}", cur.region, cur.account, cur.database, cur.table),
+                    ],
+                }));
+            }
             if let Some(s3) = config.as_ref().and_then(|c| c.deliver.s3.as_ref()) {
                 statements.push(serde_json::json!({
                     "Sid": "QloudpulseCollectDeliver",

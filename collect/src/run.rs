@@ -22,6 +22,8 @@ pub struct Client {
     pub config_bytes: Vec<u8>,
     pub credentials: CredentialSource,
     pub transport: Box<dyn Transport>,
+    /// Read the daily parts whatever the hour (`collect --daily`).
+    pub force_daily: bool,
 }
 
 impl Client {
@@ -59,10 +61,11 @@ impl Client {
             Some(r) => r.clone(),
             None => collect::enabled_regions(&caller, &accounts[0], home).context("listing enabled regions")?,
         };
+        let daily = self.force_daily || utc_hour(now) == self.config.run.daily_hour;
         let run = Run {
             caller: &caller,
             window,
-            spot_history: utc_hour(now) == self.config.run.daily_hour,
+            spot_history: daily,
         };
         log::info(
             "collecting",
@@ -73,6 +76,18 @@ impl Client {
             ],
         );
         let mut outcome = run.collect(&accounts, &regions);
+        if daily && let Some(c) = &self.config.cur {
+            match self.read_bill(&caller, c, &accounts, now) {
+                Ok(cur) => outcome.cur = Some(cur),
+                Err(e) => {
+                    log::warn(
+                        "bill not read",
+                        &[("account", c.account.clone()), ("error", format!("{e:#}"))],
+                    );
+                    failures.push(format!("{} {} cur: {e:#}", c.account, c.region));
+                }
+            }
+        }
         outcome.failures.splice(0..0, failures);
         let records = caller.into_records();
         let meta = SnapshotMeta {
@@ -91,6 +106,37 @@ impl Client {
             ],
         );
         Ok(snapshot)
+    }
+
+    fn read_bill(
+        &self,
+        caller: &Caller,
+        c: &crate::config::CurConfig,
+        accounts: &[Account],
+        now: Timestamp,
+    ) -> Result<collect::cur::CurOutcome> {
+        let payer = match &c.role_arn {
+            Some(role) => Account {
+                id: c.account.clone(),
+                credentials: self.credentials.assume(role, c.external_id.as_deref())?,
+            },
+            None => accounts
+                .iter()
+                .find(|a| a.id == c.account)
+                .cloned()
+                .context("the payer account is not among the accounts read; set [cur] role_arn")?,
+        };
+        let settings = collect::cur::CurSettings {
+            region: c.region.clone(),
+            workgroup: c.workgroup.clone(),
+            database: c.database.clone(),
+            table: c.table.clone(),
+            scope_tag_keys: c.scope_tag_keys.clone(),
+            periods: collect::cur::periods(now, c.periods_back),
+            first_poll: std::time::Duration::from_secs(1),
+        };
+        log::info("reading the bill", &[("periods", settings.periods.join(","))]);
+        collect::cur::collect(caller, &payer, &settings)
     }
 
     pub fn pseudonyms(&self) -> Result<Pseudonymizer> {

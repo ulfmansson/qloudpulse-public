@@ -1,7 +1,7 @@
 {
-  "version": "0.1.0-seed",
+  "version": "0.2.0-seed",
   "seed": true,
-  "note": "Hand-made from collect-swamp's aws-cost-collect (aws_clients.ts COST_COLLECTOR_ACTIONS, @aws-sdk 3.1021.0 protocols). Replaced by the generated plan.",
+  "note": "Hand-made from collect-swamp's aws-cost-collect and aws-cur-collect (aws_clients.ts COST_COLLECTOR_ACTIONS, CUR_READER_ACTIONS; @aws-sdk 3.1021.0 protocols). Replaced by the generated plan.",
   "services": {
     "sts": {
       "protocol": "query",
@@ -105,6 +105,11 @@
       "protocol": "query",
       "endpoint_prefix": "autoscaling",
       "api_version": "2011-01-01"
+    },
+    "athena": {
+      "protocol": "awsJson1_1",
+      "endpoint_prefix": "athena",
+      "target_prefix": "AmazonAthena"
     }
   },
   "operations": [
@@ -568,6 +573,34 @@
         "input_token": "NextToken",
         "output_token": "NextToken"
       }
+    },
+    {
+      "collector": "aws-cur-collect",
+      "service": "athena",
+      "name": "StartQueryExecution",
+      "iam_action": "athena:StartQueryExecution"
+    },
+    {
+      "collector": "aws-cur-collect",
+      "service": "athena",
+      "name": "GetQueryExecution",
+      "iam_action": "athena:GetQueryExecution"
+    },
+    {
+      "collector": "aws-cur-collect",
+      "service": "athena",
+      "name": "GetQueryResults",
+      "iam_action": "athena:GetQueryResults",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "NextToken"
+      }
+    },
+    {
+      "collector": "aws-cur-collect",
+      "service": "athena",
+      "name": "StopQueryExecution",
+      "iam_action": "athena:StopQueryExecution"
     }
   ]
 }
