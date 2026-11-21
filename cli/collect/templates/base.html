@@ -35,6 +35,7 @@
   </div>
 </header>
 <main>
+{% if let Some(newer) = head.newer %}<div class="note warn">{{ newer }}</div>{% endif %}
 {% block content %}{% endblock %}
 </main>
 <footer>qloudpulse-collect {{ head.version }}. This page talks to nothing but this address: every asset is part of the binary, and the raw sample lives in this process's memory only.</footer>

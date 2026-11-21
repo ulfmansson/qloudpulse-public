@@ -767,7 +767,7 @@ fn a_newer_client_is_said_and_one_below_the_minimum_stops() {
     assert!(!ok);
     assert!(stdout.is_empty());
     assert!(
-        stderr.contains("qloudpulse takes 98.0.0 or later. Download 99.0.0 from https://example.com/get"),
+        stderr.contains("qloudpulse takes 98.0.0 or later. Run `qloudpulse-stack update`, or download 99.0.0 from https://example.com/get"),
         "{stderr}"
     );
 

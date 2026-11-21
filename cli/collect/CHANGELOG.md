@@ -18,6 +18,10 @@ What changed in each version of `qloudpulse-collect`.
   Gateway, ECR), and Cloud Control's settings of queues, topics, file systems, ECS, streams, keys, network load
   balancers, NAT gateways, VPC endpoints, transit gateways and hosted zones. Not yet: ECR scan findings.
 - Forecast (opt-in, Cost Explorer) and carbon (Sustainability API), once a day.
+- `update` installs the newest release over the running one, with the release's own install script, checked against
+  the release's `SHA256SUMS` first. The commands a person runs at a terminal, and `ui`, say when a newer release is
+  out, asking GitHub at most once a day; `collect`, `pack`, `deliver`, `upload` and `run` never ask, and
+  `QLOUDPULSE_NO_UPDATE_CHECK=1` turns it off. Not in the build without the upload.
 - A scan before packing that stops on keys, tokens, passwords and email addresses; `[environment]` derived before
   redaction; `rotate-key` with a relink file; `[encrypt]` writes a JWE to deliver.
 - `[identifiers]`: account and resource IDs pseudonymized with their format kept, consistently everywhere.

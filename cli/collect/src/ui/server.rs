@@ -348,6 +348,28 @@ mod tests {
     }
 
     #[test]
+    fn a_newer_release_is_said_on_every_page_once_found() {
+        let (s, app) = app();
+        let text = |r: Response| {
+            let bytes = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(axum::body::to_bytes(r.into_body(), usize::MAX))
+                .unwrap();
+            String::from_utf8(bytes.to_vec()).unwrap()
+        };
+        let before = text(call(app.clone(), get("/runs", "127.0.0.1:7781", Some(&s.token))));
+        assert!(!before.contains("is out"), "{before}");
+        *super::super::state::lock(&s.newer) =
+            Some("qloudpulse-collect 9.9.9 is out (this is 0.1.0): `qloudpulse-collect update` installs it".into());
+        let after = text(call(app, get("/runs", "127.0.0.1:7781", Some(&s.token))));
+        assert!(
+            after.contains(r#"<div class="note warn">qloudpulse-collect 9.9.9 is out (this is 0.1.0): "#),
+            "{after}"
+        );
+    }
+
+    #[test]
     fn a_post_needs_the_form_token_and_our_origin() {
         let (s, app) = app();
         let post = |origin: &str, body: String| {

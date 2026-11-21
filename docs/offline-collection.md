@@ -12,6 +12,11 @@ qloudpulse ingests it through the same collectors that read live accounts today.
 The client needs nothing from our servers. It contacts qloudpulse only when the customer tells it to upload a
 finished bundle (`upload`, or `deliver.qloudpulse` in config), and then it sends that bundle and nothing else.
 
+Besides AWS and that upload, the only host the default build contacts is `api.github.com` (and GitHub's release
+downloads for `update`), to learn of a newer release: from the commands a person runs at a terminal and from `ui`, at
+most once a day, never from `collect`, `pack`, `deliver`, `upload` or `run`, and never with
+`QLOUDPULSE_NO_UPDATE_CHECK=1`. The build without `upload` has no update check and no `update`.
+
 ## Decisions
 
 ### The binary

@@ -127,12 +127,70 @@ enum Command {
     Policy,
     /// Print the compiled-in call plan: every operation the client may call.
     CallPlan,
+    /// Install the newest release over this binary, with the release's own install script, checked against the
+    /// release's SHA256SUMS. Asks GitHub, and nothing else. Not in a build without the upload: build the new tag the
+    /// same way instead.
+    #[cfg(feature = "upload")]
+    Update {
+        /// Say whether a newer release is out, and install nothing.
+        #[arg(long, conflicts_with_all = ["version", "attest"])]
+        check: bool,
+        /// Install this release, newer or older, instead of the newest, such as 0.2.0.
+        #[arg(long)]
+        version: Option<String>,
+        /// Also check the archive's signed build provenance with gh (gh attestation verify); needs gh signed in.
+        #[arg(long)]
+        attest: bool,
+    },
+}
+
+/// This client, for `update` and the check for a newer release.
+#[cfg(feature = "upload")]
+const CLIENT: qloudpulse_stack::update::Client = qloudpulse_stack::update::Client {
+    name: "qloudpulse-collect",
+    version: env!("CARGO_PKG_VERSION"),
+    readme: "cli/collect/README.md",
+};
+
+/// Whether this run looks for a newer release on GitHub (at most once a day, see `update::daily_notice`): only the
+/// commands a person runs, at a terminal. Never `collect`, `pack`, `deliver`, `upload` or `run`, which are what
+/// unattended jobs run, and never in a build without the upload, which contacts nothing but AWS. `ui` checks on its
+/// own, for its banner.
+#[cfg(feature = "upload")]
+fn checks_for_update(cli: &Cli) -> bool {
+    use std::io::IsTerminal as _;
+    let asked_by_a_person = match cli.command {
+        Command::Init
+        | Command::Analyze { .. }
+        | Command::Verify { .. }
+        | Command::Policy
+        | Command::CallPlan
+        | Command::RotateKey { .. }
+        | Command::Login { .. }
+        | Command::Logout { .. } => true,
+        Command::Collect { .. }
+        | Command::Pack { .. }
+        | Command::Deliver { .. }
+        | Command::Upload { .. }
+        | Command::Run { .. }
+        | Command::Ui { .. }
+        | Command::Update { .. } => false,
+    };
+    asked_by_a_person && !cli.log_json && std::io::stderr().is_terminal()
 }
 
 fn main() {
     let cli = Cli::parse();
     log::use_json(cli.log_json);
-    if let Err(e) = run(cli) {
+    // Asked beside the command, so the command does not wait for GitHub; said after it.
+    #[cfg(feature = "upload")]
+    let newer = checks_for_update(&cli).then(|| std::thread::spawn(|| qloudpulse_stack::update::daily_notice(&CLIENT)));
+    let result = run(cli);
+    #[cfg(feature = "upload")]
+    if let Some(Ok(Some(line))) = newer.map(std::thread::JoinHandle::join) {
+        eprintln!("qloudpulse-collect: {line}");
+    }
+    if let Err(e) = result {
         eprintln!("error: {e:#}");
         std::process::exit(1);
     }
@@ -344,7 +402,11 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::Ui { ui_bind } => {
             load(&cli.config)?;
-            qloudpulse_collect::ui::serve(cli.config, ui_bind)?;
+            #[cfg(feature = "upload")]
+            let newer = (!cli.log_json).then_some(|| qloudpulse_stack::update::daily_notice(&CLIENT));
+            #[cfg(not(feature = "upload"))]
+            let newer: Option<fn() -> Option<String>> = None;
+            qloudpulse_collect::ui::serve(cli.config, ui_bind, newer)?;
         }
         Command::Run { once, every, .. } => {
             let mut client = client(&cli.config)?;
@@ -427,6 +489,10 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::CallPlan => {
             println!("{}", serde_json::to_string_pretty(CallPlan::embedded())?);
+        }
+        #[cfg(feature = "upload")]
+        Command::Update { check, version, attest } => {
+            CLIENT.update(&qloudpulse_stack::update::Options { check, version, attest })?;
         }
     }
     Ok(())

@@ -13,7 +13,7 @@ use qloudpulse_stack::login::{self, SignedIn};
 use qloudpulse_stack::pulumi::{self, Options};
 use qloudpulse_stack::render::{self, Style};
 use qloudpulse_stack::request::{ChangeKind, FORMAT_VERSION, MAX_RESOURCES, Response};
-use qloudpulse_stack::{send, token, version, wrap};
+use qloudpulse_stack::{send, token, update, version, wrap};
 
 #[derive(Parser)]
 #[command(name = "qloudpulse-stack", version = version::LONG_VERSION, about = "qloudpulse from the command line", after_help = CONNECT)]
@@ -130,6 +130,29 @@ enum Command {
     /// The token still works until it expires or you remove it under Your tokens in qloudpulse.
     #[command(after_help = CONNECT)]
     Logout(AccountArgs),
+
+    /// Install the newest release of qloudpulse-stack over this one.
+    ///
+    /// Asks GitHub for the newest release, then runs that release's own install script (install.sh, or install.ps1 on
+    /// Windows) for the directory this binary is in. The script is checked against the release's SHA256SUMS first, and
+    /// checks the archive against it in turn. A run that prices says when a newer release is out.
+    Update(UpdateArgs),
+}
+
+/// What `update` takes.
+#[derive(clap::Args)]
+struct UpdateArgs {
+    /// Say whether a newer release is out, and install nothing.
+    #[arg(long, conflicts_with_all = ["version", "attest"])]
+    check: bool,
+
+    /// Install this release, newer or older, instead of the newest, such as 0.5.0.
+    #[arg(long)]
+    version: Option<String>,
+
+    /// Also check the archive's signed build provenance with gh (gh attestation verify); needs gh signed in.
+    #[arg(long)]
+    attest: bool,
 }
 
 /// How `login` keeps its token, shown under its help.
@@ -625,6 +648,13 @@ fn main() -> ExitCode {
         Command::Pulumi(PulumiCommand::Up(args)) => pulumi_up(args),
         Command::Login(args) => login_command(args),
         Command::Logout(args) => logout_command(args),
+        Command::Update(args) => update::STACK
+            .update(&update::Options {
+                check: args.check,
+                version: args.version.clone(),
+                attest: args.attest,
+            })
+            .map(|()| ExitCode::SUCCESS),
     };
     match result {
         Ok(code) => code,

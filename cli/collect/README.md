@@ -41,6 +41,29 @@ Or build it from this directory with Rust 1.88 or later: `cargo build --release 
 `target/release/qloudpulse-collect`. The checksum shows the download is whole; that it was built from this
 repository's source, by its public workflow, is checked as in [Verify what you run](#verify-what-you-run).
 
+### Updates
+
+```bash
+qloudpulse-collect update
+```
+
+`update` asks GitHub for the newest `qloudpulse-collect` release, downloads that release's `install.sh`
+(`install.ps1` on Windows), checks the script against the release's `SHA256SUMS`, and runs it for the directory the
+running binary is in. The script then checks the archive as it does on a first install. `--check` only says whether a
+newer release is out, `--version <version>` installs that release instead, newer or older, and `--attest` also checks
+the archive's signed provenance with `gh`.
+
+When you run `init`, `analyze`, `verify`, `policy`, `call-plan`, `rotate-key`, `login` or `logout` at a terminal, the
+client also asks GitHub for the newest release, at most once a day, and says on stderr when one is out. `ui` asks
+too, and shows the line at the top of every page. Nothing else asks: `collect`, `pack`, `deliver`, `upload` and `run`,
+which are what unattended jobs run, never contact GitHub, and neither does a run with `--log-json` or with
+`QLOUDPULSE_NO_UPDATE_CHECK=1`. What the last check found is kept in `~/.cache/qloudpulse/qloudpulse-collect-update.json`
+(`$XDG_CACHE_HOME`, or `%LOCALAPPDATA%\qloudpulse` on Windows). A machine that cannot reach GitHub waits at most three
+seconds once a day, and nothing is said.
+
+The [build without the upload](#a-build-that-cannot-contact-qloudpulse) has no `update` and never asks GitHub: the
+release it would install has the upload in it. Build the new tag the same way instead.
+
 ## Get started
 
 ```bash
@@ -317,7 +340,8 @@ licences in [`deny.toml`](deny.toml), crates.io as the only source) and `cargo a
 call plan (`qloudpulse-collect call-plan`), it refuses any other before building the request, and `qloudpulse-collect
 policy` prints the read-only IAM policy for exactly those. Its only write is the optional `PutObject` to your own S3
 bucket. Give the role nothing more, and limit the machine's egress to AWS's endpoints, plus `api.qloudpulse.com:443`
-only if it uploads.
+only if it uploads. The check for a newer release asks `api.github.com:443` (see [Updates](#updates)); blocking it
+only means nothing is said.
 
 To be sure it cannot reach qloudpulse at all, build it without the upload:
 
