@@ -21,20 +21,24 @@ Each release has a static binary for Linux (x86_64 and arm64), binaries for macO
 and arm64), with their SHA-256 sums, and an install script that picks the one for your machine. From 0.3.1:
 
 > This client was called `qloudpulse` up to 0.3.1: those releases are tagged `qloudpulse-cli-<version>` and
-> install a binary named `qloudpulse`. From 0.4.0 on, the tag, the archives and the binary are named
-> `qloudpulse-stack`. `QLOUDPULSE_TOKEN`, the other `QLOUDPULSE_*` variables and the token `login` kept stay the same.
+> install a binary named `qloudpulse`. From 0.5.0 on (0.4.0 was tagged but never published), the tag, the archives
+> and the binary are named `qloudpulse-stack`. `QLOUDPULSE_TOKEN`, the other `QLOUDPULSE_*` variables and the token
+> `login` kept stay the same.
 
 ```bash
-curl -fsSL https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-stack-0.4.0/install.sh | sh
+curl -fsSL https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-stack-0.5.0/install.sh | sh
 ```
 
 ```powershell
-irm https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-stack-0.4.0/install.ps1 | iex
+irm https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-stack-0.5.0/install.ps1 | iex
 ```
 
 Each script installs the release it came from: the version is in the URL, so a pipeline gets the same client every
 run until you change it. The copies in this repository, `cli/stack/install.sh` and `cli/stack/install.ps1`, install the newest
-release instead, or the one `--version` names. It downloads the archive and the release's `SHA256SUMS`, stops unless the sum matches, and
+release instead (under either name: up to 0.3.1 that is `qloudpulse-cli-<version>`), or the one `--version` names.
+When a client is already installed, in that directory (or, without `--dir`, anywhere on PATH), it says which version that is and which it would
+install, and asks before replacing it; one already at that version is left alone. `--version`, `--yes`, or no
+terminal to ask on (a pipeline) goes ahead without asking. It downloads the archive and the release's `SHA256SUMS`, stops unless the sum matches, and
 puts the binary in `~/.local/bin`, or on Windows in `%LOCALAPPDATA%\Programs\qloudpulse`, which it adds to your
 PATH. On a GitHub Actions runner it adds the directory to `$GITHUB_PATH` instead, so the next steps find
 `qloudpulse-stack`. A Windows on ARM machine gets the ARM64 build, even from an x64 PowerShell.
@@ -42,6 +46,7 @@ PATH. On a GitHub Actions runner it adds the directory to `$GITHUB_PATH` instead
 | `install.sh` | `install.ps1` (or its variable, as `iex` takes no options) | |
 |---|---|---|
 | `--dir <dir>` | `-Dir`, `$env:QLOUDPULSE_INSTALL_DIR` | where the binary goes |
+| `--yes` | `-Yes`, `$env:QLOUDPULSE_ASSUME_YES=1` | replace an installed client without asking |
 | `--attest` | `-Attest` | also check its signed build provenance with `gh`, as below |
 | `--base <url or dir>` | `-Base`, `$env:QLOUDPULSE_DOWNLOAD_BASE` | a mirror of the release's files |
 | | `-NoModifyPath`, `$env:QLOUDPULSE_NO_MODIFY_PATH` | leave PATH alone |
@@ -53,7 +58,7 @@ and run `gh attestation verify install.sh` as in [Verify what you run](#verify-w
 Or by hand:
 
 ```bash
-VERSION=0.4.0
+VERSION=0.5.0
 TARGET=x86_64-unknown-linux-musl   # aarch64-unknown-linux-musl, aarch64-apple-darwin, x86_64-apple-darwin
 BASE=https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-stack-$VERSION
 curl -fsSLO "$BASE/qloudpulse-stack-$VERSION-$TARGET.tar.gz"
@@ -66,7 +71,7 @@ tar -xzf "qloudpulse-stack-$VERSION-$TARGET.tar.gz"
 On Windows, in PowerShell:
 
 ```powershell
-$Version = "0.4.0"
+$Version = "0.5.0"
 $Base = "https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-stack-$Version"
 $Zip = "qloudpulse-stack-$Version-x86_64-pc-windows-gnu.zip"   # on Windows on ARM: aarch64-pc-windows-gnullvm
 Invoke-WebRequest "$Base/$Zip" -OutFile $Zip
@@ -271,7 +276,7 @@ Sigstore's public transparency log. Nothing built on a laptop can carry it. With
 (signed in to any GitHub account):
 
 ```bash
-VERSION=0.4.0
+VERSION=0.5.0
 TARGET=x86_64-unknown-linux-musl
 gh attestation verify "qloudpulse-stack-$VERSION-$TARGET.tar.gz" --repo ulfmansson/qloudpulse-public \
   --signer-workflow ulfmansson/qloudpulse-public/.github/workflows/cli-stack-release.yml \
@@ -284,7 +289,7 @@ it was built from is in the signing certificate, which the workflow cannot write
 `--format json --jq '.[].verificationResult.signature.certificate.sourceRepositoryDigest'` to print it, and compare it
 with `git rev-parse "qloudpulse-stack-$VERSION^{commit}"` in a clone whose source you have read.
 
-The binary inside each archive is attested too (from 0.4.0), so the same check works on a client
+The binary inside each archive is attested too (from 0.5.0), so the same check works on a client
 you have already installed, wherever it came from:
 
 ```bash
@@ -391,7 +396,7 @@ jobs:
         with:
           name: preview
       - env:
-          VERSION: "0.4.0"
+          VERSION: "0.5.0"
           TARGET: x86_64-unknown-linux-musl
           SHA256: "<sha256 from SHA256SUMS, checked once with gh attestation verify>"
           QLOUDPULSE_TOKEN: ${{ secrets.QLOUDPULSE_TOKEN }}

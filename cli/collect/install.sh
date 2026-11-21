@@ -5,24 +5,31 @@
 #   curl -fsSL https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-collect-<version>/install.sh | sh
 #
 # The copy attached to a release installs that release; this copy in the repository installs the newest release, or
-# --version. On Windows, use install.ps1 from the same release. Plain POSIX sh: it runs under dash, busybox and
-# macOS's sh.
+# --version. When it is already installed it says which version that is and asks before replacing it. On
+# Windows, use install.ps1 from the same release. Plain POSIX sh: it runs under dash, busybox and macOS's sh.
 set -eu
 
 # A release's copy has its version here (cli/collect/release.sh writes it); this one has none.
 DEFAULT_VERSION=""
 REPO=ulfmansson/qloudpulse-public
+NAME=qloudpulse-collect
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--version <version>] [--dir <dir>] [--attest] [--base <url or dir>]
+Usage: install.sh [--version <version>] [--dir <dir>] [--yes] [--attest] [--base <url or dir>]
 
   --version  the qloudpulse-collect version to install (default: the release this script came with; for the copy in the
              repository, the newest release)
   --dir      where the binary goes (default: $QLOUDPULSE_INSTALL_DIR, or ~/.local/bin)
+  --yes      replace an installed qloudpulse-collect with another version without asking (also
+             $QLOUDPULSE_ASSUME_YES=1)
   --attest   also check the archive's signed build provenance with gh (gh attestation verify); needs gh signed in
   --base     where the archives and SHA256SUMS are, a URL or a directory (default: $QLOUDPULSE_COLLECT_DOWNLOAD_BASE, or
              the release on GitHub)
+
+When qloudpulse-collect is already installed, it says which version that is and which this would install, and asks
+before replacing it; one already at that version is left alone. --version, or no terminal to ask on (a pipeline),
+goes ahead without asking.
 
 With curl ... | sh, pass options after "sh -s --", e.g. curl -fsSL <url> | sh -s -- --dir /usr/local/bin
 EOF
@@ -31,15 +38,17 @@ EOF
 say() { printf 'qloudpulse install: %s\n' "$*" >&2; }
 fail() { say "$*"; exit 1; }
 
-VERSION=${QLOUDPULSE_COLLECT_VERSION:-$DEFAULT_VERSION}
+VERSION=${QLOUDPULSE_COLLECT_VERSION:-}
 DIR=${QLOUDPULSE_INSTALL_DIR:-}
 BASE=${QLOUDPULSE_COLLECT_DOWNLOAD_BASE:-}
 ATTEST=0
+case "${QLOUDPULSE_ASSUME_YES:-0}" in 0|"") YES=0 ;; *) YES=1 ;; esac
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) [ $# -ge 2 ] || fail "--version needs a version"; VERSION=$2; shift ;;
     --dir) [ $# -ge 2 ] || fail "--dir needs a directory"; DIR=$2; shift ;;
     --base) [ $# -ge 2 ] || fail "--base needs a URL or directory"; BASE=$2; shift ;;
+    --yes|-y) YES=1 ;;
     --attest) ATTEST=1 ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; fail "unknown argument: $1" ;;
@@ -47,33 +56,110 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-latest_version() { # the newest qloudpulse-collect-<version> release, or nothing
-  # Not GitHub's "latest": that is the cluster agent's release, in the same repository. The API's JSON has one field
-  # per line, so sed finds the tags without a JSON parser.
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL --proto '=https' --tlsv1.2 -H 'Accept: application/vnd.github+json' \
-      "https://api.github.com/repos/$REPO/releases?per_page=100"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -q -O - --header 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPO/releases?per_page=100"
-  fi | sed -n 's/^ *"tag_name": *"qloudpulse-collect-\([0-9][0-9.]*\)",*$/\1/p' | sort -t . -k 1,1n -k 2,2n -k 3,3n | tail -n 1
+# Where the version comes from: asked for (--version or $QLOUDPULSE_COLLECT_VERSION), this installer's release, or
+# the newest.
+if [ -n "$VERSION" ]; then
+  FROM=asked
+elif [ -n "$DEFAULT_VERSION" ]; then
+  FROM=release VERSION=$DEFAULT_VERSION
+else
+  FROM=newest
+fi
+
+version_cmp() { # a b: prints -1, 0 or 1 as version a is older than, the same as or newer than b
+  awk -v a="$1" -v b="$2" 'BEGIN {
+    n = split(a, x, "."); m = split(b, y, "."); k = n > m ? n : m
+    for (i = 1; i <= k; i++) { if (x[i] + 0 < y[i] + 0) { print -1; exit } if (x[i] + 0 > y[i] + 0) { print 1; exit } }
+    print 0
+  }'
 }
 
-if [ -z "$VERSION" ]; then
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/$NAME.XXXXXX") || fail "cannot make a temporary directory"
+trap 'rm -rf "$TMP"' EXIT INT TERM
+
+releases() { # the repository's releases, as GitHub's API lists them
+  url="https://api.github.com/repos/$REPO/releases?per_page=100"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --proto '=https' --tlsv1.2 -H 'Accept: application/vnd.github+json' "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O - --header 'Accept: application/vnd.github+json' "$url"
+  else
+    say "needs curl or wget"
+    return 1
+  fi
+}
+
+if [ "$FROM" = newest ]; then
   [ -z "$BASE" ] || fail "no version: pass --version <version> with --base"
-  VERSION=$(latest_version)
-  [ -n "$VERSION" ] || fail "could not find the newest release on github.com/$REPO; pass --version <version>"
+  releases >"$TMP/releases.json" || fail "could not list the releases on github.com/$REPO (offline, or past" \
+    "GitHub's 60 requests an hour without a token?); pass --version <version>"
+  # The newest qloudpulse-collect release. Not GitHub's "latest": that may be another tool's release, in the
+  # same repository. The API's JSON has one field per line, so sed finds the tags without a JSON parser.
+  VERSION=$(sed -n "s/^ *\"tag_name\": *\"$NAME-\([0-9][0-9.]*\)\",*\$/\1/p" "$TMP/releases.json" |
+    sort -t . -k 1,1n -k 2,2n -k 3,3n | tail -n 1)
+  [ -n "$VERSION" ] || fail "github.com/$REPO has no $NAME release yet; pass --version <version>"
 fi
 case "$VERSION" in
-  v*|qloudpulse-collect-*) VERSION=${VERSION#v}; VERSION=${VERSION#qloudpulse-collect-} ;;
+  v*|"$NAME"-*) VERSION=${VERSION#v}; VERSION=${VERSION#"$NAME"-} ;;
 esac
 case "$VERSION" in
   *[!0-9.]*|"") fail "not a version: $VERSION (for example 0.2.0)" ;;
 esac
-TAG="qloudpulse-collect-$VERSION"
+BIN=$NAME TAG="$NAME-$VERSION" WORKFLOW=cli-collect-release.yml
 BASE=${BASE:-https://github.com/$REPO/releases/download/$TAG}
+DIR_GIVEN=0
+[ -z "$DIR" ] || DIR_GIVEN=1
 if [ -z "$DIR" ]; then
   [ -n "${HOME:-}" ] || fail "no HOME; pass --dir"
   DIR="$HOME/.local/bin"
+fi
+
+# One already installed: in DIR first, then on PATH. OLD is its path, OLD_VERSION its version.
+# On PATH too, unless --dir (or $QLOUDPULSE_INSTALL_DIR) names where it goes: one elsewhere is then another install.
+on_path() { [ "$DIR_GIVEN" = 1 ] || command -v "$1" 2>/dev/null || true; }
+OLD="" OLD_VERSION=""
+for f in "$DIR/$NAME" "$(on_path "$NAME")"; do
+  [ -n "$f" ] && [ -f "$f" ] && [ -x "$f" ] || continue
+  # "qloudpulse-collect 0.1.0 (1ab39062b 2026-11-21)".
+  v=$("$f" --version 2>/dev/null | sed -n '1s/^[^ ]* \([0-9][0-9.]*\).*/\1/p') || v=""
+  [ -n "$v" ] || continue
+  OLD=$f OLD_VERSION=$v
+  break
+done
+
+confirm() { # question y|n (the answer to an empty line): asks on the terminal; with none to ask on, goes ahead
+  if ! (: </dev/tty) 2>/dev/null; then
+    say "no terminal to ask on; going ahead"
+    return 0
+  fi
+  case "$2" in y) hint='[Y/n]' ;; *) hint='[y/N]' ;; esac
+  printf 'qloudpulse install: %s %s ' "$1" "$hint" >&2
+  answer=""
+  read -r answer </dev/tty || answer=""
+  case "${answer:-$2}" in
+    [yY]|[yY][eE][sS]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if [ -n "$OLD" ]; then
+  case "$FROM" in
+    newest) offer="the newest release is $VERSION" ;;
+    release) offer="this installer is for $VERSION" ;;
+    *) offer="you asked for $VERSION" ;;
+  esac
+  case "$(version_cmp "$OLD_VERSION" "$VERSION")" in
+    0)
+      say "$OLD is $OLD_VERSION and $offer: already up to date, nothing to do"
+      exit 0
+      ;;
+    -1) question="Upgrade to $VERSION?" default=y ;;
+    *) question="Replace it with the older $VERSION?" default=n ;;
+  esac
+  say "$OLD is $OLD_VERSION; $offer"
+  if [ "$FROM" != asked ] && [ $YES -eq 0 ]; then
+    confirm "$question" "$default" || { say "left $OLD at $OLD_VERSION"; exit 0; }
+  fi
 fi
 
 # The machine's target, as the archives name it.
@@ -97,7 +183,7 @@ case "$arch" in
   *) fail "no build for $arch on $os; build from source (cli/collect/README.md)" ;;
 esac
 TARGET="$arch-$os"
-ARCHIVE="qloudpulse-collect-$VERSION-$TARGET.tar.gz"
+ARCHIVE="$BIN-$VERSION-$TARGET.tar.gz"
 
 if command -v sha256sum >/dev/null 2>&1; then
   sha256() { sha256sum "$1" | cut -d ' ' -f 1; }
@@ -122,10 +208,7 @@ fetch() { # name destination
   esac
 }
 
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/qloudpulse-collect.XXXXXX") || fail "cannot make a temporary directory"
-trap 'rm -rf "$TMP"' EXIT INT TERM
-
-say "qloudpulse-collect $VERSION for $TARGET"
+say "$BIN $VERSION for $TARGET"
 fetch "$ARCHIVE" "$TMP/$ARCHIVE"
 fetch SHA256SUMS "$TMP/SHA256SUMS"
 
@@ -138,20 +221,24 @@ got=$(sha256 "$TMP/$ARCHIVE")
 if [ $ATTEST -eq 1 ]; then
   command -v gh >/dev/null 2>&1 || fail "--attest needs gh (https://cli.github.com)"
   gh attestation verify "$TMP/$ARCHIVE" --repo "$REPO" \
-    --signer-workflow "$REPO/.github/workflows/cli-collect-release.yml" --source-ref "refs/tags/$TAG" >&2 \
+    --signer-workflow "$REPO/.github/workflows/$WORKFLOW" --source-ref "refs/tags/$TAG" >&2 \
     || fail "$ARCHIVE has no provenance from $REPO's release workflow at $TAG; nothing was installed"
 fi
 
-tar -xzf "$TMP/$ARCHIVE" -C "$TMP" qloudpulse-collect
-"$TMP/qloudpulse-collect" --version >/dev/null 2>&1 \
-  || fail "the downloaded qloudpulse does not run here (if ${TMPDIR:-/tmp} is mounted noexec, set TMPDIR to another directory)"
+tar -xzf "$TMP/$ARCHIVE" -C "$TMP" "$BIN" || fail "$ARCHIVE has no $BIN in it"
+"$TMP/$BIN" --version >/dev/null 2>&1 \
+  || fail "the downloaded $BIN does not run here (if ${TMPDIR:-/tmp} is mounted noexec, set TMPDIR to another directory)"
 
 mkdir -p "$DIR" || fail "cannot create $DIR; pass --dir, or run with the rights to write there"
-# Copied next to the old one and moved over it, so a running qloudpulse is never half written.
-cp "$TMP/qloudpulse-collect" "$DIR/.qloudpulse-collect.new" || fail "cannot write to $DIR; pass --dir, or run with the rights to write there"
-chmod 755 "$DIR/.qloudpulse-collect.new"
-mv -f "$DIR/.qloudpulse-collect.new" "$DIR/qloudpulse-collect"
-say "installed $("$DIR/qloudpulse-collect" --version) as $DIR/qloudpulse-collect"
+# Copied next to the old one and moved over it, so a running qloudpulse-collect is never half written.
+cp "$TMP/$BIN" "$DIR/.$BIN.new" || fail "cannot write to $DIR; pass --dir, or run with the rights to write there"
+chmod 755 "$DIR/.$BIN.new"
+mv -f "$DIR/.$BIN.new" "$DIR/$BIN"
+say "installed $("$DIR/$BIN" --version) as $DIR/$BIN"
+# One that was somewhere else is still there.
+if [ -n "$OLD" ] && [ "$OLD" != "$DIR/$BIN" ]; then
+  say "$OLD ($OLD_VERSION) is still there; remove it if you no longer need it: rm \"$OLD\""
+fi
 
 # On a GitHub Actions runner, the later steps of the job find it.
 if [ -n "${GITHUB_PATH:-}" ]; then
