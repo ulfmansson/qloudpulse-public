@@ -33,7 +33,8 @@ Usage: cli/collect/release.sh [--targets "<target> ..."] [--out <dir>] [--skip-t
 
 Targets:
   x86_64-unknown-linux-musl  aarch64-unknown-linux-musl   static, built in Docker
-  aarch64-apple-darwin       x86_64-apple-darwin          built here with rustup and Rust 1.88.0 (macOS only)
+  aarch64-apple-darwin       x86_64-apple-darwin          built here with rustup, Rust 1.88.0 and Apple's cc, never a
+                                                          Nix shell's (macOS only)
   x86_64-pc-windows-gnu                                   built in Docker with mingw-w64, CRT linked in
   aarch64-pc-windows-gnullvm                              Windows on ARM, built in Docker with llvm-mingw
 
@@ -91,6 +92,24 @@ done
 
 say() { printf '\n== %s\n' "$*"; }
 fail() { printf 'release.sh: %s\n' "$*" >&2; exit 1; }
+
+# On a Mac, what is compiled here (the tests, the cargo tools, the two macOS targets) is compiled and linked by Apple's
+# toolchain, as on the release workflow's macOS runners. A Nix or devbox shell puts its own clang wrapper first on PATH
+# and exports CC, SDKROOT, DEVELOPER_DIR, MACOSX_DEPLOYMENT_TARGET and NIX_LDFLAGS: a binary built under those is not
+# the published one (another linker and SDK, a newer minimum macOS), and a store path collected since the shell began
+# makes every link warn, or xcrun fail. A DEVELOPER_DIR or SDKROOT outside /nix is a chosen Xcode and is kept.
+if [ "$(uname -s)" = Darwin ]; then
+  case "${DEVELOPER_DIR:-}" in /nix/*) unset DEVELOPER_DIR ;; esac
+  case "${SDKROOT:-}" in /nix/*) unset SDKROOT ;; esac
+  unset MACOSX_DEPLOYMENT_TARGET CFLAGS CXXFLAGS CPPFLAGS LDFLAGS LIBRARY_PATH CPATH
+  # shellcheck disable=SC2046 # one name per word
+  unset $(env | sed -n 's/^\(NIX_[A-Za-z0-9_]*\)=.*/\1/p')
+  # cc-rs (ring's C) and rustc's linker take cc from PATH unless told; tell both to use Apple's.
+  export CC=/usr/bin/cc CXX=/usr/bin/c++ AR=/usr/bin/ar LD=/usr/bin/ld
+  export CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER=/usr/bin/cc CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=/usr/bin/cc
+  xcrun --show-sdk-path >/dev/null 2>&1 \
+    || fail "Apple's toolchain does not answer (xcrun --show-sdk-path); install Xcode or its tools: xcode-select --install"
+fi
 
 CLI=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(git -C "$CLI" rev-parse --show-toplevel)
