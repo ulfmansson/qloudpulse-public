@@ -133,6 +133,30 @@ qloudpulse-collect run
 `keep_bundles` bundles. It never deletes a bundle a delivery target is still missing; a failed delivery is retried
 at the next run. Use `run --once` for cron, a systemd timer or a Kubernetes CronJob.
 
+## The local UI
+
+```bash
+qloudpulse-collect ui
+```
+
+```bash
+qloudpulse-collect run --ui
+```
+
+- `ui` serves a web page on `127.0.0.1:7781` and prints its address with a session token. Open that address; the
+  token is new each time. `run --ui` does the same next to the hourly loop, and shows each cycle as it happens.
+- **Analyze**: every tag key with its values and what your rules do with it, what the rules cost in qloudpulse, the
+  scan before and after your rules, errors and calls by operation. **Collect sample now** reads your accounts into
+  memory only; a raw snapshot that `collect` left on disk can be loaded instead.
+- **Rules**: edit `[tags]` and `[[fields]]` with the raw and redacted answer side by side, run through the same
+  redactor as `pack`. Saving goes through the same checks as the CLI, rewrites only what changed (your comments
+  stay), and refuses if the file changed on disk meanwhile. Under `run`, a saved rule applies from the next cycle.
+- **Bundles**: every bundle, which target has it, its manifest checked against its files, and every record as it
+  left. **Run history**: each bundle's window, failures and deliveries.
+- It answers only to requests that name it by address (no DNS names, against DNS rebinding) and carry the token;
+  every form carries a second token. Every asset is in the binary and the page may load nothing from anywhere else.
+  `--ui-bind 0.0.0.0:7781` lets other machines reach it; they still need the token.
+
 ## Delivery
 
 Each delivery target is opt-in under `[deliver]`:

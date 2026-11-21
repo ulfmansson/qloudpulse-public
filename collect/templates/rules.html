@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block content %}
+<form id="rules-form" method="post" action="/rules">
+<input type="hidden" name="csrf" value="{{ head.csrf }}">
+<input type="hidden" name="base_sha" value="{{ base_sha }}">
+<div class="headline">
+  <div class="grow">
+    <h1>Rules</h1>
+    <p class="muted">Edits <code>[tags]</code> and <code>[[fields]]</code> in the config. Saving goes through the same checks as the CLI and rewrites only what changed, so comments and every other section stay as they are. Under <code>run</code>, a saved change applies from the next cycle.</p>
+  </div>
+  <div class="toolbar">
+    <noscript><button>Preview</button></noscript>
+    <a class="btn" href="/rules">Revert</a>
+    <button class="primary" id="save" formaction="/rules/save"{% if !can_save %} disabled{% endif %}>Save to config</button>
+  </div>
+</div>
+{% if saved %}<div class="note ok">Saved to <code>{{ head.config_path }}</code>. {% if head.run_line.starts_with("under run") %}The running loop uses it from the next cycle; bundles already packed are unchanged.{% else %}The next <code>pack</code> or <code>run</code> uses it.{% endif %}</div>{% endif %}
+{% if !save_error.is_empty() %}<div class="note bad">{{ save_error }}</div>{% endif %}
+{% for c in conflicts %}<div class="note warn">{{ c }}.</div>{% endfor %}
+<div id="errors">{{ errors|safe }}</div>
+
+<div class="grid-rules">
+  <div>
+    <div class="panel">
+      <div class="toolbar">
+        <h2>[tags]</h2>
+        <span class="spacer"></span>
+        <span class="small muted">A tag no rule names is</span>
+        <label class="small"><input type="radio" name="default" value="deny"{% if !allow %} checked{% endif %}> dropped (<code>deny</code>)</label>
+        <label class="small"><input type="radio" name="default" value="allow"{% if allow %} checked{% endif %}> kept (<code>allow</code>)</label>
+      </div>
+      <div class="scroll"><table>
+        <tr><th>Key <span class="muted thin">· cost in qloudpulse</span></th><th class="num">In sample</th><th>Action</th><th>Replace</th></tr>
+        {% for t in tags %}
+        <tr class="rule-row{% if t.replace %} is-replace{% endif %}">
+          <td><input type="hidden" name="k{{ t.i }}" value="{{ t.key }}"><span class="mono">{{ t.key }}</span><br><span class="small {{ t.cost_class }}" id="cost{{ t.i }}">{{ t.cost }}</span></td>
+          <td class="num small">{% if t.in_sample.is_empty() %}<span class="muted">—</span>{% else %}{{ t.in_sample }}{% endif %}</td>
+          <td><select name="a{{ t.i }}" data-replace-toggle>
+            {% for c in t.actions %}<option value="{{ c.value }}"{% if c.selected %} selected{% endif %}>{{ c.label }}</option>{% endfor %}
+          </select></td>
+          <td class="small nowrap rep"><input type="text" class="mono w-pattern" name="p{{ t.i }}" value="{{ t.pattern }}" placeholder="pattern; whole value if empty"> → <input type="text" class="mono w-with" name="w{{ t.i }}" value="{{ t.with }}" placeholder="with"></td>
+        </tr>
+        {% endfor %}
+      </table></div>
+      <div class="toolbar">
+        <input type="text" class="mono" name="newkey" placeholder="another tag key, e.g. Department">
+        <select name="newaction">{% for c in new_actions %}<option value="{{ c.value }}"{% if c.selected %} selected{% endif %}>{{ c.label }}</option>{% endfor %}</select>
+        <button>Add key</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>[[fields]]</h2>
+      <p class="small muted">A path is field names separated by dots, matched against the <em>end</em> of a field's path in the answer, with the list wrappers <code>item</code> and <code>member</code> left out: <code>instancesSet.privateDnsName</code>, or just <code>privateDnsName</code> for every one.</p>
+      <table>
+        <tr><th>Path</th><th>Action</th><th>Pattern</th><th>With</th></tr>
+        {% for f in fields %}
+        <tr class="rule-row">
+          <td><input type="text" class="mono w-path" name="fp{{ f.j }}" value="{{ f.path }}"></td>
+          <td><select name="fa{{ f.j }}">{% for c in f.actions %}<option value="{{ c.value }}"{% if c.selected %} selected{% endif %}>{{ c.label }}</option>{% endfor %}</select></td>
+          <td><input type="text" class="mono w-pattern" name="fpat{{ f.j }}" value="{{ f.pattern }}"></td>
+          <td><input type="text" class="mono w-with" name="fw{{ f.j }}" value="{{ f.with }}"></td>
+        </tr>
+        {% endfor %}
+        <tr class="rule-row">
+          <td><input type="text" class="mono w-path" name="fp{{ blank_field }}" value="" placeholder="add a rule: e.g. privateDnsName"></td>
+          <td><select name="fa{{ blank_field }}">{% for c in blank_actions %}<option value="{{ c.value }}"{% if c.selected %} selected{% endif %}>{{ c.label }}</option>{% endfor %}</select></td>
+          <td><input type="text" class="mono w-pattern" name="fpat{{ blank_field }}" value=""></td>
+          <td><input type="text" class="mono w-with" name="fw{{ blank_field }}" value=""></td>
+        </tr>
+      </table>
+      <p class="small muted">Empty a path to remove its rule. Fields qloudpulse prices from cannot be changed: <span class="mono">{{ required }}</span>.</p>
+    </div>
+
+    <div class="panel">
+      <h2>What will be saved</h2>
+      <p class="small muted">The whole file as it would be written; changed lines are marked. Saving refuses if the file changed on disk since this page read it.</p>
+      <div id="toml">{{ toml|safe }}</div>
+    </div>
+  </div>
+
+  <div class="sticky">
+    <div class="panel">
+      <div class="toolbar">
+        <h2>Preview: one recorded answer</h2>
+        <span class="spacer"></span>
+        {% if has_sample %}<select name="record" class="record">{% for r in records %}<option value="{{ r.i }}"{% if r.selected %} selected{% endif %}>{{ r.label }}</option>{% endfor %}</select>{% endif %}
+      </div>
+      <p class="small muted">Left: the raw answer from AWS, in memory. Right: the same answer through the rules on this page, unsaved ones included, by the redactor <code>pack</code> uses.</p>
+      <div class="legend small"><span><i class="sw chg"></i>changed</span><span><i class="sw drop"></i>removed</span><span><i class="sw add"></i>added</span></div>
+      <div id="preview">{{ preview|safe }}</div>
+    </div>
+  </div>
+</div>
+</form>
+{% endblock %}

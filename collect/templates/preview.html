@@ -1,0 +1,9 @@
+{% if !label.is_empty() %}<p class="small mono">{{ label }}</p>{% endif %}
+{% if !note.is_empty() %}<p class="small muted">{{ note }}</p>{% endif %}
+{% if !rows.is_empty() %}
+<div class="preview-box"><table class="sbs">
+  <tr><th class="l">raw (in memory)</th><th>redacted (would leave)</th></tr>
+  {% for r in rows %}<tr class="{{ r.class() }}"><td class="l">{% if let Some(l) = r.left %}{{ l }}{% endif %}</td><td class="r">{% if let Some(x) = r.right %}{{ x }}{% endif %}</td></tr>{% endfor %}
+</table></div>
+<p class="small">{{ stats }}</p>
+{% endif %}
