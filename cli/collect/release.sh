@@ -120,6 +120,20 @@ for t in $TARGETS; do
   case " $ALL_TARGETS " in *" $t "*) ;; *) fail "unknown target $t" ;; esac
 done
 
+# This machine's own target first: it builds without Docker in a minute or two, so a broken build shows before the
+# long cross-builds start. Only the order changes; the files and their sums are the same.
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) NATIVE=aarch64-apple-darwin ;;
+  Darwin-x86_64) NATIVE=x86_64-apple-darwin ;;
+  Linux-x86_64) NATIVE=x86_64-unknown-linux-musl ;;
+  Linux-aarch64 | Linux-arm64) NATIVE=aarch64-unknown-linux-musl ;;
+  *) NATIVE="" ;;
+esac
+case " $TARGETS " in
+  *" $NATIVE "*) [ -z "$NATIVE" ] || TARGETS="$NATIVE $(printf '%s\n' $TARGETS | grep -vx "$NATIVE" | tr '\n' ' ')" ;;
+esac
+TARGETS=$(echo $TARGETS)
+
 # Archives are owned by root:0, whichever tar is first on PATH: bsdtar (macOS's /usr/bin/tar) and GNU tar (a devbox
 # or Linux shell) spell it differently. COPYFILE_DISABLE=1 keeps bsdtar from adding AppleDouble (._*) files and
 # --no-xattrs keeps out macOS attributes such as com.apple.provenance, which GNU tar warns about on extract; GNU tar
