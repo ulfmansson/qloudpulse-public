@@ -192,7 +192,13 @@ struct PriceArgs {
     #[arg(long, env = "QLOUDPULSE_CATALOGUE")]
     catalogue: Option<PathBuf>,
 
-    /// The AWS region of resources whose provider and stack name none, such as eu-west-1.
+    /// The AWS region, such as eu-west-1, of every resource for which neither the preview nor its provider names one.
+    ///
+    /// A resource's region is, first found: its own region (AWS provider v7), its provider's region, --region, the
+    /// stack's aws:region, AWS_REGION, AWS_DEFAULT_REGION, and the region of the AWS profile in use (the provider's
+    /// profile, else the stack's aws:profile, else AWS_PROFILE, else default) in AWS_CONFIG_FILE or ~/.aws/config. Only
+    /// the region is read from that file, never credentials. --region comes before the stack and this machine, as
+    /// the choice made for this run.
     #[arg(long)]
     region: Option<String>,
 
@@ -403,6 +409,7 @@ fn price(args: &PriceArgs, token: Option<&str>, input: &str) -> Result<String> {
     let preview = pulumi::parse(input)?;
     let options = Options {
         region: args.region.clone(),
+        aws: pulumi::AwsEnvironment::from_system(),
         with_resource_ids: args.with_resource_ids,
     };
     let catalogue = match &args.catalogue {
@@ -421,6 +428,9 @@ fn price(args: &PriceArgs, token: Option<&str>, input: &str) -> Result<String> {
     let request = &estimate.request;
 
     eprintln!("qloudpulse: {}", counts(&estimate));
+    if estimate.no_region > 0 {
+        eprintln!("qloudpulse: {}", render::no_region(estimate.no_region, Style::Text));
+    }
 
     // No token only with --dry-run.
     let Some(token) = token else {

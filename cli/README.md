@@ -117,7 +117,7 @@ qloudpulse pulumi up -s payments-prod
 |---|---|
 | `FILE` | `estimate` only. The JSON of `pulumi preview --json`. Without it, or with `-`, stdin |
 | `--dry-run` | Print the request that would be sent, and send nothing. The only run that needs no token |
-| `--region <region>` | The region of resources whose provider and stack name none |
+| `--region <region>` | The region of every resource for which neither the preview nor its provider names one. It wins over the stack's `aws:region` and this machine's AWS settings. See [What it sends](#what-it-sends) for the whole order |
 | `--with-resource-ids` | Send the cloud ID of each resource that exists before the change, so its usage comes from what it really used |
 | `--format <markdown\|text\|json>` | The comment in Markdown, for a pull request, or as plain text, or qloudpulse's answer as JSON. Without it: text when stdout is a terminal, Markdown when it is piped or redirected, as in `> comment.md` |
 | `--endpoint <url>` | Another address, such as your own qloudpulse install, also `QLOUDPULSE_ENDPOINT`. https only; http only to localhost. The types are asked about at this address and `/catalogue` |
@@ -201,9 +201,18 @@ Only what sets a price. For each resource the change creates, updates, replaces 
 catalogue:
 
 - its type token and the change;
-- its region, from its provider, else the stack's `aws:region`, else `--region`;
+- its region, the first of: the resource's own `region` (AWS provider v7), from its inputs or outputs; its
+  provider's `region`, from the new state, else the old one (so a provider whose region is known only after apply
+  keeps the one it had); `--region`; the stack's `aws:region`; `AWS_REGION`; `AWS_DEFAULT_REGION`; and the region of
+  the AWS profile in use (the provider's `profile`, else the stack's `aws:profile`, else `AWS_PROFILE`, else
+  `default`) in `AWS_CONFIG_FILE` or `~/.aws/config`. Only the `region` of a profile is read from that file, never
+  credentials, and only a value shaped like a region name is sent. A resource none of these names is sent with
+  `"region": null`, which qloudpulse cannot price: stderr and the comment say so, with how to give it one
+  (`pulumi config set aws:region <region>` or `--region <region>`);
 - the attributes in the catalogue for its type, before and after. A value Pulumi knows only after apply, or prints as
-  `[secret]`, is left out and its attribute named under `unknown`;
+  `[secret]`, is left out and its attribute named under `unknown`. One the inputs leave out, such as a default the
+  provider filled in, is taken from the outputs of the state that exists: before the change, and, on the side after
+  an update or a replacement, only when neither side's inputs set it;
 - a key, `r` and 16 hex digits of the SHA-256 of its URN. The URN, with its resource name, stays in CI, and the
   comment's names come from the preview the client still holds;
 - for a type whose catalogue entry has `references`, such as an ECS service's `taskDefinition`, the key of the resource
@@ -211,7 +220,7 @@ catalogue:
 - with `--with-resource-ids`, its cloud ID.
 
 Every resource the change leaves the same, of a type in the catalogue, is sent too, as `"change": "same"`: its type,
-region, catalogue attributes and key, never its cloud ID, even with `--with-resource-ids`. qloudpulse answers each
+region, catalogue attributes (from its outputs where its inputs leave one out) and key, never its cloud ID, even with `--with-resource-ids`. qloudpulse answers each
 with one figure for now and after, so the comment gives the whole stack's monthly cost beside what the change adds,
 and prices a changed resource with one it refers to, such as an ECS service with its task definition. Pulumi lists
 unchanged resources only with `pulumi preview --json --show-sames`; without it the comment says so, and a
@@ -224,7 +233,7 @@ qloudpulse's Pulumi stacks page can list the estimate under it. Types of the cat
 does not list are counted by type, except those the catalogue names under `free`, which AWS charges nothing for of
 their own (IAM, a VPC and its parts, S3 bucket settings): those are neither sent nor counted, and the comment lists
 them as no charge of their own. Nothing else from the preview is sent: no resource names, tags, config, outputs
-or secrets.
+other than the catalogue's attributes and the region, or secrets.
 
 The comment links to the estimate's page in qloudpulse ("See it in qloudpulse") when the answer gives its address.
 The resource names travel only in the link's `#fragment`, `#names=` and base64url of a JSON object of key to name,
