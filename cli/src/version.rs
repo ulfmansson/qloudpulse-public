@@ -10,6 +10,10 @@ use crate::catalogue::ClientVersions;
 /// This client's version, from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// What `qloudpulse --version` prints after the name: the version, and in a release build the commit it was built
+/// from and that commit's date, as `0.3.1 (1ab39062b 2026-11-21)` (see build.rs).
+pub const LONG_VERSION: &str = env!("QLOUDPULSE_LONG_VERSION");
+
 /// `x.y.z` as numbers, so `0.10.0` is newer than `0.9.0`.
 fn parse(v: &str) -> Option<(u64, u64, u64)> {
     let mut parts = v.split('.').map(|p| p.parse::<u64>().ok());

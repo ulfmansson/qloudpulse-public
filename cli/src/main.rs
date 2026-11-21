@@ -16,7 +16,7 @@ use qloudpulse_cli::request::{ChangeKind, FORMAT_VERSION, MAX_RESOURCES, Respons
 use qloudpulse_cli::{send, token, version, wrap};
 
 #[derive(Parser)]
-#[command(name = "qloudpulse", version, about = "qloudpulse from the command line", after_help = CONNECT)]
+#[command(name = "qloudpulse", version = version::LONG_VERSION, about = "qloudpulse from the command line", after_help = CONNECT)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
