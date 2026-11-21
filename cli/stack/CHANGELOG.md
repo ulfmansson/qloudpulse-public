@@ -13,24 +13,10 @@ has lines.
 Needs a qloudpulse with ADR 0140 (report service with migration V35) before it is released: an older endpoint ignores
 `--no-store`, which the client then refuses.
 
-### Changed
+## [0.5.0] - 2026-11-21
 
-- The install scripts ask before replacing an installed client: they say which version is installed (as
-  `qloudpulse-stack`, or `qloudpulse` up to 0.3.1, in the install directory or on PATH) and which they would install,
-  and leave one already at that version alone. `--yes` (`-Yes`, `QLOUDPULSE_ASSUME_YES=1`) skips the question;
-  `--version`, and a pipeline with no terminal to ask on, go ahead without asking.
-
-### Fixed
-
-- The copies of `install.sh` and `install.ps1` in the repository find the newest release under either name,
-  `qloudpulse-stack-<version>` or `qloudpulse-cli-<version>`, and install 0.3.1 and older by their old names. Before,
-  with no `qloudpulse-stack` release published, they stopped with "could not find the newest release". A lookup that
-  fails, offline or past GitHub's rate limit, now says so.
-- `install.sh` takes `qloudpulse-stack` out of the archive; since the rename it asked tar for `qloudpulse`, which the
-  archive does not have, and stopped there.
-
-## [0.4.0] - 2026-11-21
-
+The first release since 0.3.1, and the first as `qloudpulse-stack`. 0.4.0 was tagged on 2026-11-21 but its release
+run failed before it published anything, so its changes are in this list too.
 
 ### Added
 
@@ -64,6 +50,13 @@ Needs a qloudpulse with ADR 0140 (report service with migration V35) before it i
   `…/ui/?estimate=est_…`, without the names after `#`; to an older endpoint's link the client still adds them.
 - At a terminal, "See it in qloudpulse" is the last line, after the table and notes. The pull request comment keeps it
   under the headline.
+- The install scripts ask before replacing an installed client: they say which version is installed (as
+  `qloudpulse-stack`, or `qloudpulse` up to 0.3.1, in the install directory, or on PATH when none is given) and which
+  they would install, and leave one already at that version alone. `--yes` (`-Yes`, `QLOUDPULSE_ASSUME_YES=1`) skips
+  the question; `--version`, and a pipeline with no terminal to ask on, go ahead without asking.
+- The copies of `install.sh` and `install.ps1` in the repository find the newest release under either name,
+  `qloudpulse-stack-<version>` or `qloudpulse-cli-<version>`, and install 0.3.1 and older by their old names. A lookup
+  that fails, offline or past GitHub's rate limit, says so.
 
 ### Fixed
 
@@ -174,7 +167,7 @@ but its release run failed before it published anything, so their changes are in
   `--endpoint`.
 - Static binaries for Linux x86_64 and arm64, and binaries for macOS on both architectures, with `SHA256SUMS`.
 
-[Unreleased]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-stack-0.4.0...main
-[0.4.0]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-cli-0.3.1...qloudpulse-stack-0.4.0
+[Unreleased]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-stack-0.5.0...main
+[0.5.0]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-cli-0.3.1...qloudpulse-stack-0.5.0
 [0.3.1]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-cli-0.1.0...qloudpulse-cli-0.3.1
 [0.1.0]: https://github.com/ulfmansson/qloudpulse-public/releases/tag/qloudpulse-cli-0.1.0
