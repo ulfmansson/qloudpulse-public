@@ -206,6 +206,12 @@ struct PriceArgs {
     #[arg(long)]
     with_resource_ids: bool,
 
+    /// Ask qloudpulse to price the change and keep nothing of it: no names or URNs are sent, and there is no page, link
+    /// or point in the stack's history. Without it qloudpulse keeps the estimate with its resources' names, unless your
+    /// company chose to keep nothing.
+    #[arg(long, env = "QLOUDPULSE_NO_STORE")]
+    no_store: bool,
+
     /// What to print: the comment in Markdown, for a pull request, or as plain text, or the answer as JSON. Without
     /// it: text when stdout is a terminal, Markdown when it is piped or redirected (`> comment.md`).
     #[arg(long, value_enum)]
@@ -411,6 +417,7 @@ fn price(args: &PriceArgs, token: Option<&str>, input: &str) -> Result<String> {
         region: args.region.clone(),
         aws: pulumi::AwsEnvironment::from_system(),
         with_resource_ids: args.with_resource_ids,
+        keep_nothing: args.no_store,
     };
     let catalogue = match &args.catalogue {
         Some(path) => Catalogue::parse(
@@ -444,10 +451,15 @@ fn price(args: &PriceArgs, token: Option<&str>, input: &str) -> Result<String> {
             estimate_id: None,
             currency: "USD".into(),
             url: None,
+            stored: None,
             resources: vec![],
         }
     } else {
-        send::send(&args.endpoint, token, request)?
+        let response = send::send(&args.endpoint, token, request)?;
+        if args.no_store {
+            check_kept_nothing(&response)?;
+        }
+        response
     };
 
     let style = match format(args.format, std::io::stdout().is_terminal()) {
@@ -460,6 +472,19 @@ fn price(args: &PriceArgs, token: Option<&str>, input: &str) -> Result<String> {
         let _ = writeln!(out, "\n{}", style.small(line));
     }
     Ok(out)
+}
+
+/// With `--no-store`, that qloudpulse says it kept nothing. An endpoint from before ADR 0140 does not read `store` and
+/// keeps the estimate, without names: its answer, with an id or a page or without `stored: false`, is refused rather
+/// than printed as if nothing had been kept.
+fn check_kept_nothing(response: &Response) -> Result<()> {
+    if response.kept_nothing() {
+        return Ok(());
+    }
+    bail!(
+        "--no-store, but this qloudpulse kept the estimate: it is older than --no-store and keeps every estimate it \
+         prices (without resource names). Leave out --no-store, or ask your qloudpulse's admins to update it"
+    )
 }
 
 fn estimate(args: &EstimateArgs) -> Result<ExitCode> {

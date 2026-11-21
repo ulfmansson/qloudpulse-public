@@ -10,7 +10,11 @@ has lines.
 
 ## [Unreleased]
 
+Needs a qloudpulse with ADR 0140 (report service with migration V35) before it is released: an older endpoint ignores
+`--no-store`, which the client then refuses.
+
 ## [0.4.0] - 2026-11-21
+
 
 ### Added
 
@@ -23,6 +27,10 @@ has lines.
 - Releases are reproducible: the release workflow builds every target twice, on two runners, and publishes nothing
   unless the binaries are the same, and `cli/stack/release.sh --reproduce` at a release's tag builds it again and compares
   with the release's `SHA256SUMS`.
+- `--no-store` (also `QLOUDPULSE_NO_STORE`): qloudpulse prices the change and keeps nothing, and the client sends no
+  names or URNs. The comment has no link and says nothing was kept, as it also does when a company's admins chose to
+  keep nothing. An answer that shows the estimate was kept anyway, as from an endpoint older than ADR 0140, stops the
+  run with an error.
 
 ### Changed
 
@@ -35,6 +43,11 @@ has lines.
   names: tag `qloudpulse-cli-<version>`, binary `qloudpulse`.
 - `--region` now wins over the stack's `aws:region`: it is the region of every resource for which neither the preview
   nor its provider names one. Before, the stack's `aws:region` came first.
+- Each resource is sent with its name and its Pulumi URN, and qloudpulse keeps them with the estimate, so its page and
+  the stack's cost history name every resource (qloudpulse's ADR 0140). From such a qloudpulse the link is the short
+  `…/ui/?estimate=est_…`, without the names after `#`; to an older endpoint's link the client still adds them.
+- At a terminal, "See it in qloudpulse" is the last line, after the table and notes. The pull request comment keeps it
+  under the headline.
 
 ### Fixed
 

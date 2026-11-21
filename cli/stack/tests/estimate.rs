@@ -83,11 +83,31 @@ fn only_the_listed_attributes_leave_ci() {
         "the secret password is not a priced attribute, so it is not named"
     );
 
-    // The project and stack are named, as `stack` (qloudpulse's ADR 0133); nothing else of the URNs goes.
+    // The project and stack are named, as `stack` (qloudpulse's ADR 0133), and each resource's name and URN (ADR
+    // 0140); nothing else of them goes. With --no-store, not even those but the stack.
     assert_eq!(e.request.stack.as_deref(), Some("shop/dev"));
-    let mut without_stack = e.request.clone();
-    without_stack.stack = None;
-    let sent = serde_json::to_string(&without_stack).unwrap();
+    let mut without_identity = e.request.clone();
+    without_identity.stack = None;
+    for r in &mut without_identity.resources {
+        assert!(r.name.take().is_some() && r.urn.take().is_some());
+    }
+    let mut none_kept = estimate(
+        CREATE,
+        &Options {
+            keep_nothing: true,
+            ..Options::default()
+        },
+    )
+    .request;
+    none_kept.stack = None;
+    for request in [without_identity, none_kept] {
+        assert_never_sent(&serde_json::to_string(&request).unwrap());
+    }
+}
+
+/// What a request never carries: of the URNs nothing but what is named, no secret, and no input the catalogue does not
+/// list.
+fn assert_never_sent(sent: &str) {
     for never in [
         "orders",
         "shop",
@@ -796,7 +816,7 @@ fn update_with_an_unchanged_queue() -> String {
 }
 
 #[test]
-fn every_unchanged_priced_resource_is_sent_with_its_name_kept_in_ci() {
+fn every_unchanged_priced_resource_is_sent_with_its_name() {
     let e = estimate(
         &update_with_an_unchanged_queue(),
         &Options {
@@ -827,8 +847,14 @@ fn every_unchanged_priced_resource_is_sent_with_its_name_kept_in_ci() {
     assert_eq!((local.name.as_str(), local.change), ("web", ChangeKind::Same));
     assert_eq!(local.label, "EC2 instance");
 
+    assert_eq!(web.name.as_deref(), Some("web"));
+    assert_eq!(
+        web.urn.as_deref(),
+        Some("urn:pulumi:prod::shop::aws:ec2/instance:Instance::web")
+    );
+
     let sent = serde_json::to_string(&e.request).unwrap();
-    for never in ["i-0abc", "web", "jobs", "sqs.eu-west-1", "urn:"] {
+    for never in ["i-0abc", "jobs", "sqs.eu-west-1"] {
         assert!(!sent.contains(never), "the request carries {never:?}: {sent}");
     }
 }
@@ -1134,11 +1160,12 @@ fn the_stack_is_named_when_every_urn_agrees() {
 }
 
 #[test]
-fn the_comment_links_the_estimate_s_page_with_the_names_after_the_hash() {
+fn an_older_qloudpulse_s_link_carries_the_names_after_the_hash() {
     let e = estimate(&update_with_an_unchanged_queue(), &Options::default());
     let mut response = noted_response();
     response.url = Some("https://app.qloudpulse.com/ui/?estimate=est_02".into());
-    let link = qloudpulse_stack::link::page_link(response.url.as_deref(), &e.locals).unwrap();
+    assert_eq!(response.stored, None, "an endpoint from before ADR 0140 does not say");
+    let link = qloudpulse_stack::link::page_link(response.url.as_deref(), response.stored, &e.locals).unwrap();
     assert!(
         link.starts_with("https://app.qloudpulse.com/ui/?estimate=est_02#names="),
         "{link}"
@@ -1161,11 +1188,14 @@ fn the_comment_links_the_estimate_s_page_with_the_names_after_the_hash() {
 
     let text = render::render(&response, &e, render::Style::Text);
     assert!(
-        text.starts_with(&format!(
-            "qloudpulse: this change adds about $381 a month\n\nSee it in qloudpulse: {link}\n\nThe stack:"
-        )),
+        text.starts_with("qloudpulse: this change adds about $381 a month\n\nThe stack:"),
         "{text}"
     );
+    assert!(
+        text.ends_with(&format!("\n\nSee it in qloudpulse: {link}\n")),
+        "the terminal's last line: {text}"
+    );
+    assert_eq!(text.matches("See it in qloudpulse").count(), 1, "{text}");
     assert!(!text.contains("<sub>") && !text.contains("]("), "{text}");
 
     response.url = None;
@@ -1173,6 +1203,97 @@ fn the_comment_links_the_estimate_s_page_with_the_names_after_the_hash() {
     assert!(
         !without.contains("See it in qloudpulse") && !without.contains("stay in your browser"),
         "{without}"
+    );
+}
+
+#[test]
+fn a_qloudpulse_that_kept_the_names_gets_the_short_link_last_in_the_terminal() {
+    let e = estimate(&update_with_an_unchanged_queue(), &Options::default());
+    let mut response = noted_response();
+    let url = "https://app.qloudpulse.com/ui/?estimate=est_02";
+    response.url = Some(url.into());
+    response.stored = Some(true);
+
+    let text = render::render(&response, &e, render::Style::Text);
+    assert!(text.ends_with(&format!("\n\nSee it in qloudpulse: {url}\n")), "{text}");
+    assert!(!text.contains("#names="), "{text}");
+
+    let markdown = render::render(&response, &e, render::Style::Markdown);
+    assert!(
+        markdown.contains(&format!("\n\n[See it in qloudpulse]({url})\n\n")),
+        "{markdown}"
+    );
+    assert!(
+        !markdown.contains("#names=") && !markdown.contains("stay in your browser"),
+        "the names were sent, so the comment does not say they stay in the browser: {markdown}"
+    );
+}
+
+#[test]
+fn a_qloudpulse_that_kept_nothing_has_no_link_and_says_so() {
+    let e = estimate(&update_with_an_unchanged_queue(), &Options::default());
+    let mut response = noted_response();
+    response.estimate_id = None;
+    response.url = None;
+    response.stored = Some(false);
+    for style in [render::Style::Markdown, render::Style::Text] {
+        let out = render::render(&response, &e, style);
+        assert!(!out.contains("See it in qloudpulse"), "{out}");
+        assert!(out.contains("qloudpulse kept nothing of it"), "{out}");
+    }
+}
+
+#[test]
+fn each_resource_goes_with_its_name_and_urn_unless_nothing_is_to_be_kept() {
+    let e = estimate(&update_with_an_unchanged_queue(), &Options::default());
+    let orders = "urn:pulumi:prod::shop::aws:rds/instance:Instance::orders";
+    let sent = resource(&e, orders);
+    assert_eq!(sent.name.as_deref(), Some("orders"));
+    assert_eq!(sent.urn.as_deref(), Some(orders));
+    assert!(
+        e.request.resources.iter().all(|r| r.name.is_some() && r.urn.is_some()),
+        "the unchanged ones too"
+    );
+    assert_eq!(e.request.store, None, "kept unless told: no field");
+    assert!(
+        !serde_json::to_value(&e.request)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .contains_key("store")
+    );
+
+    let nothing = Options {
+        keep_nothing: true,
+        ..Options::default()
+    };
+    let e = estimate(&update_with_an_unchanged_queue(), &nothing);
+    assert_eq!(e.request.store, Some(false));
+    let json = serde_json::to_string(&e.request).unwrap();
+    assert!(json.contains(r#""store":false"#), "{json}");
+    assert!(!json.contains("orders") && !json.contains("urn:pulumi"), "{json}");
+    assert!(e.request.resources.iter().all(|r| r.name.is_none() && r.urn.is_none()));
+    assert!(
+        e.locals.iter().any(|l| l.name == "orders"),
+        "the names still write the comment"
+    );
+}
+
+#[test]
+fn a_name_is_cut_and_cleaned_and_a_urn_that_does_not_fit_stays_home() {
+    let long = "n".repeat(400);
+    let preview = UPDATE.replace("::orders", &format!("::or\\u0007ders{long}"));
+    let e = estimate(&preview, &Options::default());
+    let sent = e
+        .request
+        .resources
+        .iter()
+        .find(|r| r.name.as_deref().is_some_and(|n| n.starts_with("orders")))
+        .expect("the name without its bell");
+    assert_eq!(sent.name.as_ref().unwrap().chars().count(), pulumi::MAX_NAME);
+    assert_eq!(
+        sent.urn, None,
+        "a URN with a control character, and too long, is not sent"
     );
 }
 
