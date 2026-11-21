@@ -11,9 +11,11 @@
   <div class="toolbar">
     <noscript><button>Preview</button></noscript>
     <a class="btn" href="/rules">Revert</a>
-    <button class="primary" id="save" formaction="/rules/save"{% if !can_save %} disabled{% endif %}>Save to config</button>
+    <button id="download" formaction="/rules/download"{% if !valid %} disabled{% endif %}>Download {{ file_name }}</button>
+    {% if writable %}<button class="primary" id="save" formaction="/rules/save"{% if !can_save %} disabled{% endif %}>Save to config</button>{% endif %}
   </div>
 </div>
+{% if !writable %}<div class="note warn"><b>The config is read-only here.</b> <code>{{ head.config_path }}</code> is on a file system this UI cannot write, as a Kubernetes ConfigMap is. Edit the rules here, then download or copy the file below and put it in the ConfigMap, for example <code>kubectl create configmap &lt;name&gt; --from-file={{ file_name }}=./{{ file_name }} --dry-run=client -o yaml | kubectl apply -f -</code>. Under <code>run</code>, the new rules apply from the first cycle after Kubernetes refreshes the mounted file (about a minute); a <code>subPath</code> mount is never refreshed, so restart the pod.</div>{% endif %}
 {% if saved %}<div class="note ok">Saved to <code>{{ head.config_path }}</code>. {% if head.run_line.starts_with("under run") %}The running loop uses it from the next cycle; bundles already packed are unchanged.{% else %}The next <code>pack</code> or <code>run</code> uses it.{% endif %}</div>{% endif %}
 {% if !save_error.is_empty() %}<div class="note bad">{{ save_error }}</div>{% endif %}
 {% for c in conflicts %}<div class="note warn">{{ c }}.</div>{% endfor %}
@@ -74,7 +76,7 @@
 
     <div class="panel">
       <h2>What will be saved</h2>
-      <p class="small muted">The whole file as it would be written; changed lines are marked. Saving refuses if the file changed on disk since this page read it.</p>
+      <div class="toolbar"><p class="small muted grow-text">The whole file as it would be written; changed lines are marked.{% if writable %} Saving refuses if the file changed on disk since this page read it.{% endif %}</p><button type="button" id="copy-toml" class="hidden">Copy</button></div>
       <div id="toml">{{ toml|safe }}</div>
     </div>
   </div>

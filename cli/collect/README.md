@@ -216,9 +216,35 @@ qloudpulse-collect run --ui
   stay), and refuses if the file changed on disk meanwhile. Under `run`, a saved rule applies from the next cycle.
 - **Bundles**: every bundle, which target has it, its manifest checked against its files, and every record as it
   left. **Run history**: each bundle's window, failures and deliveries.
-- It answers only to requests that name it by address (no DNS names, against DNS rebinding) and carry the token;
-  every form carries a second token. Every asset is in the binary and the page may load nothing from anywhere else.
+- It answers only to requests that name it by IP address, as `localhost`, or by a name you give with
+  `--ui-allow-host` (other DNS names are refused, against DNS rebinding), and that carry the token; every form carries
+  a second token. Every asset is in the binary and the page may load nothing from anywhere else.
   `--ui-bind 0.0.0.0:7781` lets other machines reach it; they still need the token.
+- **Download** gives the whole config file with the rules on the page, without saving it. When the config is on a
+  file system the UI cannot write, such as a Kubernetes ConfigMap, that replaces **Save**.
+
+### In Kubernetes
+
+Run it as a Deployment with `run --every 1h --ui` (a CronJob with `run --once` exits before you could look), and
+reach it through the API server, which needs no Service and leaves the default `127.0.0.1` address as it is:
+
+```bash
+kubectl -n qloudpulse logs deploy/qloudpulse-collect | grep 'token='
+```
+
+```bash
+kubectl -n qloudpulse port-forward deploy/qloudpulse-collect 8080:7781
+```
+
+Then open the printed address with your local port, `http://localhost:8080/?token=…`. The token is new each time the
+pod starts.
+
+- **A Service or an Ingress**: start with `--ui-bind 0.0.0.0:7781 --ui-allow-host collect.example.com` (one
+  `--ui-allow-host` per name the browser will use, such as the Ingress host or `qloudpulse-collect.qloudpulse.svc`).
+  Put TLS in front of it: the token and the session cookie travel in every request.
+- **The rules editor on a ConfigMap**: the mount is read-only, so the editor offers the file to download or copy. Put
+  it back into the ConfigMap; under `run`, the next cycle after Kubernetes refreshes the mount uses it (a `subPath`
+  mount never refreshes: restart the pod).
 
 ## Delivery
 

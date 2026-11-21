@@ -108,6 +108,9 @@ enum Command {
         /// required).
         #[arg(long, default_value = qloudpulse_collect::ui::DEFAULT_BIND, requires = "ui")]
         ui_bind: std::net::SocketAddr,
+        /// A host name the UI also answers to, such as an Ingress's or a Service's (repeatable). Put TLS in front.
+        #[arg(long = "ui-allow-host", value_name = "NAME", requires = "ui")]
+        ui_allow_host: Vec<String>,
     },
     /// The local web UI: what the client reads, the rules editor with a raw/redacted preview, every bundle, every
     /// run. Listens on 127.0.0.1 and prints an address with a session token.
@@ -116,6 +119,9 @@ enum Command {
         /// required).
         #[arg(long, default_value = qloudpulse_collect::ui::DEFAULT_BIND)]
         ui_bind: std::net::SocketAddr,
+        /// A host name the UI also answers to, such as an Ingress's or a Service's (repeatable). Put TLS in front.
+        #[arg(long = "ui-allow-host", value_name = "NAME")]
+        ui_allow_host: Vec<String>,
     },
     /// Replace the pseudonym key. Writes an old-to-new pseudonym file (no real values) to relink history in
     /// qloudpulse, from the local map (keep_pseudonym_map); without one it refuses unless --force.
@@ -393,20 +399,23 @@ fn run(cli: Cli) -> Result<()> {
             every,
             ui: true,
             ui_bind,
+            ui_allow_host,
         } => {
             anyhow::ensure!(!once, "--ui runs the loop; leave out --once");
             if let Some(n) = every {
                 anyhow::ensure!(n >= 1, "--every must be at least 1");
             }
-            qloudpulse_collect::ui::run_with_ui(cli.config, every, ui_bind)?;
+            let options = qloudpulse_collect::ui::Options::new(ui_bind, ui_allow_host)?;
+            qloudpulse_collect::ui::run_with_ui(cli.config, every, options)?;
         }
-        Command::Ui { ui_bind } => {
+        Command::Ui { ui_bind, ui_allow_host } => {
             load(&cli.config)?;
             #[cfg(feature = "upload")]
             let newer = (!cli.log_json).then_some(|| qloudpulse_stack::update::daily_notice(&CLIENT));
             #[cfg(not(feature = "upload"))]
             let newer: Option<fn() -> Option<String>> = None;
-            qloudpulse_collect::ui::serve(cli.config, ui_bind, newer)?;
+            let options = qloudpulse_collect::ui::Options::new(ui_bind, ui_allow_host)?;
+            qloudpulse_collect::ui::serve(cli.config, options, newer)?;
         }
         Command::Run { once, every, .. } => {
             let mut client = client(&cli.config)?;

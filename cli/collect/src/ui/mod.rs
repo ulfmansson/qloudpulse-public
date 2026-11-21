@@ -13,7 +13,7 @@ mod server;
 mod state;
 
 pub use server::CSP;
-pub use state::{RunLog, Shared};
+pub use state::{Options, RunLog, Shared};
 
 use crate::aws::UreqTransport;
 use crate::aws::credentials::CredentialSource;
@@ -23,7 +23,6 @@ use crate::run::{Client, next_run};
 use anyhow::Result;
 use jiff::Timestamp;
 use state::{Cycle, Sample, lock};
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -31,8 +30,8 @@ use std::sync::Arc;
 pub const DEFAULT_BIND: &str = "127.0.0.1:7781";
 
 /// Starts the UI and prints its address with the session token.
-pub fn start(config_path: PathBuf, bind: SocketAddr, run: Option<RunLog>) -> Result<Arc<Shared>> {
-    let shared = server::start(config_path, bind, run)?;
+pub fn start(config_path: PathBuf, options: Options, run: Option<RunLog>) -> Result<Arc<Shared>> {
+    let shared = server::start(config_path, options, run)?;
     let shown = if shared.bind.ip().is_unspecified() {
         format!("127.0.0.1:{}", shared.bind.port())
     } else {
@@ -46,16 +45,29 @@ pub fn start(config_path: PathBuf, bind: SocketAddr, run: Option<RunLog>) -> Res
             shared.bind
         );
     }
+    if !shared.allow_hosts.is_empty() {
+        println!(
+            "Also answers as {}. Put TLS in front of it: the token and the cookie travel in every request.",
+            shared.allow_hosts.join(", ")
+        );
+    }
+    if !shared.config_writable() {
+        println!(
+            "{} is on a read-only file system (a Kubernetes ConfigMap?): the rules editor offers the file to download \
+             instead of saving it.",
+            shared.config_path.display()
+        );
+    }
     Ok(shared)
 }
 
 /// `qloudpulse-collect ui`: the UI alone, until the process is stopped. `newer`, when given, says whether a newer
 /// release is out; it runs beside the server, and what it says goes to stderr and to a line on every page.
-pub fn serve<F>(config_path: PathBuf, bind: SocketAddr, newer: Option<F>) -> Result<()>
+pub fn serve<F>(config_path: PathBuf, options: Options, newer: Option<F>) -> Result<()>
 where
     F: FnOnce() -> Option<String> + Send + 'static,
 {
-    let shared = start(config_path, bind, None)?;
+    let shared = start(config_path, options, None)?;
     if let Some(check) = newer {
         std::thread::spawn(move || {
             if let Some(line) = check() {
@@ -87,12 +99,12 @@ pub fn client(config_path: &Path, every: Option<u32>) -> Result<Client> {
 
 /// `run --ui`: the UI, and the clock-aligned loop of `run` beside it. Each cycle reads the config again, so what the
 /// rules editor saves applies from the next one; a config that no longer loads keeps the last good one running.
-pub fn run_with_ui(config_path: PathBuf, every: Option<u32>, bind: SocketAddr) -> Result<()> {
+pub fn run_with_ui(config_path: PathBuf, every: Option<u32>, options: Options) -> Result<()> {
     let mut current = client(&config_path, every)?;
     current.pseudonyms()?;
     let shared = start(
         config_path.clone(),
-        bind,
+        options,
         Some(RunLog {
             every_hours: current.config.run.every_hours,
             since: Timestamp::now(),

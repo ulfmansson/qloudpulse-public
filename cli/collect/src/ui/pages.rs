@@ -674,6 +674,11 @@ struct RulesView {
     saved: bool,
     save_error: String,
     can_save: bool,
+    /// The draft checks out: it can be downloaded or copied, changed or not.
+    valid: bool,
+    /// The config's directory takes a new file. Not on a Kubernetes ConfigMap, which is mounted read-only.
+    writable: bool,
+    file_name: String,
     has_sample: bool,
     records: Vec<RecordOption>,
     preview: String,
@@ -687,6 +692,7 @@ struct Parts {
     toml: String,
     errors: String,
     can_save: bool,
+    valid: bool,
 }
 
 fn parts(s: &Shared, config: &Config, text: &str, draft: &Draft, record: Option<usize>) -> Parts {
@@ -717,7 +723,8 @@ fn parts(s: &Shared, config: &Config, text: &str, draft: &Draft, record: Option<
     Parts {
         preview,
         toml,
-        can_save: errors.is_empty() && changed,
+        can_save: errors.is_empty() && changed && s.config_writable(),
+        valid: errors.is_empty() && new.is_some(),
         errors: RuleErrorsView { errors, impact }.render().unwrap_or_default(),
     }
 }
@@ -917,6 +924,9 @@ fn rules_page(
         saved: q.contains_key("saved"),
         save_error,
         can_save: p.can_save,
+        valid: p.valid,
+        writable: s.config_writable(),
+        file_name: config_file_name(s),
         has_sample,
         records,
         preview: p.preview,
@@ -965,6 +975,7 @@ pub fn rules_preview(s: &Shared, form: &HashMap<String, String>) -> Response {
             "toml": p.toml,
             "errors": p.errors,
             "can_save": p.can_save,
+            "valid": p.valid,
             "costs": costs,
         });
         Ok((
@@ -995,8 +1006,54 @@ pub fn rules_save(s: &Shared, form: &HashMap<String, String>) -> Response {
                 );
                 Ok(Redirect::to("/rules?saved=1").into_response())
             }
-            Err(e) => rules_page(s, Some(form), &HashMap::new(), format!("{e:#}")),
+            Err(e) => {
+                if super::state::refused_write(&e) {
+                    s.config_read_only();
+                    return rules_page(
+                        s,
+                        Some(form),
+                        &HashMap::new(),
+                        format!("Not saved: the file system refused the write ({e:#}). Download the file instead."),
+                    );
+                }
+                rules_page(s, Some(form), &HashMap::new(), format!("{e:#}"))
+            }
         }
+    })();
+    respond(s, "rules", result)
+}
+
+fn config_file_name(s: &Shared) -> String {
+    s.config_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .filter(|n| n.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)))
+        .unwrap_or_else(|| "qloudpulse-collect.toml".into())
+}
+
+/// The whole file with the draft's rules, as a download: for a config this UI cannot write, such as a Kubernetes
+/// ConfigMap, and to keep a copy. Nothing on disk changes.
+pub fn rules_download(s: &Shared, form: &HashMap<String, String>) -> Response {
+    let result = (|| -> Result<Response> {
+        let (config, bytes) = load(s)?;
+        let text = String::from_utf8(bytes).context("the config is not UTF-8")?;
+        let new = match Draft::from_form(form).apply(&config) {
+            Ok(n) => n,
+            Err(e) => return rules_page(s, Some(form), &HashMap::new(), format!("Not downloaded: {e:#}")),
+        };
+        let out = rules::edited_toml(&text, &config, &new)?;
+        let disposition = format!("attachment; filename=\"{}\"", config_file_name(s));
+        Ok((
+            [
+                (
+                    axum::http::header::CONTENT_TYPE,
+                    "application/toml; charset=utf-8".to_string(),
+                ),
+                (axum::http::header::CONTENT_DISPOSITION, disposition),
+            ],
+            out,
+        )
+            .into_response())
     })();
     respond(s, "rules", result)
 }

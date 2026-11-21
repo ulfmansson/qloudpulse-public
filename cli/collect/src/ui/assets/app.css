@@ -70,6 +70,8 @@ footer { color: var(--muted); font-size: 12px; text-align: center; padding: 10px
 .toolbar h2 { margin: 0; }
 .toolbar form { margin: 0; }
 .spacer { flex: 1; }
+.grow-text { flex: 1; margin: 0; }
+.hidden { display: none !important; }
 
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
 .cards.three { grid-template-columns: repeat(2, minmax(190px, 1fr)); margin: 0; }

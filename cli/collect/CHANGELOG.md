@@ -19,6 +19,8 @@ has lines.
   `login`, `logout`), and `ui` on every page, say when a newer release is out, asking GitHub at most once a day.
   `collect`, `pack`, `deliver`, `upload` and `run` never ask, nor does `--log-json`, and
   `QLOUDPULSE_NO_UPDATE_CHECK=1` turns it off. Not in the build without the upload.
+- The local UI works in Kubernetes: through `kubectl port-forward` on any local port, `--ui-allow-host` for an
+  Ingress or a Service name, and a Download of the config where it is a read-only ConfigMap.
 
 ## [0.1.0] - 2026-11-21
 

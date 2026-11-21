@@ -14,7 +14,6 @@ use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -34,10 +33,16 @@ type Params = Query<HashMap<String, String>>;
 
 /// Binds `bind` and serves on a thread of its own. The address is checked before this returns, so a port in use is
 /// an error here, not a log line later.
-pub fn start(config_path: PathBuf, bind: SocketAddr, run: Option<super::state::RunLog>) -> Result<Arc<Shared>> {
+pub fn start(config_path: PathBuf, options: super::Options, run: Option<super::state::RunLog>) -> Result<Arc<Shared>> {
+    let bind = options.bind;
     let listener = std::net::TcpListener::bind(bind).with_context(|| format!("the UI cannot listen on {bind}"))?;
     listener.set_nonblocking(true)?;
-    let shared = Arc::new(Shared::new(config_path, listener.local_addr()?, run));
+    let shared = Arc::new(Shared::new(
+        config_path,
+        listener.local_addr()?,
+        options.allow_hosts,
+        run,
+    ));
     let app = router(shared.clone());
     std::thread::Builder::new().name("ui".into()).spawn(move || {
         let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
@@ -70,6 +75,7 @@ pub fn router(shared: Arc<Shared>) -> Router {
         .route("/rules", get(rules).post(rules_draft))
         .route("/rules/preview", post(rules_preview))
         .route("/rules/save", post(rules_save))
+        .route("/rules/download", post(rules_download))
         .route("/bundles", get(bundles))
         .route("/bundles/{name}", get(bundle))
         .route("/runs", get(runs))
@@ -106,7 +112,7 @@ async fn guard(State(s): State<Arc<Shared>>, req: Request, next: Next) -> Respon
         return secure(
             (
                 StatusCode::MISDIRECTED_REQUEST,
-                "This UI answers only when addressed as 127.0.0.1, [::1], localhost or its own IP address, with its port.",
+                "This UI answers only when addressed by IP address, as localhost, or by a name given with --ui-allow-host.",
             )
                 .into_response(),
         );
@@ -125,7 +131,17 @@ async fn guard(State(s): State<Arc<Shared>>, req: Request, next: Next) -> Respon
         }
         // The token leaves the address bar at once: it lives on as a cookie only this server reads.
         let mut resp = Redirect::to(&path).into_response();
-        let cookie = format!("{COOKIE}={}; HttpOnly; SameSite=Strict; Path=/", s.token);
+        // Behind an Ingress that ends TLS, the browser only ever sends it back over HTTPS.
+        let tls = req
+            .headers()
+            .get("x-forwarded-proto")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.eq_ignore_ascii_case("https"));
+        let cookie = format!(
+            "{COOKIE}={}; HttpOnly; SameSite=Strict; Path=/{}",
+            s.token,
+            if tls { "; Secure" } else { "" }
+        );
         if let Ok(v) = HeaderValue::from_str(&cookie) {
             resp.headers_mut().insert(header::SET_COOKIE, v);
         }
@@ -137,7 +153,10 @@ async fn guard(State(s): State<Arc<Shared>>, req: Request, next: Next) -> Respon
     if req.method() != Method::GET && req.method() != Method::HEAD {
         let origin = req.headers().get(header::ORIGIN).and_then(|o| o.to_str().ok());
         if let Some(o) = origin
-            && !o.strip_prefix("http://").is_some_and(|h| s.host_ok(h))
+            && !o
+                .strip_prefix("http://")
+                .or_else(|| o.strip_prefix("https://"))
+                .is_some_and(|h| s.host_ok(h))
         {
             return secure(
                 (
@@ -279,6 +298,13 @@ async fn rules_save(State(s): State<Arc<Shared>>, axum::Form(form): Form) -> Res
     page(move || pages::rules_save(&s, &form)).await
 }
 
+async fn rules_download(State(s): State<Arc<Shared>>, axum::Form(form): Form) -> Response {
+    if !csrf_ok(&s, &form) {
+        return forbidden();
+    }
+    page(move || pages::rules_download(&s, &form)).await
+}
+
 async fn bundles(State(s): State<Arc<Shared>>) -> Response {
     page(move || pages::bundles(&s)).await
 }
@@ -301,7 +327,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.keep().join("c.toml");
         std::fs::write(&path, crate::config::starter()).unwrap();
-        let s = Arc::new(Shared::new(path, "127.0.0.1:7781".parse().unwrap(), None));
+        let s = Arc::new(Shared::new(path, "127.0.0.1:7781".parse().unwrap(), vec![], None));
         (s.clone(), router(s))
     }
 
@@ -345,6 +371,51 @@ mod tests {
         assert_eq!(r.headers()[header::X_FRAME_OPTIONS], "DENY");
         let r = call(app, get("/assets/app.css", "127.0.0.1:7781", None));
         assert_eq!(r.status(), StatusCode::OK, "assets need no session");
+    }
+
+    fn body(r: Response) -> String {
+        let bytes = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(axum::body::to_bytes(r.into_body(), usize::MAX))
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[test]
+    fn through_port_forward_on_another_port() {
+        let (s, app) = app();
+        let r = call(app, get("/runs", "localhost:8080", Some(&s.token)));
+        assert_eq!(r.status(), StatusCode::OK, "kubectl port-forward 8080:7781");
+    }
+
+    #[test]
+    fn a_read_only_config_is_offered_as_a_download() {
+        let (s, app) = app();
+        s.config_read_only();
+        let r = call(app.clone(), get("/rules", "127.0.0.1:7781", Some(&s.token)));
+        let page = body(r);
+        assert!(page.contains("The config is read-only here"), "{page}");
+        assert!(!page.contains("Save to config"));
+        let r = call(
+            app,
+            axum::http::Request::post("/rules/download")
+                .header("host", "127.0.0.1:7781")
+                .header("origin", "https://127.0.0.1:7781")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .header("cookie", format!("{COOKIE}={}", s.token))
+                .body(Body::from(format!("csrf={}&default=deny&k0=Team&a0=drop", s.csrf)))
+                .unwrap(),
+        );
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(
+            r.headers()[header::CONTENT_DISPOSITION],
+            "attachment; filename=\"c.toml\""
+        );
+        let file = body(r);
+        let config: crate::config::Config = toml::from_str(&file).unwrap();
+        assert_eq!(config.tag_action("Team"), crate::config::TagAction::Drop);
+        assert!(file.contains("# Names this client."), "the file keeps its comments");
     }
 
     #[test]
