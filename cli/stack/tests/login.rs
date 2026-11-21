@@ -29,7 +29,6 @@ impl Dir {
     }
 
     fn run(&self, args: &[&str], stdin: &str) -> (bool, String, String) {
-        use std::io::Write as _;
         let mut child = Command::new(env!("CARGO_BIN_EXE_qloudpulse-stack"))
             .args(args)
             .env_remove("QLOUDPULSE_TOKEN")
@@ -41,7 +40,7 @@ impl Dir {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+        feed(&mut child.stdin.take().unwrap(), stdin);
         let out = child.wait_with_output().unwrap();
         let (stdout, stderr) = (
             String::from_utf8(out.stdout).unwrap(),
@@ -127,4 +126,13 @@ fn login_is_never_sent_in_the_clear_and_says_when_it_cannot_reach_qloudpulse() {
         "{stderr}"
     );
     assert!(!dir.credentials().exists());
+}
+
+/// Writes a run's stdin. A run can stop before it reads any, as one refused on its arguments does, and then the write
+/// meets a closed pipe: that is no failure, as the test judges the run by its exit and its output.
+fn feed(stdin: &mut impl std::io::Write, input: &str) {
+    match stdin.write_all(input.as_bytes()) {
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+        written => written.unwrap(),
+    }
 }
