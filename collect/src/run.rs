@@ -77,22 +77,40 @@ impl Client {
         );
         let mut outcome = run.collect(&accounts, &regions);
         if daily && let Some(c) = &self.config.cur {
-            match self.read_bill(&caller, c, &accounts, now) {
-                Ok((cur, rows)) => {
-                    outcome.cur = Some(cur);
-                    let today = now.to_zoned(jiff::tz::TimeZone::UTC).date().to_string();
-                    for account in &accounts {
-                        if let Err(e) = collect::infra::collect(&run, account, &rows, &today) {
-                            failures.push(format!("{} infra: {e:#}", account.id));
+            match self.payer(c, &accounts) {
+                Err(e) => failures.push(format!("{} {} cur: {e:#}", c.account, c.region)),
+                Ok(payer) => {
+                    match self.read_bill(&caller, c, &payer, now) {
+                        Ok((cur, rows)) => {
+                            outcome.cur = Some(cur);
+                            let today = now.to_zoned(jiff::tz::TimeZone::UTC).date().to_string();
+                            for account in &accounts {
+                                if let Err(e) = collect::infra::collect(&run, account, &rows, &today) {
+                                    failures.push(format!("{} infra: {e:#}", account.id));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::warn(
+                                "bill not read",
+                                &[("account", c.account.clone()), ("error", format!("{e:#}"))],
+                            );
+                            failures.push(format!("{} {} cur: {e:#}", c.account, c.region));
+                        }
+                    }
+                    if c.forecast {
+                        match collect::forecast::collect(&caller, &payer, now, c.prediction_interval) {
+                            Ok(f) => outcome.forecast = Some(f),
+                            Err(e) => failures.push(format!("{} forecast: {e:#}", c.account)),
                         }
                     }
                 }
-                Err(e) => {
-                    log::warn(
-                        "bill not read",
-                        &[("account", c.account.clone()), ("error", format!("{e:#}"))],
-                    );
-                    failures.push(format!("{} {} cur: {e:#}", c.account, c.region));
+            }
+        }
+        if daily && self.config.carbon {
+            for account in &accounts {
+                if let Err(e) = collect::carbon::collect(&caller, account, now) {
+                    failures.push(format!("{} carbon: {e:#}", account.id));
                 }
             }
         }
@@ -116,24 +134,28 @@ impl Client {
         Ok(snapshot)
     }
 
-    fn read_bill(
-        &self,
-        caller: &Caller,
-        c: &crate::config::CurConfig,
-        accounts: &[Account],
-        now: Timestamp,
-    ) -> Result<(collect::cur::CurOutcome, Vec<collect::cur::BillRow>)> {
-        let payer = match &c.role_arn {
-            Some(role) => Account {
+    /// The payer account's credentials: the `[cur]` role when set, else the payer among the accounts read.
+    fn payer(&self, c: &crate::config::CurConfig, accounts: &[Account]) -> Result<Account> {
+        match &c.role_arn {
+            Some(role) => Ok(Account {
                 id: c.account.clone(),
                 credentials: self.credentials.assume(role, c.external_id.as_deref())?,
-            },
+            }),
             None => accounts
                 .iter()
                 .find(|a| a.id == c.account)
                 .cloned()
-                .context("the payer account is not among the accounts read; set [cur] role_arn")?,
-        };
+                .context("the payer account is not among the accounts read; set [cur] role_arn"),
+        }
+    }
+
+    fn read_bill(
+        &self,
+        caller: &Caller,
+        c: &crate::config::CurConfig,
+        payer: &Account,
+        now: Timestamp,
+    ) -> Result<(collect::cur::CurOutcome, Vec<collect::cur::BillRow>)> {
         let settings = collect::cur::CurSettings {
             region: c.region.clone(),
             workgroup: c.workgroup.clone(),
@@ -144,7 +166,7 @@ impl Client {
             first_poll: std::time::Duration::from_secs(1),
         };
         log::info("reading the bill", &[("periods", settings.periods.join(","))]);
-        collect::cur::collect(caller, &payer, &settings)
+        collect::cur::collect(caller, payer, &settings)
     }
 
     pub fn pseudonyms(&self) -> Result<Pseudonymizer> {

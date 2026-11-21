@@ -80,6 +80,15 @@ replay matches the query text. The bill's tag columns (`Name`, the EKS cluster t
 tag rules like tags anywhere else; a dropped value is left empty. Use `collect --daily` to read the bill outside the
 daily hour.
 
+## Forecast and carbon
+
+- **Forecast** (`forecast = true` under `[cur]`, off by default): Cost Explorer in the payer account, this month's
+  and last month's spend per linked account, then AWS's forecast to the end of the month for each. AWS bills $0.01
+  per request, which is why it is opt-in. `prediction_interval` must be the one set in qloudpulse (default 80).
+- **Carbon** (`carbon = true`, the default): AWS's monthly carbon estimate of each account since 2022, by region and
+  service, once a day. The role needs `sustainability:GetEstimatedCarbonEmissions`; an account without it is
+  recorded as refused.
+
 ## Rules
 
 Under `[tags]`, a tag no rule names is dropped (`default = "deny"`) or kept (`"allow"`). Each tag key can have one

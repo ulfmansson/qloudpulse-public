@@ -43,6 +43,9 @@ pub struct Manifest {
     /// The bill queries this bundle answers: qloudpulse replays them with these periods and scope tag keys.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cur: Option<crate::collect::cur::CurOutcome>,
+    /// The forecast this bundle answers, read on `day` with `prediction_interval`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forecast: Option<crate::collect::forecast::ForecastOutcome>,
     pub files: Vec<FileEntry>,
     /// SHA-256 of the config file as it was when packing.
     pub config_sha256: String,
@@ -144,6 +147,7 @@ pub fn pack(config: &Config, config_bytes: &[u8], pseudonyms: &Pseudonymizer, sn
         regions,
         failures,
         cur,
+        forecast,
     } = outcome;
     let manifest = Manifest {
         schema_version: SCHEMA_VERSION.into(),
@@ -158,6 +162,7 @@ pub fn pack(config: &Config, config_bytes: &[u8], pseudonyms: &Pseudonymizer, sn
         regions,
         failures,
         cur,
+        forecast,
         files,
         config_sha256: hex::encode(Sha256::digest(config_bytes)),
         rules: RulesSummary::of(config),
@@ -286,6 +291,7 @@ mod tests {
                 regions: vec!["eu-west-1".into()],
                 failures: vec![],
                 cur: None,
+                forecast: None,
             },
         };
         let tagged = "<R><tagSet><item><key>Owner</key><value>alice</value></item></tagSet></R>";

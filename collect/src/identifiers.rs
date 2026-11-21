@@ -147,6 +147,9 @@ impl Identifiers<'_> {
         if let Some(cur) = &mut outcome.cur {
             cur.account = rewrite(&cur.account, &mut resources);
         }
+        if let Some(f) = &mut outcome.forecast {
+            f.account = rewrite(&f.account, &mut resources);
+        }
         IdStats {
             account_ids: accounts.len(),
             resource_ids: resources.len(),
@@ -206,6 +209,7 @@ mod tests {
         )];
         let mut outcome = Outcome {
             cur: None,
+            forecast: None,
             accounts: vec!["111122223333".into()],
             regions: vec![],
             failures: vec!["111122223333 eu-west-1 x: y".into()],

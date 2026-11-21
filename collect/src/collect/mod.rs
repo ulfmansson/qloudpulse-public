@@ -4,8 +4,10 @@
 //! which calls follow from which answers) must match that collector's, or the replay answers "access denied" for the
 //! request that differs. collect-swamp's contract tests replay this client's fixtures to catch that.
 
+pub mod carbon;
 pub mod cost;
 pub mod cur;
+pub mod forecast;
 pub mod infra;
 
 use crate::aws::Caller;
@@ -26,6 +28,9 @@ pub struct Outcome {
     /// What the bill queries read, when this run read the bill.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cur: Option<cur::CurOutcome>,
+    /// What the forecast read, when this run read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forecast: Option<forecast::ForecastOutcome>,
 }
 
 pub struct Run<'a> {
@@ -42,6 +47,7 @@ impl Run<'_> {
             regions: regions.to_vec(),
             failures: Vec::new(),
             cur: None,
+            forecast: None,
         };
         for account in accounts {
             for region in regions {

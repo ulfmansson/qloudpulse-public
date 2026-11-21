@@ -1,7 +1,7 @@
 {
-  "version": "0.4.0-seed",
+  "version": "0.5.0-seed",
   "seed": true,
-  "note": "Hand-made from collect-swamp's aws-cost-collect and aws-cur-collect, aws-infra-collect (aws_clients.ts COST_COLLECTOR_ACTIONS, CUR_READER_ACTIONS, INFRA_COLLECTOR_ACTIONS; @aws-sdk 3.1021.0 protocols). Replaced by the generated plan.",
+  "note": "Hand-made from collect-swamp's aws-cost-collect and aws-cur-collect, aws-infra-collect, aws-forecast-collect, aws-carbon-collect (aws_clients.ts COST_COLLECTOR_ACTIONS, CUR_READER_ACTIONS, INFRA_COLLECTOR_ACTIONS; @aws-sdk 3.1021.0 protocols). Replaced by the generated plan.",
   "services": {
     "sts": {
       "protocol": "query",
@@ -146,6 +146,18 @@
       "protocol": "restJson",
       "endpoint_prefix": "apigateway",
       "signing_name": "apigateway"
+    },
+    "ce": {
+      "protocol": "awsJson1_1",
+      "endpoint_prefix": "ce",
+      "target_prefix": "AWSInsightsIndexService",
+      "global_region": "us-east-1"
+    },
+    "sustainability": {
+      "protocol": "restJson",
+      "endpoint_prefix": "sustainability",
+      "global_host": "api.sustainability.us-east-1.api.aws",
+      "global_region": "us-east-1"
     }
   },
   "operations": [
@@ -1047,6 +1059,38 @@
       "service": "ecr",
       "name": "GetLifecyclePolicy",
       "iam_action": "ecr:GetLifecyclePolicy"
+    },
+    {
+      "collector": "aws-forecast-collect",
+      "service": "ce",
+      "name": "GetCostAndUsage",
+      "iam_action": "ce:GetCostAndUsage",
+      "paging": {
+        "input_token": "NextPageToken",
+        "output_token": "NextPageToken"
+      },
+      "option": "forecast"
+    },
+    {
+      "collector": "aws-forecast-collect",
+      "service": "ce",
+      "name": "GetCostForecast",
+      "iam_action": "ce:GetCostForecast",
+      "option": "forecast"
+    },
+    {
+      "collector": "aws-carbon-collect",
+      "service": "sustainability",
+      "name": "GetEstimatedCarbonEmissions",
+      "iam_action": "sustainability:GetEstimatedCarbonEmissions",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "NextToken"
+      },
+      "http": {
+        "method": "POST",
+        "path": "/v1/estimated-carbon-emissions"
+      }
     }
   ]
 }

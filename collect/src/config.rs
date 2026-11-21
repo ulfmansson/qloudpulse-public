@@ -47,6 +47,9 @@ pub struct Config {
     /// reports. It holds the real values, so it stays with you.
     #[serde(default)]
     pub keep_pseudonym_map: bool,
+    /// Read AWS's carbon estimate of each account once a day. Needs `sustainability:GetEstimatedCarbonEmissions`.
+    #[serde(default = "yes")]
+    pub carbon: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -149,6 +152,12 @@ pub struct CurConfig {
     /// Months before the current one to read, 1 to 3. 1: the previous and the current month.
     #[serde(default = "one")]
     pub periods_back: u32,
+    /// Also read Cost Explorer's month-to-date spend and forecast per account. AWS bills $0.01 a request.
+    #[serde(default)]
+    pub forecast: bool,
+    /// The forecast's prediction interval, as set in qloudpulse (51-99): it is part of the request.
+    #[serde(default = "eighty")]
+    pub prediction_interval: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
@@ -282,6 +291,12 @@ pub const REQUIRED_FIELDS: &[&str] = &[
 fn default_region() -> String {
     "eu-west-1".into()
 }
+fn yes() -> bool {
+    true
+}
+fn eighty() -> u32 {
+    80
+}
 fn default_workgroup() -> String {
     "qloudpulse-cost".into()
 }
@@ -378,9 +393,12 @@ impl Config {
             }
         }
         if let Some(c) = &self.cur
-            && (c.periods_back == 0 || c.periods_back > 3 || c.account.len() != 12)
+            && (c.periods_back == 0
+                || c.periods_back > 3
+                || c.account.len() != 12
+                || !(51..=99).contains(&c.prediction_interval))
         {
-            bail!("[cur] needs a 12-digit account and periods_back from 1 to 3");
+            bail!("[cur] needs a 12-digit account, periods_back from 1 to 3 and prediction_interval from 51 to 99");
         }
         if self.run.every_hours == 0 || self.run.minute > 59 || self.run.daily_hour > 23 {
             bail!("[run] every_hours must be at least 1, minute 0-59 and daily_hour 0-23");
@@ -421,8 +439,13 @@ impl Config {
         }
     }
 
+    /// The call plan's opt-in options this config turns on.
     pub fn options(&self) -> Vec<String> {
-        Vec::new()
+        let mut out = Vec::new();
+        if self.cur.as_ref().is_some_and(|c| c.forecast) {
+            out.push("forecast".to_string());
+        }
+        out
     }
 }
 
@@ -471,6 +494,9 @@ output_dir = "bundles"
 # Keep a local table of pseudonym -> real value, to read qloudpulse's reports. It stays on this machine.
 keep_pseudonym_map = false
 
+# AWS's carbon estimate per account, once a day (sustainability:GetEstimatedCarbonEmissions).
+carbon = true
+
 [tags]
 # A tag no rule names is dropped ("deny") or kept ("allow").
 default = "deny"
@@ -503,6 +529,8 @@ pseudonymize = []   # e.g. ["Owner"]: the same value always gives the same pseud
 # table = "cur2"
 # scope_tag_keys = []     # the scope tag keys set in qloudpulse: they are part of the query
 # periods_back = 1
+# forecast = false        # Cost Explorer's forecast per account; AWS bills $0.01 a request
+# prediction_interval = 80
 
 # Account IDs and resource IDs: "keep", or "pseudonymize" with their format kept (12 digits; i- and 17 hex digits),
 # the same everywhere they appear, ARNs and requests included, so the bill and the inventory still join.
