@@ -7,8 +7,10 @@
 //! MSK, MQ, alarms, flow logs), and those the billed ARNs drive (instances and their images, volumes, Elastic IPs,
 //! RDS, DynamoDB, EKS, ElastiCache, bucket settings, application load balancers, API Gateway, ECR).
 //!
-//! Not yet: Cloud Control (its calls stop at a 30-minute deadline, so the set depends on timing), ECR scan findings
-//! (which images count as in use depends on the clock), and the `usageMetrics` reads. The replay answers those
+//! Also Cloud Control's settings of SQS, SNS, EFS, ECS, Kinesis, KMS, network and gateway load balancers, NAT
+//! gateways, VPC endpoints, transit gateways and hosted zones.
+//!
+//! Not yet: ECR scan findings (which images count as in use depends on the clock) and the `usageMetrics` reads. The replay answers those
 //! requests "access denied", and the collector writes those rows without those settings.
 
 use super::Run;
@@ -629,6 +631,185 @@ fn billed_describers(run: &Run, account: &Account, region: &str, arns: &[String]
         let params = json!({"Filter": [{"Name": "image-id", "Value": batch}], "MaxResults": 1000});
         let _ = call(run, account, region, "ec2", "DescribeImages", params);
     }
+    cloud_control(run, account, region, arns);
+}
+
+/// An ARN's resource type, as `arnType` names it: `sqs:queue`, `ecs:service`, `ec2:natgateway`.
+pub fn arn_type(arn: &str) -> String {
+    let parts: Vec<&str> = arn.splitn(6, ':').collect();
+    let (service, resource) = (parts.get(2).copied().unwrap_or(""), parts.get(5).copied().unwrap_or(""));
+    if let Some(i) = resource.find([':', '/'])
+        && i > 0
+    {
+        return format!("{service}:{}", &resource[..i]);
+    }
+    let own = match service {
+        "s3" => "bucket",
+        "sns" => "topic",
+        "sqs" => "queue",
+        _ => "resource",
+    };
+    format!("{service}:{own}")
+}
+
+/// An ARN's resource without its type, as `arnResource` gives it: `service/c/s` → `c/s`.
+pub fn arn_resource(arn: &str) -> String {
+    let resource = arn.splitn(6, ':').nth(5).unwrap_or(arn);
+    match resource.find([':', '/']) {
+        Some(i) if i > 0 && i + 1 < resource.len() => resource[i + 1..].to_string(),
+        _ => resource.to_string(),
+    }
+}
+
+/// The types Cloud Control reads (`CLOUD_CONTROL_TYPES`), in order: (row type, TypeName, the identifier keys of a
+/// listed model that says nothing more, when the type is listed where the bill names many).
+const CLOUD_CONTROL: &[(&str, &str, Option<&[&str]>)] = &[
+    ("sqs:queue", "AWS::SQS::Queue", None),
+    ("sns:topic", "AWS::SNS::Topic", None),
+    (
+        "elasticfilesystem:file-system",
+        "AWS::EFS::FileSystem",
+        Some(&["FileSystemId"]),
+    ),
+    ("ecs:cluster", "AWS::ECS::Cluster", None),
+    ("ecs:service", "AWS::ECS::Service", None),
+    ("kinesis:stream", "AWS::Kinesis::Stream", None),
+    ("kms:key", "AWS::KMS::Key", None),
+    (
+        "elasticloadbalancing:loadbalancer",
+        "AWS::ElasticLoadBalancingV2::LoadBalancer",
+        None,
+    ),
+    ("ec2:natgateway", "AWS::EC2::NatGateway", Some(&["NatGatewayId"])),
+    ("ec2:vpc-endpoint", "AWS::EC2::VPCEndpoint", Some(&["Id"])),
+    ("ec2:transit-gateway", "AWS::EC2::TransitGateway", Some(&["Id"])),
+    ("route53:hostedzone", "AWS::Route53::HostedZone", None),
+];
+
+/// The read actions Cloud Control calls on your behalf for those types (`actions` of each type), for `policy`.
+pub const CLOUD_CONTROL_ACTIONS: &[&str] = &[
+    "sqs:GetQueueAttributes",
+    "sqs:ListQueueTags",
+    "sns:GetTopicAttributes",
+    "sns:ListTagsForResource",
+    "sns:ListSubscriptionsByTopic",
+    "sns:GetDataProtectionPolicy",
+    "elasticfilesystem:DescribeBackupPolicy",
+    "elasticfilesystem:DescribeFileSystemPolicy",
+    "elasticfilesystem:DescribeFileSystems",
+    "elasticfilesystem:DescribeLifecycleConfiguration",
+    "elasticfilesystem:DescribeReplicationConfigurations",
+    "ecs:DescribeClusters",
+    "ecs:DescribeServices",
+    "kms:DescribeKey",
+    "kms:GetKeyPolicy",
+    "kms:GetKeyRotationStatus",
+    "kms:ListResourceTags",
+    "kinesis:DescribeStreamSummary",
+    "kinesis:ListTagsForStream",
+    "kinesis:ListTagsForResource",
+    "elasticloadbalancing:DescribeLoadBalancers",
+    "elasticloadbalancing:DescribeLoadBalancerAttributes",
+    "elasticloadbalancing:DescribeCapacityReservation",
+    "elasticloadbalancing:DescribeTags",
+    "ec2:DescribeNatGateways",
+    "ec2:DescribeVpcEndpoints",
+    "ec2:DescribeSubnets",
+    "ec2:DescribeSecurityGroups",
+    "ec2:DescribeVpcs",
+    "vpc-lattice:DescribeServiceNetworkVpcEndpointAssociation",
+    "ec2:DescribeTransitGateways",
+    "ec2:DescribeTags",
+    "route53:GetHostedZone",
+    "route53:ListTagsForResource",
+    "route53:ListQueryLoggingConfigs",
+];
+
+/// Listed instead of read one by one from this many of a type in a part (`LIST_FROM`).
+const LIST_FROM: usize = 10;
+
+/// A billed resource's Cloud Control identifier, per type; None where Cloud Control cannot read it.
+fn cloud_control_identifier(kind: &str, arn: &str) -> Option<String> {
+    match kind {
+        "sqs:queue" => {
+            let p: Vec<&str> = arn.splitn(6, ':').collect();
+            match (p.get(3), p.get(4), p.get(5)) {
+                (Some(r), Some(a), Some(n)) if !r.is_empty() && !a.is_empty() && !n.is_empty() => {
+                    Some(format!("https://sqs.{r}.amazonaws.com/{a}/{n}"))
+                }
+                _ => None,
+            }
+        }
+        "sns:topic" => Some(arn.to_string()),
+        "ecs:service" => {
+            let re = Regex::new(r":service/([^/]+)/[^/]+$").expect("valid");
+            re.captures(arn).map(|c| format!("{arn}|{}", &c[1]))
+        }
+        "elasticloadbalancing:loadbalancer" => Regex::new(r":loadbalancer/(net|gwy)/")
+            .expect("valid")
+            .is_match(arn)
+            .then(|| arn.to_string()),
+        _ => Some(arn_resource(arn)).filter(|id| !id.is_empty()),
+    }
+}
+
+/// The settings of the billed resources Cloud Control reads (`readSettings`): for a listable type the bill names
+/// at least ten of, one listing, then a GetResource for each listed model that holds only its identifier; else a
+/// GetResource for each. The collector stops starting calls at its 30-minute settings deadline; the client reads
+/// them all, and the replay answers whichever the collector asks for.
+fn cloud_control(run: &Run, account: &Account, region: &str, arns: &[String]) {
+    for (kind, type_name, list) in CLOUD_CONTROL {
+        let rows: Vec<String> = arns
+            .iter()
+            .filter(|a| arn_type(a) == *kind)
+            .filter_map(|a| cloud_control_identifier(kind, a))
+            .collect();
+        if rows.is_empty() {
+            continue;
+        }
+        let mut get = rows.clone();
+        if let Some(id_keys) = list
+            && rows.len() >= LIST_FROM
+        {
+            get.clear();
+            if let Ok(pages) = call(
+                run,
+                account,
+                region,
+                "cloudcontrol",
+                "ListResources",
+                json!({"TypeName": type_name, "MaxResults": 100}),
+            ) {
+                let listed: BTreeMap<String, String> = super::json_objects(&pages, &["ResourceDescriptions"])
+                    .into_iter()
+                    .filter_map(|d| {
+                        let id = d["Identifier"].as_str()?.to_string();
+                        Some((id, d["Properties"].as_str().unwrap_or("{}").to_string()))
+                    })
+                    .collect();
+                for id in &rows {
+                    let Some(props) = listed.get(id) else { continue };
+                    let bare = serde_json::from_str::<Value>(props)
+                        .ok()
+                        .and_then(|v| v.as_object().map(|m| m.keys().all(|k| id_keys.contains(&k.as_str()))))
+                        .unwrap_or(true);
+                    if bare {
+                        get.push(id.clone());
+                    }
+                }
+            }
+        }
+        for id in get {
+            let _ = call(
+                run,
+                account,
+                region,
+                "cloudcontrol",
+                "GetResource",
+                json!({"TypeName": type_name, "Identifier": id}),
+            );
+        }
+    }
 }
 
 /// Application load balancers' settings (`lib/alb_config.ts`): 20 a call, one at a time once one is gone.
@@ -1040,6 +1221,42 @@ mod tests {
         assert!(
             has("my-bucket.s3.us-east-1", "lifecycle"),
             "a billed bucket's settings, in its part's API region"
+        );
+    }
+
+    #[test]
+    fn cloud_control_types_and_identifiers_follow_the_collector() {
+        assert_eq!(arn_type("arn:aws:sqs:eu-west-1:111122223333:jobs"), "sqs:queue");
+        assert_eq!(
+            arn_type("arn:aws:ecs:eu-west-1:111122223333:service/prod/api"),
+            "ecs:service"
+        );
+        assert_eq!(
+            arn_type("arn:aws:ec2:eu-west-1:111122223333:natgateway/nat-0abc"),
+            "ec2:natgateway"
+        );
+        assert_eq!(
+            arn_resource("arn:aws:kms:eu-west-1:111122223333:key/1234-abcd"),
+            "1234-abcd"
+        );
+        assert_eq!(
+            cloud_control_identifier("sqs:queue", "arn:aws:sqs:eu-west-1:111122223333:jobs").unwrap(),
+            "https://sqs.eu-west-1.amazonaws.com/111122223333/jobs"
+        );
+        assert_eq!(
+            cloud_control_identifier("ecs:service", "arn:aws:ecs:eu-west-1:111122223333:service/prod/api").unwrap(),
+            "arn:aws:ecs:eu-west-1:111122223333:service/prod/api|prod"
+        );
+        assert!(
+            cloud_control_identifier(
+                "elasticloadbalancing:loadbalancer",
+                "arn:aws:elasticloadbalancing:eu-west-1:1:loadbalancer/app/web/1"
+            )
+            .is_none()
+        );
+        assert_eq!(
+            cloud_control_identifier("ec2:natgateway", "arn:aws:ec2:eu-west-1:1:natgateway/nat-0abc").unwrap(),
+            "nat-0abc"
         );
     }
 

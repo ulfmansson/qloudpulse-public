@@ -15,7 +15,8 @@ What changed in each version of `qloudpulse-collect`.
   does; network, tags of billed ARNs, internet-facing load balancers, public snapshots and images, bucket access,
   CloudFront, the describers that list everything, and those the billed resources drive (instances and their
   images, volumes, Elastic IPs, RDS, DynamoDB, EKS, ElastiCache, bucket settings, application load balancers, API
-  Gateway, ECR). Not yet: Cloud Control and ECR scan findings.
+  Gateway, ECR), and Cloud Control's settings of queues, topics, file systems, ECS, streams, keys, network load
+  balancers, NAT gateways, VPC endpoints, transit gateways and hosted zones. Not yet: ECR scan findings.
 - Forecast (opt-in, Cost Explorer) and carbon (Sustainability API), once a day.
 - A scan before packing that stops on keys, tokens, passwords and email addresses; `[environment]` derived before
   redaction; `rotate-key` with a relink file; `[encrypt]` writes a JWE to deliver.

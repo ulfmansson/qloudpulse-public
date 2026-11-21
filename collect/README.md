@@ -20,7 +20,9 @@ changes every pseudonym, which breaks cost history at that point. Then set the r
 qloudpulse-collect policy > policy.json
 ```
 
-That command prints the read-only IAM policy the client needs. Every action in it comes from the compiled-in call
+That command prints the read-only IAM policy the client needs, including the read actions Cloud Control uses on your
+behalf for the settings of queues, topics, file systems, ECS, streams, keys, load balancers, NAT gateways, VPC
+endpoints, transit gateways and hosted zones. Every action in it comes from the compiled-in call
 plan (`qloudpulse-collect call-plan`, source [`call-plan.json`](call-plan.json)). The client refuses any operation
 that is not in the call plan, before it builds the request.
 

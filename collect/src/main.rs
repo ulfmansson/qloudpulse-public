@@ -390,6 +390,16 @@ fn run(cli: Cli) -> Result<()> {
                 "Action": plan.iam_actions(&options),
                 "Resource": "*",
             })];
+            // Cloud Control reads a resource with the underlying service's own read actions, as the caller.
+            let mut cc: Vec<&str> = qloudpulse_collect::collect::infra::CLOUD_CONTROL_ACTIONS.to_vec();
+            cc.sort();
+            cc.dedup();
+            statements.push(serde_json::json!({
+                "Sid": "QloudpulseCollectCloudControlReads",
+                "Effect": "Allow",
+                "Action": cc,
+                "Resource": "*",
+            }));
             if let Some(cur) = config.as_ref().and_then(|c| c.cur.as_ref()) {
                 // Athena reads the table's definition with the caller's rights. Read on the CUR export bucket and
                 // write on the workgroup's results location are the bucket owner's to grant; see the README.
