@@ -2,12 +2,14 @@
 //! runs after the bill in the same run and derives both from the bill's rows the way the collector derives them from
 //! `aws_cost.cur_daily` (`regionsInUse`, `billedResources`, `billedArn`, `billedRegion`, `apiRegion`).
 //!
-//! This first part covers everything the collector reads whatever the bill says: the network, tags of the billed
-//! ARNs, what the internet reaches (load balancers, Client VPN), public snapshots and images, buckets, CloudFront,
-//! and the describers that list everything (Aurora, log groups, OpenSearch, MSK, MQ, alarms, flow logs). The
-//! describers driven by billed ids (instances, volumes, tables, ALB settings, API Gateway, ECR, Cloud Control) come
-//! next; until then the replay answers those requests "access denied", and the collector writes those rows without
-//! their settings.
+//! Covered: the network, tags of the billed ARNs, what the internet reaches (load balancers, Client VPN), public
+//! snapshots and images, buckets, CloudFront, the describers that list everything (Aurora, log groups, OpenSearch,
+//! MSK, MQ, alarms, flow logs), and those the billed ARNs drive (instances and their images, volumes, Elastic IPs,
+//! RDS, DynamoDB, EKS, ElastiCache, bucket settings, application load balancers, API Gateway, ECR).
+//!
+//! Not yet: Cloud Control (its calls stop at a 30-minute deadline, so the set depends on timing), ECR scan findings
+//! (which images count as in use depends on the clock), and the `usageMetrics` reads. The replay answers those
+//! requests "access denied", and the collector writes those rows without those settings.
 
 use super::Run;
 use super::cur::BillRow;
@@ -501,6 +503,345 @@ fn buckets(run: &Run, account: &Account) {
     }
 }
 
+/// The last part of an ARN's resource after `marker` (`table/orders` → `orders` for `table/`).
+fn after<'a>(arn: &'a str, marker: &str) -> Option<&'a str> {
+    arn.split_once(marker).map(|(_, rest)| rest)
+}
+
+fn is_code(e: &anyhow::Error, codes: &[&str]) -> bool {
+    e.downcast_ref::<AwsError>()
+        .is_some_and(|a| codes.contains(&a.code.as_str()))
+}
+
+/// The describers the bill's ARNs drive (`describeBilled`, the types it names), in a part's API region. Each
+/// describer that fails is logged and the rest go on, as the collector writes those rows without their settings.
+fn billed_describers(run: &Run, account: &Account, region: &str, arns: &[String]) {
+    let of = |service: &str, marker: &str| -> Vec<String> {
+        arns.iter()
+            .filter(|a| a.split(':').nth(2) == Some(service))
+            .filter_map(|a| after(a, marker).map(str::to_string))
+            .collect()
+    };
+    // EC2: instances, volumes and Elastic IPs by id, 100 a call; then the images of the instances found.
+    let mut images = Vec::new();
+    for batch in of("ec2", ":instance/").chunks(100) {
+        let params = json!({"Filter": [{"Name": "instance-id", "Value": batch}], "MaxResults": 1000});
+        if let Ok(pages) = call(run, account, region, "ec2", "DescribeInstances", params) {
+            images.extend(xml_texts(
+                &pages,
+                &["reservationSet", "item", "instancesSet", "item"],
+                "imageId",
+            ));
+        }
+    }
+    for batch in of("ec2", ":volume/").chunks(100) {
+        let params = json!({"Filter": [{"Name": "volume-id", "Value": batch}], "MaxResults": 500});
+        let _ = call(run, account, region, "ec2", "DescribeVolumes", params);
+    }
+    for batch in of("ec2", ":elastic-ip/").chunks(100) {
+        let _ = call(
+            run,
+            account,
+            region,
+            "ec2",
+            "DescribeAddresses",
+            json!({"Filter": [{"Name": "allocation-id", "Value": batch}]}),
+        );
+    }
+    // RDS instances and ElastiCache clusters: listed whole when the bill names any.
+    if !of("rds", ":db:").is_empty() {
+        let _ = call(
+            run,
+            account,
+            region,
+            "rds",
+            "DescribeDBInstances",
+            json!({"MaxRecords": 100}),
+        );
+    }
+    // DynamoDB tables: each described, then its backups.
+    for table in of("dynamodb", ":table/") {
+        let _ = call(
+            run,
+            account,
+            region,
+            "dynamodb",
+            "DescribeTable",
+            json!({"TableName": table}),
+        );
+        let _ = call(
+            run,
+            account,
+            region,
+            "dynamodb",
+            "DescribeContinuousBackups",
+            json!({"TableName": table}),
+        );
+    }
+    // EKS clusters, then the versions they run.
+    let mut versions = Vec::new();
+    for name in of("eks", ":cluster/") {
+        if let Ok(pages) = call(run, account, region, "eks", "DescribeCluster", json!({"name": name})) {
+            versions.extend(super::json_strings(&pages, &["cluster", "version"]));
+        }
+    }
+    let versions = super::distinct(versions);
+    if !versions.is_empty() {
+        let _ = call(
+            run,
+            account,
+            region,
+            "eks",
+            "DescribeClusterVersions",
+            json!({"clusterVersions": versions}),
+        );
+    }
+    if !of("elasticache", ":cluster:").is_empty() {
+        let _ = call(
+            run,
+            account,
+            region,
+            "elasticache",
+            "DescribeCacheClusters",
+            json!({"MaxRecords": 100}),
+        );
+    }
+    // S3 buckets: public policy, lifecycle, then Intelligent-Tiering; a bucket gone since the bill is passed over.
+    for bucket in arns.iter().filter_map(|a| a.strip_prefix("arn:aws:s3:::")) {
+        for op in [
+            "GetBucketPolicyStatus",
+            "GetBucketLifecycleConfiguration",
+            "ListBucketIntelligentTieringConfigurations",
+        ] {
+            match call(run, account, region, "s3", op, json!({"Bucket": bucket})) {
+                Err(e) if is_code(&e, &["NoSuchBucket"]) => break,
+                _ => {}
+            }
+        }
+    }
+    application_load_balancers(run, account, region, arns);
+    api_gateways(run, account, region, arns);
+    repositories(run, account, region, &of("ecr", ":repository/"));
+    // The images the instances found run.
+    let mut images = super::distinct(images);
+    images.sort();
+    for batch in images.chunks(100) {
+        let params = json!({"Filter": [{"Name": "image-id", "Value": batch}], "MaxResults": 1000});
+        let _ = call(run, account, region, "ec2", "DescribeImages", params);
+    }
+}
+
+/// Application load balancers' settings (`lib/alb_config.ts`): 20 a call, one at a time once one is gone.
+fn application_load_balancers(run: &Run, account: &Account, region: &str, arns: &[String]) {
+    let albs: Vec<&String> = arns.iter().filter(|a| a.contains(":loadbalancer/app/")).collect();
+    let mut live = Vec::new();
+    for batch in albs.chunks(20) {
+        let read = |batch: &[&String]| {
+            call(
+                run,
+                account,
+                region,
+                "elbv2",
+                "DescribeLoadBalancers",
+                json!({"LoadBalancerArns": batch}),
+            )
+        };
+        let path = ["DescribeLoadBalancersResult", "LoadBalancers", "member"];
+        match read(batch) {
+            Ok(pages) => live.extend(xml_texts(&pages, &path, "LoadBalancerArn")),
+            Err(e) if is_code(&e, &["LoadBalancerNotFound"]) => {
+                for one in batch {
+                    if let Ok(pages) = read(std::slice::from_ref(one)) {
+                        live.extend(xml_texts(&pages, &path, "LoadBalancerArn"));
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+    }
+    for lb in live {
+        if let Ok(pages) = call(
+            run,
+            account,
+            region,
+            "elbv2",
+            "DescribeListeners",
+            json!({"LoadBalancerArn": lb}),
+        ) {
+            let listeners: Vec<_> = pages
+                .iter()
+                .filter_map(Body::xml)
+                .flat_map(|r| r.find_all(&["DescribeListenersResult", "Listeners", "member"]))
+                .filter_map(|l| {
+                    l.text_of("ListenerArn")
+                        .map(|a| (a.to_string(), l.text_of("Protocol") == Some("HTTPS")))
+                })
+                .collect();
+            for (listener, https) in listeners {
+                let _ = call(
+                    run,
+                    account,
+                    region,
+                    "elbv2",
+                    "DescribeRules",
+                    json!({"ListenerArn": listener}),
+                );
+                if https {
+                    let _ = call(
+                        run,
+                        account,
+                        region,
+                        "elbv2",
+                        "DescribeListenerCertificates",
+                        json!({"ListenerArn": listener}),
+                    );
+                }
+            }
+        }
+        let _ = call(
+            run,
+            account,
+            region,
+            "elbv2",
+            "DescribeLoadBalancerAttributes",
+            json!({"LoadBalancerArn": lb}),
+        );
+        let _ = call(
+            run,
+            account,
+            region,
+            "elbv2",
+            "DescribeTargetGroups",
+            json!({"LoadBalancerArn": lb}),
+        );
+        let _ = call(
+            run,
+            account,
+            region,
+            "wafv2",
+            "GetWebACLForResource",
+            json!({"ResourceArn": lb}),
+        );
+    }
+}
+
+/// API Gateway stages (`lib/apigw_config.ts`): the APIs listed, then the stages and resources of the billed ones.
+fn api_gateways(run: &Run, account: &Account, region: &str, arns: &[String]) {
+    let wanted = |kind: &str| -> Vec<String> {
+        let mut ids: Vec<String> = arns
+            .iter()
+            .filter(|a| a.starts_with("arn:aws:apigateway:"))
+            .filter_map(|a| after(a, kind).and_then(|r| r.split('/').next()).map(str::to_string))
+            .collect();
+        ids.dedup();
+        ids
+    };
+    let rest = wanted("::/restapis/");
+    if !rest.is_empty()
+        && let Ok(pages) = call(run, account, region, "apigateway", "GetRestApis", json!({"limit": 500}))
+    {
+        for id in super::json_strings(&pages, &["items", "id"])
+            .into_iter()
+            .filter(|id| rest.contains(id))
+        {
+            let _ = call(
+                run,
+                account,
+                region,
+                "apigateway",
+                "GetStages",
+                json!({"restApiId": id}),
+            );
+            let params = json!({"restApiId": id, "embed": ["methods"], "limit": 500});
+            let _ = call(run, account, region, "apigateway", "GetResources", params);
+        }
+    }
+    let http = wanted("::/apis/");
+    if !http.is_empty()
+        && let Ok(pages) = call(
+            run,
+            account,
+            region,
+            "apigatewayv2",
+            "GetApis",
+            json!({"maxResults": "500"}),
+        )
+    {
+        for id in super::json_strings(&pages, &["items", "apiId"])
+            .into_iter()
+            .filter(|id| http.contains(id))
+        {
+            let _ = call(
+                run,
+                account,
+                region,
+                "apigatewayv2",
+                "GetStages",
+                json!({"ApiId": id, "maxResults": "500"}),
+            );
+        }
+    }
+}
+
+/// ECR repositories (`lib/ecr.ts`): 100 names a call, one at a time once one is gone; the registry's scanning, then
+/// each repository's images and lifecycle policy. Scan findings, which depend on which images count as in use at
+/// collection time, are not read yet.
+fn repositories(run: &Run, account: &Account, region: &str, names: &[String]) {
+    let mut found = Vec::new();
+    for batch in names.chunks(100) {
+        let read = |batch: &[String]| {
+            call(
+                run,
+                account,
+                region,
+                "ecr",
+                "DescribeRepositories",
+                json!({"repositoryNames": batch}),
+            )
+        };
+        match read(batch) {
+            Ok(pages) => found.extend(super::json_strings(&pages, &["repositories", "repositoryName"])),
+            Err(e) if is_code(&e, &["RepositoryNotFoundException"]) => {
+                for one in batch {
+                    if let Ok(pages) = read(std::slice::from_ref(one)) {
+                        found.extend(super::json_strings(&pages, &["repositories", "repositoryName"]));
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+    }
+    if found.is_empty() {
+        return;
+    }
+    let _ = call(
+        run,
+        account,
+        region,
+        "ecr",
+        "GetRegistryScanningConfiguration",
+        json!({}),
+    );
+    for name in found {
+        let _ = call(
+            run,
+            account,
+            region,
+            "ecr",
+            "DescribeImages",
+            json!({"repositoryName": name, "maxResults": 1000}),
+        );
+        let _ = call(
+            run,
+            account,
+            region,
+            "ecr",
+            "GetLifecyclePolicy",
+            json!({"repositoryName": name}),
+        );
+    }
+}
+
 /// One account's infra reads, given the bill's rows. Nothing when the bill shows no region in use.
 pub fn collect(run: &Run, account: &Account, rows: &[BillRow], today: &str) -> Result<()> {
     let regions = regions_in_use(rows, today, &account.id);
@@ -546,6 +887,8 @@ pub fn collect(run: &Run, account: &Account, rows: &[BillRow], today: &str) -> R
         for (home, in_home) in &homes {
             tags(run, account, home, in_home);
         }
+        let in_part: Vec<String> = homes.values().flatten().cloned().collect();
+        billed_describers(run, account, &api_region(part, ""), &in_part);
         listing_describers(run, account, &api_region(part, ""));
         if network_ok {
             fronts(run, account, part);
@@ -636,6 +979,20 @@ mod tests {
         let rows = vec![
             row("2026-11-20", "i-0abc", "eu-west-1", "AmazonEC2", 3.0),
             row("2026-11-20", "my-bucket", "", "AmazonS3", 1.0),
+            row(
+                "2026-11-20",
+                "arn:aws:dynamodb:eu-west-1:111122223333:table/orders",
+                "eu-west-1",
+                "AmazonDynamoDB",
+                2.0,
+            ),
+            row(
+                "2026-11-20",
+                "arn:aws:elasticloadbalancing:eu-west-1:111122223333:loadbalancer/app/web/50dc6c495c0c9188",
+                "eu-west-1",
+                "AWSELB",
+                2.0,
+            ),
         ];
         collect(&run, &account, &rows, "2026-11-21").unwrap();
         let seen = quiet.0.lock().unwrap().clone();
@@ -658,6 +1015,22 @@ mod tests {
         );
         assert!(has("111122223333.s3-control.eu-west-1", "publicAccessBlock"));
         assert!(has("s3.us-east-1", "ListBuckets"));
+        assert!(
+            seen.iter()
+                .any(|s| s.contains("DescribeInstances") && s.contains("instance-id") && s.contains("i-0abc"))
+        );
+        assert!(
+            seen.iter()
+                .any(|s| s.starts_with("dynamodb.eu-west-1") && s.contains("DescribeTable") && s.contains("orders"))
+        );
+        assert!(
+            seen.iter()
+                .any(|s| s.contains("DescribeLoadBalancers") && s.contains("LoadBalancerArns.member.1"))
+        );
+        assert!(
+            has("my-bucket.s3.us-east-1", "lifecycle"),
+            "a billed bucket's settings, in its part's API region"
+        );
     }
 
     #[test]

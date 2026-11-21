@@ -13,7 +13,9 @@ What changed in each version of `qloudpulse-collect`.
   the tag rules.
 - Infra, first part (with the bill, once a day): regions and billed resources derived from the bill as qloudpulse
   does; network, tags of billed ARNs, internet-facing load balancers, public snapshots and images, bucket access,
-  CloudFront, and the describers that list everything.
+  CloudFront, the describers that list everything, and those the billed resources drive (instances and their
+  images, volumes, Elastic IPs, RDS, DynamoDB, EKS, ElastiCache, bucket settings, application load balancers, API
+  Gateway, ECR). Not yet: Cloud Control and ECR scan findings.
 - `[identifiers]`: account and resource IDs pseudonymized with their format kept, consistently everywhere.
 - One TLS stack (rustls on ring); no C crypto build.
 - Delivery to your own S3 bucket, to qloudpulse (feature `upload`), or to a command; retries and retention.

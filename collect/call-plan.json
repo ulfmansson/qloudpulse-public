@@ -1,7 +1,7 @@
 {
-  "version": "0.3.0-seed",
+  "version": "0.4.0-seed",
   "seed": true,
-  "note": "Hand-made from collect-swamp's aws-cost-collect and aws-cur-collect, aws-infra-collect (first part) (aws_clients.ts COST_COLLECTOR_ACTIONS, CUR_READER_ACTIONS, INFRA_COLLECTOR_ACTIONS; @aws-sdk 3.1021.0 protocols). Replaced by the generated plan.",
+  "note": "Hand-made from collect-swamp's aws-cost-collect and aws-cur-collect, aws-infra-collect (aws_clients.ts COST_COLLECTOR_ACTIONS, CUR_READER_ACTIONS, INFRA_COLLECTOR_ACTIONS; @aws-sdk 3.1021.0 protocols). Replaced by the generated plan.",
   "services": {
     "sts": {
       "protocol": "query",
@@ -126,6 +126,26 @@
       "protocol": "restXml",
       "endpoint_prefix": "s3-control",
       "signing_name": "s3"
+    },
+    "wafv2": {
+      "protocol": "awsJson1_1",
+      "endpoint_prefix": "wafv2",
+      "target_prefix": "AWSWAF_20190729"
+    },
+    "ecr": {
+      "protocol": "awsJson1_1",
+      "endpoint_prefix": "api.ecr",
+      "signing_name": "ecr",
+      "target_prefix": "AmazonEC2ContainerRegistry_V20150921"
+    },
+    "apigateway": {
+      "protocol": "restJson",
+      "endpoint_prefix": "apigateway"
+    },
+    "apigatewayv2": {
+      "protocol": "restJson",
+      "endpoint_prefix": "apigateway",
+      "signing_name": "apigateway"
     }
   },
   "operations": [
@@ -861,6 +881,172 @@
         "path": "/?publicAccessBlock",
         "host_prefix": "{Bucket}."
       }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "elbv2",
+      "name": "DescribeRules",
+      "iam_action": "elasticloadbalancing:DescribeRules",
+      "paging": {
+        "input_token": "Marker",
+        "output_token": "NextMarker"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "elbv2",
+      "name": "DescribeListenerCertificates",
+      "iam_action": "elasticloadbalancing:DescribeListenerCertificates",
+      "paging": {
+        "input_token": "Marker",
+        "output_token": "NextMarker"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "elbv2",
+      "name": "DescribeLoadBalancerAttributes",
+      "iam_action": "elasticloadbalancing:DescribeLoadBalancerAttributes"
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "elbv2",
+      "name": "DescribeTargetGroups",
+      "iam_action": "elasticloadbalancing:DescribeTargetGroups",
+      "paging": {
+        "input_token": "Marker",
+        "output_token": "NextMarker"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "wafv2",
+      "name": "GetWebACLForResource",
+      "iam_action": "wafv2:GetWebACLForResource"
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "s3",
+      "name": "GetBucketLifecycleConfiguration",
+      "iam_action": "s3:GetLifecycleConfiguration",
+      "http": {
+        "method": "GET",
+        "path": "/?lifecycle",
+        "host_prefix": "{Bucket}."
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "s3",
+      "name": "ListBucketIntelligentTieringConfigurations",
+      "iam_action": "s3:GetIntelligentTieringConfiguration",
+      "paging": {
+        "input_token": "continuation-token",
+        "output_token": "NextContinuationToken"
+      },
+      "http": {
+        "method": "GET",
+        "path": "/?intelligent-tiering&x-id=ListBucketIntelligentTieringConfigurations",
+        "host_prefix": "{Bucket}."
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "apigateway",
+      "name": "GetRestApis",
+      "iam_action": "apigateway:GET",
+      "paging": {
+        "input_token": "position",
+        "output_token": "position"
+      },
+      "http": {
+        "method": "GET",
+        "path": "/restapis"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "apigateway",
+      "name": "GetStages",
+      "iam_action": "apigateway:GET",
+      "http": {
+        "method": "GET",
+        "path": "/restapis/{restApiId}/stages"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "apigateway",
+      "name": "GetResources",
+      "iam_action": "apigateway:GET",
+      "paging": {
+        "input_token": "position",
+        "output_token": "position"
+      },
+      "http": {
+        "method": "GET",
+        "path": "/restapis/{restApiId}/resources"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "apigatewayv2",
+      "name": "GetApis",
+      "iam_action": "apigateway:GET",
+      "paging": {
+        "input_token": "nextToken",
+        "output_token": "nextToken"
+      },
+      "http": {
+        "method": "GET",
+        "path": "/v2/apis"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "apigatewayv2",
+      "name": "GetStages",
+      "iam_action": "apigateway:GET",
+      "paging": {
+        "input_token": "nextToken",
+        "output_token": "nextToken"
+      },
+      "http": {
+        "method": "GET",
+        "path": "/v2/apis/{ApiId}/stages"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "ecr",
+      "name": "DescribeRepositories",
+      "iam_action": "ecr:DescribeRepositories",
+      "paging": {
+        "input_token": "nextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "ecr",
+      "name": "GetRegistryScanningConfiguration",
+      "iam_action": "ecr:GetRegistryScanningConfiguration"
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "ecr",
+      "name": "DescribeImages",
+      "iam_action": "ecr:DescribeImages",
+      "paging": {
+        "input_token": "nextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "ecr",
+      "name": "GetLifecyclePolicy",
+      "iam_action": "ecr:GetLifecyclePolicy"
     }
   ]
 }
