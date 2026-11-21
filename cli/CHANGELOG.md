@@ -10,10 +10,10 @@ has lines.
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-11-19
+## [0.3.1] - 2026-11-21
 
-The first release since 0.1.0. 0.2.0 was merged on 2026-11-18 but never released, so its changes are in this list
-too.
+The first release since 0.1.0. 0.2.0 was merged on 2026-11-18 but never released, and 0.3.0 was tagged on 2026-11-21
+but its release run failed before it published anything, so their changes are in this list too.
 
 ### Added
 
@@ -101,6 +101,6 @@ too.
   `--endpoint`.
 - Static binaries for Linux x86_64 and arm64, and binaries for macOS on both architectures, with `SHA256SUMS`.
 
-[Unreleased]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-cli-0.3.0...main
-[0.3.0]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-cli-0.1.0...qloudpulse-cli-0.3.0
+[Unreleased]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-cli-0.3.1...main
+[0.3.1]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-cli-0.1.0...qloudpulse-cli-0.3.1
 [0.1.0]: https://github.com/ulfmansson/qloudpulse-public/releases/tag/qloudpulse-cli-0.1.0
