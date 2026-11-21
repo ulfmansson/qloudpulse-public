@@ -36,6 +36,9 @@ pub struct Config {
     /// Account IDs and resource IDs, kept or pseudonymized with their format.
     #[serde(default)]
     pub identifiers: IdentifierConfig,
+    /// Derive `qloudpulse:environment` from raw tags before redaction, so names can be redacted.
+    #[serde(default)]
+    pub environment: Option<crate::derive::EnvironmentConfig>,
     /// The last look before packing: what to allow among the secrets and personal data it finds.
     #[serde(default)]
     pub scan: crate::scan::ScanConfig,
@@ -403,6 +406,9 @@ impl Config {
         {
             bail!("[cur] needs a 12-digit account, periods_back from 1 to 3 and prediction_interval from 51 to 99");
         }
+        if let Some(e) = &self.environment {
+            crate::derive::Deriver::new(e).context("an [environment] rule pattern")?;
+        }
         if self.run.every_hours == 0 || self.run.minute > 59 || self.run.daily_hour > 23 {
             bail!("[run] every_hours must be at least 1, minute 0-59 and daily_hour 0-23");
         }
@@ -428,6 +434,10 @@ impl Config {
 
     /// The action for a tag key. Order: drop, pseudonymize, replace, keep, then the default.
     pub fn tag_action(&self, key: &str) -> TagAction {
+        // Derived from your own rules before redaction: kept, whatever the default.
+        if key == crate::derive::ENV_TAG {
+            return TagAction::Keep;
+        }
         let t = &self.tags;
         if t.drop.iter().any(|k| k == key) {
             TagAction::Drop
@@ -540,6 +550,17 @@ pseudonymize = []   # e.g. ["Owner"]: the same value always gives the same pseud
 [identifiers]
 account_ids = "keep"
 resource_ids = "keep"
+
+# Derive the environment before redaction and send it as the tag qloudpulse:environment, so resource names can be
+# pseudonymized and costs still group by environment. From a tag you have, else from rules on the Name tag.
+# [environment]
+# from_tag = "Environment"
+# [[environment.rules]]
+# pattern = "(?i)\\bprod"
+# value = "production"
+# [[environment.rules]]
+# pattern = "(?i)\\b(dev|test)"
+# value = "development"
 
 # Before a bundle is written, what would leave is scanned for keys, tokens, passwords and email addresses: pack stops
 # until each is redacted by a rule above, or allowed here. Public IP addresses are reported, never blocking.

@@ -33,6 +33,7 @@ pub struct Redactor<'a> {
     pseudonyms: &'a Pseudonymizer,
     fields: Vec<CompiledField>,
     tag_patterns: Vec<Option<Regex>>,
+    deriver: Option<crate::derive::Deriver>,
 }
 
 /// A tag as found in an answer, for [`visit_tags`].
@@ -65,11 +66,16 @@ impl<'a> Redactor<'a> {
                     .map(|p| Regex::new(p).expect("checked when the config loaded"))
             })
             .collect();
+        let deriver = config
+            .environment
+            .as_ref()
+            .map(|e| crate::derive::Deriver::new(e).expect("checked when the config loaded"));
         Redactor {
             config,
             pseudonyms,
             fields,
             tag_patterns,
+            deriver,
         }
     }
 
@@ -91,6 +97,16 @@ impl<'a> Redactor<'a> {
             }
             let mut body = Body::parse(record.response.body.as_bytes());
             let mut touched = false;
+            if let Some(d) = &self.deriver {
+                let added = d.apply(&mut body);
+                if added > 0 {
+                    touched = true;
+                    *stats
+                        .fields
+                        .entry(format!("derived {}", crate::derive::ENV_TAG))
+                        .or_default() += added;
+                }
+            }
             match &mut body {
                 Body::Xml(root) => self.xml(root, &mut Vec::new(), &mut stats, &mut changed, &mut touched),
                 Body::Json(v) => self.json(v, &mut Vec::new(), &mut stats, &mut changed, &mut touched),
@@ -628,6 +644,24 @@ mod tests {
         );
         assert_eq!(rows[2]["Data"][1], serde_json::json!({}), "a null stays null");
         assert_eq!(stats.tags["Team"].1, 2);
+    }
+
+    #[test]
+    fn the_environment_is_derived_before_the_name_is_pseudonymized() {
+        let config = config(
+            "[tags]\ndefault = \"deny\"\npseudonymize = [\"Name\"]\n[environment]\n[[environment.rules]]\npattern = \"(?i)prod\"\nvalue = \"production\"\n",
+        );
+        let pseudonyms = Pseudonymizer::new(vec![7; 32], false);
+        let xml = "<R><tagSet><item><key>Name</key><value>web-prod-1</value></item></tagSet></R>";
+        let mut records = vec![record(xml, "", "x")];
+        let stats = Redactor::new(&config, &pseudonyms).records(&mut records);
+        let out = &records[0].response.body;
+        assert!(!out.contains("web-prod-1"), "{out}");
+        assert!(
+            out.contains("<key>qloudpulse:environment</key><value>production</value>"),
+            "kept under deny: {out}"
+        );
+        assert_eq!(stats.fields["derived qloudpulse:environment"], 1);
     }
 
     #[test]
