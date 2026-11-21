@@ -430,7 +430,8 @@ build_windows() { # target
              dpkg-query -W gcc-mingw-w64-x86-64-posix gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 \
                mingw-w64-x86-64-dev 2>/dev/null >/out/packages || true
              rustup target add x86_64-pc-windows-gnu >/dev/null 2>&1
-             cargo install --locked --quiet --root /tools "cargo-auditable@$CARGO_AUDITABLE_VERSION"
+             # The tool runs here, on Linux: RUSTFLAGS are for the Windows build, and +crt-static rules out proc macros.
+             env -u RUSTFLAGS cargo install --locked --quiet --root /tools "cargo-auditable@$CARGO_AUDITABLE_VERSION"
              PATH=/tools/bin:$PATH cargo auditable build --release --locked --quiet --target x86_64-pc-windows-gnu
              cp /tmp/target/x86_64-pc-windows-gnu/release/qloudpulse.exe /out/qloudpulse.exe
              x86_64-w64-mingw32-objdump -p /out/qloudpulse.exe | sed -n "s/^[[:space:]]*DLL Name: //p" | sort -u >/out/dlls
