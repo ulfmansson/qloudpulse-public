@@ -131,6 +131,13 @@ kubectl delete -f qloudpulse-agent.yaml
 `manifests/qloudpulse-agent.yaml` is generated from the chart, so the two cannot differ. After a change to the chart, run
 `scripts/render-manifest.sh` and commit both.
 
+## Contributing
+
+We do not accept pull requests; one from outside the maintainers is closed automatically. We do want bug reports and
+feature requests: [open an issue](https://github.com/ulfmansson/qloudpulse-public/issues/new/choose), use **Suggest a
+feature** in qloudpulse, or star what others have asked for on
+[qloudpulse.com/requests.html](https://qloudpulse.com/requests.html). [CONTRIBUTING.md](CONTRIBUTING.md) says why.
+
 ## License
 
 [Apache License 2.0](LICENSE).

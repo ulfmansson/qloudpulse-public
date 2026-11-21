@@ -1,0 +1,43 @@
+# Closes every pull request not opened by the repository's owner, a member or a collaborator, with a comment that
+# points to CONTRIBUTING.md: we take bug reports and feature requests, not code. Dependabot is let through, so its
+# security updates still arrive if it is ever turned on.
+#
+# pull_request_target, so the token can comment on and close a pull request from a fork. That is safe only because this
+# workflow never checks out or runs anything from the pull request: it reads the event's metadata and calls gh. Keep it
+# that way.
+name: Close outside pull requests
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions: {}
+
+jobs:
+  close:
+    if: >-
+      !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
+      && github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment and close
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr close "$NUMBER" --comment "$(cat <<'EOF'
+          Thank you for taking the time. We do not accept pull requests to this repository, so this one has been closed
+          automatically. It is nothing personal: every change here is made by the qloudpulse maintainers, to keep what
+          customers install into their clusters and CI under our direct control.
+
+          We do want to hear what you need. Please describe the bug or the feature as an issue instead:
+          https://github.com/ulfmansson/qloudpulse-public/issues/new/choose
+
+          If you are a qloudpulse customer, **Suggest a feature** and **Report a problem** in the app reach us too, and
+          https://qloudpulse.com/requests.html shows what others have asked for. CONTRIBUTING.md has the details:
+          https://github.com/ulfmansson/qloudpulse-public/blob/main/CONTRIBUTING.md
+          EOF
+          )"

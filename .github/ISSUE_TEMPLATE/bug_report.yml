@@ -1,0 +1,40 @@
+name: Bug report
+description: Something in the agent, the Helm chart, the manifest or a CLI does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. Leave out tokens, account ids and anything else you would not post publicly.
+        A security vulnerability goes to support@qloudpulse.com instead, with "Security" in the subject.
+  - type: dropdown
+    id: component
+    attributes:
+      label: What
+      options:
+        - Cluster agent (Helm chart)
+        - Cluster agent (plain YAML)
+        - qloudpulse-stack (CLI)
+        - qloudpulse-collect (CLI)
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The chart version or `qloudpulse-stack --version` / `qloudpulse-collect --version`, and where it runs (EKS, OpenShift, GitHub Actions...).
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What you did, what you expected, and what happened instead
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: For the agent, `kubectl -n qloudpulse logs deploy/qloudpulse-agent --tail=50`.
+      render: text
