@@ -78,6 +78,11 @@ ROOT=$(git -C "$CLI" rev-parse --show-toplevel)
 VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$CLI/Cargo.toml" | head -1)
 [ -n "$VERSION" ] || fail "no version in $CLI/Cargo.toml"
 TAG="qloudpulse-cli-$VERSION"
+# Checked before OUT gets its default below, which would otherwise look like an --out the caller passed.
+if [ $PUBLISH -eq 1 ]; then
+  [ "$TARGETS" = "$ALL_TARGETS" ] && [ -z "$OUT" ] && [ $SKIP_TESTS -eq 0 ] \
+    || fail "--publish builds nothing, so it takes no --targets, --out or --skip-tests"
+fi
 OUT=${OUT:-$CLI/target/dist/$VERSION}
 COMMIT=$(git -C "$ROOT" rev-parse HEAD)
 
@@ -203,8 +208,6 @@ if [ $PUBLISH -eq 1 ]; then
   # Nothing is built here: the tag starts the release workflow, which builds every target on GitHub's runners from
   # the tagged commit and attests what it built. A binary from this machine could not be told from one built anywhere
   # else, so none is uploaded from it.
-  [ "$TARGETS" = "$ALL_TARGETS" ] && [ -z "$OUT" ] && [ $SKIP_TESTS -eq 0 ] \
-    || fail "--publish builds nothing, so it takes no --targets, --out or --skip-tests"
   command -v gh >/dev/null || fail "--publish needs gh"
   check_changelog
   # The client's default address has to answer before a release names it (qloudpulse's ADR 0127). The workflow
