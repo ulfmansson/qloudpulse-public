@@ -10,6 +10,8 @@ has lines.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-21
+
 ### Added
 
 - `qloudpulse-stack --version` names the commit a release was built from and that commit's date, as rustc does:
@@ -143,6 +145,7 @@ but its release run failed before it published anything, so their changes are in
   `--endpoint`.
 - Static binaries for Linux x86_64 and arm64, and binaries for macOS on both architectures, with `SHA256SUMS`.
 
-[Unreleased]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-cli-0.3.1...main
+[Unreleased]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-stack-0.4.0...main
+[0.4.0]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-cli-0.3.1...qloudpulse-stack-0.4.0
 [0.3.1]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-cli-0.1.0...qloudpulse-cli-0.3.1
 [0.1.0]: https://github.com/ulfmansson/qloudpulse-public/releases/tag/qloudpulse-cli-0.1.0
