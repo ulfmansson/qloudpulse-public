@@ -201,7 +201,18 @@ jobs:
           # Every crate of Cargo.lock any target builds; dated by the commit, so the same commit gives the same file.
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) cargo cyclonedx --format json --spec-version 1.5 \
             --target all --override-filename "qloudpulse-$version.cdx"
-          mkdir -p "$RUNNER_TEMP/sbom" && mv "qloudpulse-$version.cdx.json" "$RUNNER_TEMP/sbom/"
+          # With SOURCE_DATE_EPOCH set, cargo-cyclonedx leaves out serialNumber so the file is reproducible, but
+          # actions/attest takes a CycloneDX file as an SBOM only if it has one. A UUIDv5 of this commit's URL keeps
+          # both: every commit gets its own serial, and the same commit gets the same one.
+          serial=$(python3 -c 'import sys, uuid; print(uuid.uuid5(uuid.NAMESPACE_URL, sys.argv[1]))' \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA")
+          mkdir -p "$RUNNER_TEMP/sbom"
+          jq --arg serial "urn:uuid:$serial" '{bomFormat, specVersion, serialNumber: $serial} + .' \
+            "qloudpulse-$version.cdx.json" >"$RUNNER_TEMP/sbom/qloudpulse-$version.cdx.json"
+          rm "qloudpulse-$version.cdx.json"
+          # The fields actions/attest looks for. Checked here, so a pull request finds out, not the tag's Attest job.
+          jq -e '.bomFormat == "CycloneDX" and (.serialNumber | test("^urn:uuid:")) and (.specVersion | length > 0)' \
+            "$RUNNER_TEMP/sbom/qloudpulse-$version.cdx.json" >/dev/null
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sbom
