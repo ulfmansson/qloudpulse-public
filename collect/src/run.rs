@@ -115,7 +115,7 @@ impl Client {
                         }
                     }
                     if c.forecast {
-                        match collect::forecast::collect(&caller, &payer, now, c.prediction_interval) {
+                        match collect::forecast::collect(&caller, &payer, now, collect::forecast::PREDICTION_INTERVAL) {
                             Ok(f) => outcome.forecast = Some(f),
                             Err(e) => failures.push(format!("{} forecast: {e:#}", c.account)),
                         }

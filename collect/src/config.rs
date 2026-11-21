@@ -164,9 +164,6 @@ pub struct CurConfig {
     /// Also read Cost Explorer's month-to-date spend and forecast per account. AWS bills $0.01 a request.
     #[serde(default)]
     pub forecast: bool,
-    /// The forecast's prediction interval, as set in qloudpulse (51-99): it is part of the request.
-    #[serde(default = "eighty")]
-    pub prediction_interval: u32,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -308,9 +305,6 @@ fn default_region() -> String {
 fn yes() -> bool {
     true
 }
-fn eighty() -> u32 {
-    80
-}
 fn default_workgroup() -> String {
     "qloudpulse-cost".into()
 }
@@ -406,12 +400,9 @@ impl Config {
             }
         }
         if let Some(c) = &self.cur
-            && (c.periods_back == 0
-                || c.periods_back > 3
-                || c.account.len() != 12
-                || !(51..=99).contains(&c.prediction_interval))
+            && (c.periods_back == 0 || c.periods_back > 3 || c.account.len() != 12)
         {
-            bail!("[cur] needs a 12-digit account, periods_back from 1 to 3 and prediction_interval from 51 to 99");
+            bail!("[cur] needs a 12-digit account and periods_back from 1 to 3");
         }
         if let Some(e) = &self.environment {
             crate::derive::Deriver::new(e).context("an [environment] rule pattern")?;
@@ -550,7 +541,6 @@ pseudonymize = []   # e.g. ["Owner"]: the same value always gives the same pseud
 # scope_tag_keys = []     # the scope tag keys set in qloudpulse: they are part of the query
 # periods_back = 1
 # forecast = false        # Cost Explorer's forecast per account; AWS bills $0.01 a request
-# prediction_interval = 80
 
 # Account IDs and resource IDs: "keep", or "pseudonymize" with their format kept (12 digits; i- and 17 hex digits),
 # the same everywhere they appear, ARNs and requests included, so the bill and the inventory still join.

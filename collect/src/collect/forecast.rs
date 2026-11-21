@@ -12,6 +12,10 @@ use serde_json::{Value, json};
 
 pub const COLLECTOR: &str = "aws-forecast-collect";
 
+/// The prediction interval qloudpulse's collector asks for. It is part of the request, and the collector takes no
+/// other, so the client asks for exactly this one.
+pub const PREDICTION_INTERVAL: u32 = 80;
+
 /// The days a run on `now` asks about (`monthSpan`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MonthSpan {
