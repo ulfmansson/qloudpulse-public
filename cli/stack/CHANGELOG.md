@@ -13,6 +13,22 @@ has lines.
 Needs a qloudpulse with ADR 0140 (report service with migration V35) before it is released: an older endpoint ignores
 `--no-store`, which the client then refuses.
 
+### Changed
+
+- The install scripts ask before replacing an installed client: they say which version is installed (as
+  `qloudpulse-stack`, or `qloudpulse` up to 0.3.1, in the install directory or on PATH) and which they would install,
+  and leave one already at that version alone. `--yes` (`-Yes`, `QLOUDPULSE_ASSUME_YES=1`) skips the question;
+  `--version`, and a pipeline with no terminal to ask on, go ahead without asking.
+
+### Fixed
+
+- The copies of `install.sh` and `install.ps1` in the repository find the newest release under either name,
+  `qloudpulse-stack-<version>` or `qloudpulse-cli-<version>`, and install 0.3.1 and older by their old names. Before,
+  with no `qloudpulse-stack` release published, they stopped with "could not find the newest release". A lookup that
+  fails, offline or past GitHub's rate limit, now says so.
+- `install.sh` takes `qloudpulse-stack` out of the archive; since the rename it asked tar for `qloudpulse`, which the
+  archive does not have, and stopped there.
+
 ## [0.4.0] - 2026-11-21
 
 

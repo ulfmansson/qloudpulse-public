@@ -34,7 +34,10 @@ irm https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse
 
 Each script installs the release it came from: the version is in the URL, so a pipeline gets the same client every
 run until you change it. The copies in this repository, `cli/stack/install.sh` and `cli/stack/install.ps1`, install the newest
-release instead, or the one `--version` names. It downloads the archive and the release's `SHA256SUMS`, stops unless the sum matches, and
+release instead (under either name: up to 0.3.1 that is `qloudpulse-cli-<version>`), or the one `--version` names.
+When a client is already installed, in that directory or on PATH, it says which version that is and which it would
+install, and asks before replacing it; one already at that version is left alone. `--version`, `--yes`, or no
+terminal to ask on (a pipeline) goes ahead without asking. It downloads the archive and the release's `SHA256SUMS`, stops unless the sum matches, and
 puts the binary in `~/.local/bin`, or on Windows in `%LOCALAPPDATA%\Programs\qloudpulse`, which it adds to your
 PATH. On a GitHub Actions runner it adds the directory to `$GITHUB_PATH` instead, so the next steps find
 `qloudpulse-stack`. A Windows on ARM machine gets the ARM64 build, even from an x64 PowerShell.
@@ -42,6 +45,7 @@ PATH. On a GitHub Actions runner it adds the directory to `$GITHUB_PATH` instead
 | `install.sh` | `install.ps1` (or its variable, as `iex` takes no options) | |
 |---|---|---|
 | `--dir <dir>` | `-Dir`, `$env:QLOUDPULSE_INSTALL_DIR` | where the binary goes |
+| `--yes` | `-Yes`, `$env:QLOUDPULSE_ASSUME_YES=1` | replace an installed client without asking |
 | `--attest` | `-Attest` | also check its signed build provenance with `gh`, as below |
 | `--base <url or dir>` | `-Base`, `$env:QLOUDPULSE_DOWNLOAD_BASE` | a mirror of the release's files |
 | | `-NoModifyPath`, `$env:QLOUDPULSE_NO_MODIFY_PATH` | leave PATH alone |

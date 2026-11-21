@@ -38,4 +38,6 @@ inspect, redact and deliver. qloudpulse never gets access to your accounts.
 - **No qloudpulse code at all, if you prefer:** `--no-default-features` builds a client without the upload, and
   holds no qloudpulse host.
 - **Released as `qloudpulse-stack` is:** static binaries for Linux, macOS and Windows, `SHA256SUMS`, signed build
-  provenance, an SBOM, reproducible builds, and `install.sh` and `install.ps1`. `--version` names the commit.
+  provenance, an SBOM, reproducible builds, and `install.sh` and `install.ps1`. `--version` names the commit. The
+  install scripts say which version is installed (in the install directory, or on PATH when none is given) and which
+  they would install, and ask before replacing it; `--yes` (`-Yes`, `QLOUDPULSE_ASSUME_YES=1`) skips the question.
