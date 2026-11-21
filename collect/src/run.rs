@@ -29,6 +29,20 @@ pub struct Client {
 impl Client {
     /// Reads every configured account and region into a raw snapshot.
     pub fn collect(&self, now: Timestamp) -> Result<Snapshot> {
+        let (meta, records) = self.collect_in_memory(now)?;
+        let snapshot = Snapshot::write(Snapshot::dir_for(&self.config.work_dir, &meta.window), meta, records)?;
+        log::info(
+            "collected",
+            &[
+                ("records", snapshot.records.len().to_string()),
+                ("snapshot", snapshot.dir.display().to_string()),
+            ],
+        );
+        Ok(snapshot)
+    }
+
+    /// The same reading as [`Client::collect`], kept in memory: the local UI's sample never touches the disk.
+    pub fn collect_in_memory(&self, now: Timestamp) -> Result<(SnapshotMeta, Vec<crate::record::Record>)> {
         let window = Window::last_full_hour(now);
         let caller = Caller::new(CallPlan::embedded(), self.transport.as_ref(), self.config.options());
         let home = &self.config.home_region;
@@ -123,15 +137,7 @@ impl Client {
             collected_at: now,
             outcome,
         };
-        let snapshot = Snapshot::write(Snapshot::dir_for(&self.config.work_dir, &window), meta, records)?;
-        log::info(
-            "collected",
-            &[
-                ("records", snapshot.records.len().to_string()),
-                ("snapshot", snapshot.dir.display().to_string()),
-            ],
-        );
-        Ok(snapshot)
+        Ok((meta, records))
     }
 
     /// The payer account's credentials: the `[cur]` role when set, else the payer among the accounts read.
