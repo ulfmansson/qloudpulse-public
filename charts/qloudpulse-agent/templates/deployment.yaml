@@ -30,9 +30,10 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      # No runAsUser: the image already runs as user 10001, and OpenShift's restricted-v2 assigns a user from the
+      # namespace's range and refuses a pod that asks for one outside it. runAsNonRoot still refuses root everywhere.
       securityContext:
         runAsNonRoot: true
-        runAsUser: 10001
         seccompProfile:
           type: RuntimeDefault
       containers:

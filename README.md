@@ -49,6 +49,12 @@ kubectl apply -f qloudpulse-agent.yaml
 If you change a value later, also run `kubectl -n qloudpulse rollout restart deployment/qloudpulse-agent`. The file has
 the chart's default settings. To change others, such as which labels to send, edit its ConfigMap or use the chart.
 
+## On OpenShift
+
+Either install works as it is under OpenShift's default `restricted-v2` SCC, with no extra SCC grant. The pod does not
+name a user, so OpenShift gives it one from the namespace's range. That needs a release newer than 0.1.0, which still
+names user 10001. This has not been tried on an OpenShift cluster yet; tell us if the pod does not start.
+
 ## Check that it runs
 
 ```bash
@@ -99,7 +105,8 @@ nodes, pods, replication controllers, resource quotas, services, DaemonSets, Dep
 CronJobs, Jobs and HorizontalPodAutoscalers, and `get` on `nodes/stats`.
 
 It has no access to Secrets, ConfigMaps, pod logs or exec. It does not use `nodes/proxy`, because `get` on that can run
-commands in pods through the kubelet. The pod runs as a non-root user with a read-only filesystem and no capabilities.
+commands in pods through the kubelet. The pod runs as a non-root user, the image's own 10001 or the one OpenShift
+assigns, with a read-only filesystem and no capabilities.
 
 ## What it uses
 
