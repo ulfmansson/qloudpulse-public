@@ -46,6 +46,9 @@ tokio = { version = "1", features = ["rt", "time", "net"] }
 toml = "0.9"
 ureq = "3.5"
 url = "2"
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "form", "query"] }
+askama = "0.16.1"
+toml_edit = "0.25.20"
 
 [features]
 # The qloudpulse upload. `--no-default-features` builds a client with no qloudpulse code in it at all.
@@ -55,6 +58,7 @@ upload = ["dep:qloudpulse-cli"]
 
 [dev-dependencies]
 tempfile = "3"
+tower = { version = "0.5.3", default-features = false, features = ["util"] }
 
 [profile.release]
 lto = true

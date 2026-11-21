@@ -1,0 +1,3 @@
+{% if !changed %}<p class="small muted">No change from the file on disk.</p>{% endif %}
+<pre class="code">{% for l in lines %}{% if l.1 %}<span class="add">{{ l.0 }}</span>{% else %}{{ l.0 }}{% endif %}
+{% endfor %}</pre>

@@ -101,6 +101,21 @@ enum Command {
         /// Overrides [run] every_hours.
         #[arg(long)]
         every: Option<u32>,
+        /// Also serve the local UI, with this loop's cycles in its run history.
+        #[arg(long, conflicts_with = "once")]
+        ui: bool,
+        /// Where the UI listens. Anything but a loopback address lets other machines reach it (the token is still
+        /// required).
+        #[arg(long, default_value = qloudpulse_collect::ui::DEFAULT_BIND, requires = "ui")]
+        ui_bind: std::net::SocketAddr,
+    },
+    /// The local web UI: what the client reads, the rules editor with a raw/redacted preview, every bundle, every
+    /// run. Listens on 127.0.0.1 and prints an address with a session token.
+    Ui {
+        /// Where the UI listens. Anything but a loopback address lets other machines reach it (the token is still
+        /// required).
+        #[arg(long, default_value = qloudpulse_collect::ui::DEFAULT_BIND)]
+        ui_bind: std::net::SocketAddr,
     },
     /// Replace the pseudonym key. Writes an old-to-new pseudonym file (no real values) to relink history in
     /// qloudpulse, from the local map (keep_pseudonym_map); without one it refuses unless --force.
@@ -315,7 +330,23 @@ fn run(cli: Cli) -> Result<()> {
                 eprintln!("qloudpulse-collect: no token was kept for {endpoint} on this machine.");
             }
         }
-        Command::Run { once, every } => {
+        Command::Run {
+            once,
+            every,
+            ui: true,
+            ui_bind,
+        } => {
+            anyhow::ensure!(!once, "--ui runs the loop; leave out --once");
+            if let Some(n) = every {
+                anyhow::ensure!(n >= 1, "--every must be at least 1");
+            }
+            qloudpulse_collect::ui::run_with_ui(cli.config, every, ui_bind)?;
+        }
+        Command::Ui { ui_bind } => {
+            load(&cli.config)?;
+            qloudpulse_collect::ui::serve(cli.config, ui_bind)?;
+        }
+        Command::Run { once, every, .. } => {
             let mut client = client(&cli.config)?;
             if let Some(n) = every {
                 anyhow::ensure!(n >= 1, "--every must be at least 1");

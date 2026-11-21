@@ -24,3 +24,5 @@ What changed in each version of `qloudpulse-collect`.
 - Signs in to qloudpulse as the qloudpulse CLI does, with its code: `QLOUDPULSE_TOKEN`, else the token `login` kept
   (shared with `qloudpulse login`); `login` and `logout` commands.
 - Delivery to your own S3 bucket, to qloudpulse (feature `upload`), or to a command; retries and retention.
+- The local UI (`ui`, `run --ui`): Analyze with an in-memory sample, a rules editor with a raw/redacted preview that
+  saves through `toml_edit`, the bundle browser and run history. Localhost, token, Host check and a strict CSP.

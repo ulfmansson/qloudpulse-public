@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="headline">
+  <div class="grow">
+    <h1>Run history</h1>
+    <p class="muted">Each cycle collects the hour that just ended, packs it, delivers everything pending and prunes. Cycles start {{ minute }} minutes past the hour (<code>[run] minute</code>) so that hour is complete.</p>
+  </div>
+  {% if under_run %}
+  <div class="cards three">
+    <div class="card"><div class="l">Next run</div><div class="n small-n">{{ next }}</div><div class="l">every {{ every }} h</div></div>
+    <div class="card"><div class="l">This process runs since</div><div class="n small-n">{{ since }}</div><div class="l">{{ cycles.len() }} cycles so far</div></div>
+  </div>
+  {% else %}
+  <div class="panel side small"><b>No run loop in this process.</b><p class="muted">Start the UI with <code>run --every {{ every }}h --ui</code> to see each cycle here as it happens. The history below comes from the bundles on disk.</p></div>
+  {% endif %}
+</div>
+
+{% if under_run %}
+<div class="panel">
+  <h2>Cycles of this process</h2>
+  {% if cycles.is_empty() %}<p class="muted small">None yet: the first one starts at the next run time.</p>{% else %}
+  <div class="scroll"><table>
+    <tr><th>Started</th><th>Result</th><th class="num">Took</th><th>Bundle</th><th>Still to deliver</th><th>Error</th></tr>
+    {% for c in cycles %}
+    <tr><td class="small nowrap">{{ c.started }}</td><td class="st {{ c.class }}">{{ c.result }}</td><td class="num small">{{ c.took }}</td>
+      <td class="mono small">{% if !c.bundle.is_empty() %}<a href="/bundles/{{ c.bundle }}">{{ c.bundle }}</a>{% endif %}</td>
+      <td class="small">{% if c.pending.is_empty() %}<span class="muted">—</span>{% else %}<ul class="plain warn">{% for p in c.pending %}<li>{{ p }}</li>{% endfor %}</ul><span class="muted">retried at the next cycle</span>{% endif %}</td>
+      <td class="small bad">{{ c.error }}</td></tr>
+    {% endfor %}
+  </table></div>{% endif %}
+</div>
+{% endif %}
+
+<div class="panel">
+  <h2>Bundles written</h2>
+  <p class="small muted">From the manifests in the output directory, newest first. A cycle that failed before packing left no bundle; under <code>run --ui</code> it shows above, otherwise in the log.</p>
+  {% if history.is_empty() %}<p class="muted small">No bundles yet.</p>{% else %}
+  <div class="scroll"><table>
+    <tr><th>Window</th><th>Collected</th><th>Result</th><th class="num">Records</th><th class="num">Accounts</th><th>Bundle</th><th>Delivery</th><th>Warnings</th></tr>
+    {% for h in history %}
+    <tr>
+      <td class="small nowrap">{{ h.window }}</td><td class="small nowrap">{{ h.collected }}</td><td class="st {{ h.class }}">{{ h.result }}</td>
+      <td class="num">{{ h.records }}</td><td class="num small">{{ h.accounts }}</td>
+      <td class="mono small"><a href="/bundles/{{ h.name }}">{{ h.name }}</a></td>
+      <td><span class="deliv">{% for d in h.deliveries %}<span class="dv {% if d.done %}ok{% else %}bad{% endif %}">{{ d.target }} {% if d.done %}✓{% else %}✗{% endif %}</span>{% else %}<span class="muted small">—</span>{% endfor %}</span></td>
+      <td class="small">{% if h.failures.is_empty() && h.impact.is_empty() %}<span class="muted">—</span>{% else %}<ul class="plain">{% for f in h.failures %}<li class="warn">{{ f }}</li>{% endfor %}{% for i in h.impact %}<li class="muted">rule cost: {{ i }}</li>{% endfor %}</ul>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table></div>{% endif %}
+</div>
+{% endblock %}

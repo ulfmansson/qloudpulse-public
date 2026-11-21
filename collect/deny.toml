@@ -26,6 +26,10 @@ ignore = [
   { id = "RUSTSEC-2026-0370", reason = "unmaintained, not vulnerable; via keyring's Secret Service store (upload only)" },
   { id = "RUSTSEC-2026-0371", reason = "unmaintained, not vulnerable; via keyring's Secret Service store (upload only)" },
   { id = "RUSTSEC-2026-0372", reason = "unmaintained, not vulnerable; via keyring's Secret Service store (upload only)" },
+  # basic-toml is unmaintained, not vulnerable. askama's derive macro uses it at compile time to read askama.toml, and
+  # askama can read template files only with that feature on; nothing of it is in the binary. Remove this when askama
+  # moves to toml.
+  { id = "RUSTSEC-2026-0374", reason = "unmaintained, not vulnerable; compile time only, in askama's derive macro" },
 ]
 
 [licenses]
