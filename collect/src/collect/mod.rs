@@ -6,6 +6,7 @@
 
 pub mod cost;
 pub mod cur;
+pub mod infra;
 
 use crate::aws::Caller;
 use crate::aws::caller::{Account, AwsError};

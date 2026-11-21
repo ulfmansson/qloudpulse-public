@@ -42,7 +42,10 @@ impl WireRequest {
 }
 
 pub fn host(service: &Service, region: &str) -> String {
-    format!("{}.{}.amazonaws.com", service.endpoint_prefix, region)
+    match &service.global_host {
+        Some(h) => h.clone(),
+        None => format!("{}.{}.amazonaws.com", service.endpoint_prefix, region),
+    }
 }
 
 /// The request for one page. `params` is a JSON object of wire parameters.
@@ -122,7 +125,32 @@ pub fn build(
             let binding = op.http.as_ref().context("a REST operation needs an http binding")?;
             let mut rest = params;
             let (template, fixed_query) = binding.path.split_once('?').unwrap_or((&binding.path, ""));
-            let path = fill_path(template, &mut rest)?;
+            let mut path = fill_path(template, &mut rest)?;
+            // Headers read before the host label is filled: S3 Control sends the account in both.
+            let mut extra_headers = Vec::new();
+            for (param, header) in &binding.headers {
+                if let Some(v) = rest.get(param) {
+                    extra_headers.push((header.to_ascii_lowercase(), scalar(v).context("header parameter")?));
+                }
+            }
+            let mut host = host;
+            if let Some(prefix) = &binding.host_prefix {
+                let label = fill_path(prefix, &mut rest)?;
+                let label = label.trim_end_matches('.');
+                if label.contains("%2E") || label.contains('.') {
+                    // A bucket name with dots is not a host label: the SDKs use path style for it.
+                    path = format!(
+                        "/{}{}",
+                        label.replace("%2E", "."),
+                        if path == "/" { String::new() } else { path }
+                    );
+                } else {
+                    host = format!("{label}.{host}");
+                }
+            }
+            for param in binding.headers.keys() {
+                rest.remove(param);
+            }
             let mut query: Vec<(String, String)> = url::form_urlencoded::parse(fixed_query.as_bytes())
                 .into_owned()
                 .collect();
@@ -153,7 +181,7 @@ pub fn build(
                     body = Value::Object(rest).to_string();
                 }
             }
-            let mut headers = Vec::new();
+            let mut headers = extra_headers;
             if !body.is_empty() {
                 headers.push(("content-type".into(), "application/json".into()));
             }
@@ -312,6 +340,30 @@ mod tests {
         assert_eq!(
             request.path,
             "/api/v2/clusters/arn%3Aaws%3Akafka%3Aeu-west-1%3A111122223333%3Acluster%2Fc%2Fuuid"
+        );
+    }
+
+    #[test]
+    fn s3_buckets_go_in_the_host_and_s3_control_takes_the_account() {
+        let plan = CallPlan::embedded();
+        let (service, op) = plan.operation("s3", "GetBucketAcl").unwrap();
+        let r = build(service, op, "eu-north-1", &json!({"Bucket": "acme-logs"}), None).unwrap();
+        assert_eq!(r.url(), "https://acme-logs.s3.eu-north-1.amazonaws.com/?acl=");
+        let r = build(service, op, "eu-north-1", &json!({"Bucket": "acme.logs"}), None).unwrap();
+        assert_eq!(
+            r.url(),
+            "https://s3.eu-north-1.amazonaws.com/acme.logs?acl=",
+            "dotted names go path-style"
+        );
+        let (service, op) = plan.operation("s3control", "GetPublicAccessBlock").unwrap();
+        let r = build(service, op, "eu-west-1", &json!({"AccountId": "111122223333"}), None).unwrap();
+        assert_eq!(r.host, "111122223333.s3-control.eu-west-1.amazonaws.com");
+        assert!(r.headers.contains(&("x-amz-account-id".into(), "111122223333".into())));
+        let (service, op) = plan.operation("cloudfront", "ListDistributions").unwrap();
+        let r = build(service, op, "us-east-1", &json!({"MaxItems": 100}), None).unwrap();
+        assert_eq!(
+            r.url(),
+            "https://cloudfront.amazonaws.com/2020-05-31/distribution?MaxItems=100"
         );
     }
 

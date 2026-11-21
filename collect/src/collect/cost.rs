@@ -372,7 +372,7 @@ fn log_storage(run: &Run, account: &Account, region: &str) -> Result<()> {
     Ok(())
 }
 
-fn alarms(run: &Run, account: &Account, region: &str) -> Result<()> {
+pub(crate) fn alarms(run: &Run, account: &Account, region: &str) -> Result<()> {
     let params = json!({"AlarmTypes": ["MetricAlarm", "CompositeAlarm"], "MaxRecords": 100});
     run.call(account, region, "cloudwatch", "DescribeAlarms", params)?;
     Ok(())
@@ -383,7 +383,7 @@ fn directories(run: &Run, account: &Account, region: &str) -> Result<()> {
     Ok(())
 }
 
-fn opensearch(run: &Run, account: &Account, region: &str) -> Result<()> {
+pub(crate) fn opensearch(run: &Run, account: &Account, region: &str) -> Result<()> {
     let pages = run.call(account, region, "opensearch", "ListDomainNames", empty())?;
     let names = json_strings(&pages, &["DomainNames", "DomainName"]);
     for batch in names.chunks(5) {
@@ -398,7 +398,7 @@ fn opensearch(run: &Run, account: &Account, region: &str) -> Result<()> {
     Ok(())
 }
 
-fn msk(run: &Run, account: &Account, region: &str) -> Result<()> {
+pub(crate) fn msk(run: &Run, account: &Account, region: &str) -> Result<()> {
     let pages = run.call(account, region, "kafka", "ListClustersV2", json!({"maxResults": 100}))?;
     for arn in json_strings(&pages, &["clusterInfoList", "clusterArn"]) {
         run.call(
@@ -412,7 +412,7 @@ fn msk(run: &Run, account: &Account, region: &str) -> Result<()> {
     Ok(())
 }
 
-fn mq(run: &Run, account: &Account, region: &str) -> Result<()> {
+pub(crate) fn mq(run: &Run, account: &Account, region: &str) -> Result<()> {
     let pages = run.call(account, region, "mq", "ListBrokers", json!({"maxResults": 100}))?;
     for id in json_strings(&pages, &["brokerSummaries", "brokerId"]) {
         run.call(account, region, "mq", "DescribeBroker", json!({"BrokerId": id}))?;

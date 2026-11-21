@@ -337,7 +337,7 @@ const QUERY_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Runs one query as `runAthenaQuery` does: start, poll with a growing wait, then every page of results.
 /// Polls are recorded as the last answer only, so a replay answers every poll with the final state.
-pub fn run_query(caller: &Caller, account: &Account, s: &CurSettings, sql: &str) -> Result<()> {
+pub fn run_query(caller: &Caller, account: &Account, s: &CurSettings, sql: &str) -> Result<Vec<Body>> {
     let start = json!({
         "QueryString": sql,
         "ClientRequestToken": request_token(),
@@ -404,29 +404,94 @@ pub fn run_query(caller: &Caller, account: &Account, s: &CurSettings, sql: &str)
         "athena",
         "GetQueryResults",
         json!({"QueryExecutionId": id, "MaxResults": 1000}),
-    )?;
-    Ok(())
+    )
 }
 
-/// The bill, then commitments and coverage, as `runCollect` reads them for `periods`.
-pub fn collect(caller: &Caller, account: &Account, s: &CurSettings) -> Result<CurOutcome> {
+/// One row of the bill query, as the infra collector reads `aws_cost.cur_daily`. Local only: it plans the infra
+/// calls and is never written anywhere.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BillRow {
+    pub day: String,
+    pub account_id: String,
+    pub line_item_type: String,
+    pub product_code: String,
+    pub resource_id: String,
+    pub region: String,
+    /// Amortized, as `amortizedCost` values a usage line.
+    pub cost: f64,
+}
+
+/// The rows of the bill query's result pages.
+pub fn bill_rows(pages: &[Body]) -> Vec<BillRow> {
+    let mut columns: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for page in pages.iter().filter_map(Body::json) {
+        if let Some(info) = page["ResultSet"]["ResultSetMetadata"]["ColumnInfo"].as_array() {
+            columns = info
+                .iter()
+                .map(|c| c["Name"].as_str().unwrap_or_default().to_string())
+                .collect();
+        }
+        let Some(rows) = page["ResultSet"]["Rows"].as_array() else {
+            continue;
+        };
+        for row in rows {
+            let cells: Vec<Option<&str>> = row["Data"]
+                .as_array()
+                .map(|d| d.iter().map(|c| c["VarCharValue"].as_str()).collect())
+                .unwrap_or_default();
+            if cells.len() == columns.len() && cells.iter().zip(&columns).all(|(c, n)| *c == Some(n.as_str())) {
+                continue;
+            }
+            let get = |name: &str| {
+                columns
+                    .iter()
+                    .position(|c| c == name)
+                    .and_then(|i| cells.get(i).copied().flatten())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            let num = |name: &str| get(name).parse::<f64>().unwrap_or(0.0);
+            let line_item_type = get("line_item_type");
+            let cost = match line_item_type.as_str() {
+                "DiscountedUsage" => num("reservation_effective_cost"),
+                "SavingsPlanCoveredUsage" => num("savings_plan_effective_cost"),
+                _ => num("unblended_cost"),
+            };
+            out.push(BillRow {
+                day: get("day"),
+                account_id: get("account_id"),
+                line_item_type,
+                product_code: get("product_code"),
+                resource_id: get("resource_id"),
+                region: get("region"),
+                cost,
+            });
+        }
+    }
+    out
+}
+
+/// The bill, then commitments and coverage, as `runCollect` reads them for `periods`. Also the bill's rows, to plan
+/// the infra calls.
+pub fn collect(caller: &Caller, account: &Account, s: &CurSettings) -> Result<(CurOutcome, Vec<BillRow>)> {
     let (mut tagged, mut counted) = (true, true);
-    loop {
+    let rows = loop {
         let sql = cur_query(&s.database, &s.table, &s.periods, tagged, &s.scope_tag_keys, counted);
         match run_query(caller, account, s, &sql) {
-            Ok(()) => break,
+            Ok(pages) => break bill_rows(&pages),
             Err(e) => match e.downcast_ref::<QueryFailed>() {
                 Some(QueryFailed(reason)) if tagged && missing_column(reason, "resource_tags") => tagged = false,
                 Some(QueryFailed(reason)) if counted && missing_column(reason, "bill_invoice_id") => counted = false,
                 _ => return Err(e),
             },
         }
-    }
+    };
     let commitments = run_query(caller, account, s, &commitment_query(&s.database, &s.table, &s.periods)).is_ok();
     if commitments {
         run_query(caller, account, s, &coverage_query(&s.database, &s.table, &s.periods))?;
     }
-    Ok(CurOutcome {
+    let outcome = CurOutcome {
         account: account.id.clone(),
         region: s.region.clone(),
         periods: s.periods.clone(),
@@ -434,7 +499,8 @@ pub fn collect(caller: &Caller, account: &Account, s: &CurSettings) -> Result<Cu
         tagged,
         counted,
         commitments,
-    })
+    };
+    Ok((outcome, rows))
 }
 
 #[cfg(test)]
@@ -568,7 +634,7 @@ mod tests {
             periods: vec!["2026-10".into(), "2026-11".into()],
             first_poll: Duration::ZERO,
         };
-        let outcome = collect(&caller, &account, &s).unwrap();
+        let (outcome, _) = collect(&caller, &account, &s).unwrap();
         assert!(!outcome.tagged && outcome.counted && outcome.commitments);
         let starts = fake.starts.lock().unwrap().clone();
         assert_eq!(starts.len(), 4, "bill, bill without tags, commitments, coverage");

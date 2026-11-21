@@ -1,7 +1,7 @@
 {
-  "version": "0.2.0-seed",
+  "version": "0.3.0-seed",
   "seed": true,
-  "note": "Hand-made from collect-swamp's aws-cost-collect and aws-cur-collect (aws_clients.ts COST_COLLECTOR_ACTIONS, CUR_READER_ACTIONS; @aws-sdk 3.1021.0 protocols). Replaced by the generated plan.",
+  "note": "Hand-made from collect-swamp's aws-cost-collect and aws-cur-collect, aws-infra-collect (first part) (aws_clients.ts COST_COLLECTOR_ACTIONS, CUR_READER_ACTIONS, INFRA_COLLECTOR_ACTIONS; @aws-sdk 3.1021.0 protocols). Replaced by the generated plan.",
   "services": {
     "sts": {
       "protocol": "query",
@@ -110,6 +110,22 @@
       "protocol": "awsJson1_1",
       "endpoint_prefix": "athena",
       "target_prefix": "AmazonAthena"
+    },
+    "tagging": {
+      "protocol": "awsJson1_1",
+      "endpoint_prefix": "tagging",
+      "target_prefix": "ResourceGroupsTaggingAPI_20170126"
+    },
+    "cloudfront": {
+      "protocol": "restXml",
+      "endpoint_prefix": "cloudfront",
+      "global_host": "cloudfront.amazonaws.com",
+      "global_region": "us-east-1"
+    },
+    "s3control": {
+      "protocol": "restXml",
+      "endpoint_prefix": "s3-control",
+      "signing_name": "s3"
     }
   },
   "operations": [
@@ -439,8 +455,7 @@
       "http": {
         "method": "GET",
         "path": "/?x-id=ListBuckets"
-      },
-      "option": "usageMetrics"
+      }
     },
     {
       "collector": "aws-cost-collect",
@@ -601,6 +616,251 @@
       "service": "athena",
       "name": "StopQueryExecution",
       "iam_action": "athena:StopQueryExecution"
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "ec2",
+      "name": "DescribeVpcs",
+      "iam_action": "ec2:DescribeVpcs",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "ec2",
+      "name": "DescribeSubnets",
+      "iam_action": "ec2:DescribeSubnets",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "ec2",
+      "name": "DescribeRouteTables",
+      "iam_action": "ec2:DescribeRouteTables",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "ec2",
+      "name": "DescribeSecurityGroups",
+      "iam_action": "ec2:DescribeSecurityGroups",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "ec2",
+      "name": "DescribeNetworkAcls",
+      "iam_action": "ec2:DescribeNetworkAcls",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "ec2",
+      "name": "DescribeInternetGateways",
+      "iam_action": "ec2:DescribeInternetGateways",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "ec2",
+      "name": "DescribeVpcPeeringConnections",
+      "iam_action": "ec2:DescribeVpcPeeringConnections",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "ec2",
+      "name": "DescribeSnapshots",
+      "iam_action": "ec2:DescribeSnapshots",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "ec2",
+      "name": "DescribeImages",
+      "iam_action": "ec2:DescribeImages",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "ec2",
+      "name": "DescribeFlowLogs",
+      "iam_action": "ec2:DescribeFlowLogs",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "tagging",
+      "name": "GetResources",
+      "iam_action": "tag:GetResources"
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "elbv2",
+      "name": "DescribeListeners",
+      "iam_action": "elasticloadbalancing:DescribeListeners",
+      "paging": {
+        "input_token": "Marker",
+        "output_token": "NextMarker"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "rds",
+      "name": "DescribeDBSnapshots",
+      "iam_action": "rds:DescribeDBSnapshots",
+      "paging": {
+        "input_token": "Marker",
+        "output_token": "Marker"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "rds",
+      "name": "DescribeDBSnapshotAttributes",
+      "iam_action": "rds:DescribeDBSnapshotAttributes"
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "rds",
+      "name": "DescribeDBClusterSnapshots",
+      "iam_action": "rds:DescribeDBClusterSnapshots",
+      "paging": {
+        "input_token": "Marker",
+        "output_token": "Marker"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "rds",
+      "name": "DescribeDBClusterSnapshotAttributes",
+      "iam_action": "rds:DescribeDBClusterSnapshotAttributes"
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "rds",
+      "name": "DescribeDBClusters",
+      "iam_action": "rds:DescribeDBClusters",
+      "paging": {
+        "input_token": "Marker",
+        "output_token": "Marker"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "rds",
+      "name": "DescribeGlobalClusters",
+      "iam_action": "rds:DescribeGlobalClusters",
+      "paging": {
+        "input_token": "Marker",
+        "output_token": "Marker"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "logs",
+      "name": "DescribeMetricFilters",
+      "iam_action": "logs:DescribeMetricFilters",
+      "paging": {
+        "input_token": "nextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "logs",
+      "name": "DescribeSubscriptionFilters",
+      "iam_action": "logs:DescribeSubscriptionFilters"
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "cloudfront",
+      "name": "ListDistributions",
+      "iam_action": "cloudfront:ListDistributions",
+      "paging": {
+        "input_token": "Marker",
+        "output_token": "NextMarker"
+      },
+      "http": {
+        "method": "GET",
+        "path": "/2020-05-31/distribution"
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "s3control",
+      "name": "GetPublicAccessBlock",
+      "iam_action": "s3:GetAccountPublicAccessBlock",
+      "http": {
+        "method": "GET",
+        "path": "/v20180820/configuration/publicAccessBlock",
+        "host_prefix": "{AccountId}.",
+        "headers": {
+          "AccountId": "x-amz-account-id"
+        }
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "s3",
+      "name": "GetBucketPolicyStatus",
+      "iam_action": "s3:GetBucketPolicyStatus",
+      "http": {
+        "method": "GET",
+        "path": "/?policyStatus",
+        "host_prefix": "{Bucket}."
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "s3",
+      "name": "GetBucketAcl",
+      "iam_action": "s3:GetBucketAcl",
+      "http": {
+        "method": "GET",
+        "path": "/?acl",
+        "host_prefix": "{Bucket}."
+      }
+    },
+    {
+      "collector": "aws-infra-collect",
+      "service": "s3",
+      "name": "GetPublicAccessBlock",
+      "iam_action": "s3:GetBucketPublicAccessBlock",
+      "http": {
+        "method": "GET",
+        "path": "/?publicAccessBlock",
+        "host_prefix": "{Bucket}."
+      }
     }
   ]
 }

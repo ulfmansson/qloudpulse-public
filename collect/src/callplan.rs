@@ -53,6 +53,9 @@ pub struct Service {
     /// A global service answered in one region only.
     #[serde(default)]
     pub global_region: Option<String>,
+    /// A service with one global host (CloudFront: `cloudfront.amazonaws.com`), signed in `global_region`.
+    #[serde(default)]
+    pub global_host: Option<String>,
     /// JSON with `awsQueryCompatible` (CloudWatch): the SDK sends `x-amzn-query-mode: true`.
     #[serde(default)]
     pub query_compatible: bool,
@@ -86,6 +89,12 @@ pub struct Operation {
 pub struct HttpBinding {
     pub method: String,
     pub path: String,
+    /// A host label filled from a parameter: `{Bucket}.` (S3, virtual-hosted), `{AccountId}.` (S3 Control).
+    #[serde(default)]
+    pub host_prefix: Option<String>,
+    /// Parameters sent as headers: parameter name -> header name.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

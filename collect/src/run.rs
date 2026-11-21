@@ -78,7 +78,15 @@ impl Client {
         let mut outcome = run.collect(&accounts, &regions);
         if daily && let Some(c) = &self.config.cur {
             match self.read_bill(&caller, c, &accounts, now) {
-                Ok(cur) => outcome.cur = Some(cur),
+                Ok((cur, rows)) => {
+                    outcome.cur = Some(cur);
+                    let today = now.to_zoned(jiff::tz::TimeZone::UTC).date().to_string();
+                    for account in &accounts {
+                        if let Err(e) = collect::infra::collect(&run, account, &rows, &today) {
+                            failures.push(format!("{} infra: {e:#}", account.id));
+                        }
+                    }
+                }
                 Err(e) => {
                     log::warn(
                         "bill not read",
@@ -114,7 +122,7 @@ impl Client {
         c: &crate::config::CurConfig,
         accounts: &[Account],
         now: Timestamp,
-    ) -> Result<collect::cur::CurOutcome> {
+    ) -> Result<(collect::cur::CurOutcome, Vec<collect::cur::BillRow>)> {
         let payer = match &c.role_arn {
             Some(role) => Account {
                 id: c.account.clone(),
