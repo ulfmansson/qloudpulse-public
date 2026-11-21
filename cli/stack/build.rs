@@ -1,10 +1,10 @@
-//! The version `qloudpulse --version` prints. A release build names the commit it was built from, as rustc and cargo
-//! do: `0.3.1 (1ab39062b 2026-11-21)`. cli/release.sh passes the commit in, as the Docker builds see `cli/` and not
+//! The version `qloudpulse-stack --version` prints. A release build names the commit it was built from, as rustc and cargo
+//! do: `0.3.1 (1ab39062b 2026-11-21)`. cli/stack/release.sh passes the commit in, as the Docker builds see `cli/stack/` and not
 //! the repository's `.git`. A plain `cargo build` has no commit to name and prints the version alone.
 //!
 //! The commit and its date come from git, never from the clock, so building the same commit again gives the same
 //! binary. The commit is a label for support; that a binary was built from it is shown by the release's signed
-//! provenance (cli/README.md, "Verify what you run").
+//! provenance (cli/stack/README.md, "Verify what you run").
 
 use std::env;
 

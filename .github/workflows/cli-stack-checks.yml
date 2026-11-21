@@ -1,5 +1,5 @@
 # The client's checks, on every pull request and on main: its tests, clippy, its changelog, and its dependencies
-# against RustSec's advisories, the licences cli/deny.toml allows, and crates.io as the only source. Weekly too, since an advisory can be
+# against RustSec's advisories, the licences cli/stack/deny.toml allows, and crates.io as the only source. Weekly too, since an advisory can be
 # published for a crate after it was merged. Every action is pinned by commit; the tools are pinned by version and
 # built from crates.io with their own Cargo.lock.
 name: CLI checks
@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: cli-checks-${{ github.ref }}
+  group: cli-stack-checks-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -26,7 +26,7 @@ env:
 defaults:
   run:
     shell: bash
-    working-directory: cli
+    working-directory: cli/stack
 
 jobs:
   test:
@@ -86,17 +86,17 @@ jobs:
           persist-credentials: false
           fetch-depth: 2 # a pull request's merge commit and the base it merges into
       # The crate's version has a section, dated once released or "Unreleased" until then: the release notes come
-      # from it, and cli/release.sh refuses to release without its date.
+      # from it, and cli/stack/release.sh refuses to release without its date.
       - name: The version has a section
         run: |
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
           grep -Fq "## [$version] - " CHANGELOG.md \
-            || { echo "::error file=cli/CHANGELOG.md::no section for $version, the version in cli/Cargo.toml; add '## [$version] - Unreleased'"; exit 1; }
+            || { echo "::error file=cli/stack/CHANGELOG.md::no section for $version, the version in cli/stack/Cargo.toml; add '## [$version] - Unreleased'"; exit 1; }
       # A warning, not a failure: not every change to the source is one a user would read about.
       - name: A change to the client says so under Unreleased
         if: github.event_name == 'pull_request'
         run: |
           changed=$(git diff --name-only HEAD^1 HEAD -- .)
-          if grep -q '^cli/src/' <<<"$changed" && ! grep -qx 'cli/CHANGELOG.md' <<<"$changed"; then
-            echo "::warning file=cli/CHANGELOG.md::this pull request changes cli/src; add a line under Unreleased in cli/CHANGELOG.md if users would notice"
+          if grep -q '^cli/stack/src/' <<<"$changed" && ! grep -qx 'cli/stack/CHANGELOG.md' <<<"$changed"; then
+            echo "::warning file=cli/stack/CHANGELOG.md::this pull request changes cli/stack/src; add a line under Unreleased in cli/stack/CHANGELOG.md if users would notice"
           fi

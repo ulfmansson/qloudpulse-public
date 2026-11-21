@@ -10,7 +10,7 @@ use crate::catalogue::ClientVersions;
 /// This client's version, from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// What `qloudpulse --version` prints after the name: the version, and in a release build the commit it was built
+/// What `qloudpulse-stack --version` prints after the name: the version, and in a release build the commit it was built
 /// from and that commit's date, as `0.3.1 (1ab39062b 2026-11-21)` (see build.rs).
 pub const LONG_VERSION: &str = env!("QLOUDPULSE_LONG_VERSION");
 
@@ -39,7 +39,7 @@ pub fn check(mine: &str, client: Option<&ClientVersions>) -> Result<Option<Strin
     }
     if compare(mine, &c.latest) == Some(Ordering::Less) {
         return Ok(Some(format!(
-            "qloudpulse CLI {} is out (this is {mine}): {}",
+            "qloudpulse-stack {} is out (this is {mine}): {}",
             c.latest, c.download
         )));
     }
@@ -77,7 +77,7 @@ mod tests {
         );
         assert_eq!(
             check("0.2.5", Some(&versions("0.3.0", "0.2.0"))).unwrap().as_deref(),
-            Some("qloudpulse CLI 0.3.0 is out (this is 0.2.5): https://example.com/get")
+            Some("qloudpulse-stack 0.3.0 is out (this is 0.2.5): https://example.com/get")
         );
         assert_eq!(check("0.3.0", Some(&versions("0.3.0", "0.2.0"))).unwrap(), None);
         assert_eq!(check("0.4.0", Some(&versions("0.3.0", "0.2.0"))).unwrap(), None);

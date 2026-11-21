@@ -32,23 +32,23 @@ pub fn is_hosted(endpoint: &str) -> bool {
 }
 
 /// What to say when the token is missing: where to make one of your own, linked for hosted qloudpulse, and that
-/// `qloudpulse login` keeps one on this machine.
+/// `qloudpulse-stack login` keeps one on this machine.
 pub fn missing_token(endpoint: &str) -> String {
     if is_hosted(endpoint) {
         format!(
             "set QLOUDPULSE_TOKEN to a token of your own (qpev_...). Make one at {TOKEN_PAGE} (Your tokens, under \
-             your name), or run `qloudpulse login` at a terminal to sign in with your browser, or use --dry-run to \
+             your name), or run `qloudpulse-stack login` at a terminal to sign in with your browser, or use --dry-run to \
              see what would be sent."
         )
     } else {
         "set QLOUDPULSE_TOKEN to a token of your own (qpev_...). Make one under Your tokens, under your name in your \
-         qloudpulse, or run `qloudpulse login` at a terminal to sign in with your browser, or use --dry-run to see \
+         qloudpulse, or run `qloudpulse-stack login` at a terminal to sign in with your browser, or use --dry-run to see \
          what would be sent."
             .to_string()
     }
 }
 
-const USER_AGENT: &str = concat!("qloudpulse-cli/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("qloudpulse-stack/", env!("CARGO_PKG_VERSION"));
 
 /// An endpoint the client will send a token to: https, or http to this machine for testing.
 pub fn check_endpoint(endpoint: &str) -> Result<()> {
@@ -117,7 +117,7 @@ pub fn send(endpoint: &str, token: &str, request: &Request) -> Result<Response> 
         match status {
             400 => bail!("qloudpulse refused the request (400): {detail}"),
             401 => bail!(
-                "qloudpulse refused the token (401): it is wrong, expired, rotated or removed. Run `qloudpulse login` \
+                "qloudpulse refused the token (401): it is wrong, expired, rotated or removed. Run `qloudpulse-stack login` \
                  for a new one, or set QLOUDPULSE_TOKEN"
             ),
             404 => bail!("no estimates endpoint at this address (404)"),

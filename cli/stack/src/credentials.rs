@@ -1,4 +1,4 @@
-//! Where `qloudpulse login` keeps its token: the system's keychain (the macOS Keychain, the Windows Credential Manager,
+//! Where `qloudpulse-stack login` keeps its token: the system's keychain (the macOS Keychain, the Windows Credential Manager,
 //! or Linux's Secret Service), one entry per qloudpulse, named by its address. Where there is no keychain, as on a
 //! headless Linux machine, a file only its owner can read (0600): `credentials` in the config directory
 //! (`$XDG_CONFIG_HOME/qloudpulse` or `~/.config/qloudpulse`, `%APPDATA%\qloudpulse` on Windows), or the file

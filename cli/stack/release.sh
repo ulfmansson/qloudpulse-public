@@ -2,28 +2,28 @@
 # Builds the qloudpulse client for every target, checks each binary, and packs one archive per target (a tarball, or a
 # zip for Windows) with SHA256SUMS and release notes, for trying a build here. Nothing it builds leaves this machine.
 #
-# Releases are built by .github/workflows/cli-release.yml on GitHub's runners, which runs this script per target and
+# Releases are built by .github/workflows/cli-stack-release.yml on GitHub's runners, which runs this script per target and
 # signs build provenance for every archive and binary, so anyone can check which public commit and workflow made a
 # binary. The builds are reproducible: the same commit built again, here or on another runner, gives the same bytes,
 # which --reproduce checks against a published release. With --publish this script builds nothing: it checks that the
-# commit may be released and pushes the tag qloudpulse-cli-<version>, which starts that workflow.
+# commit may be released and pushes the tag qloudpulse-stack-<version>, which starts that workflow.
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: cli/release.sh [--targets "<target> ..."] [--out <dir>] [--skip-tests] [--compare <SHA256SUMS> | --reproduce]
-       cli/release.sh --publish
-       cli/release.sh --finish <dir>
-       cli/release.sh --check-changelog
+Usage: cli/stack/release.sh [--targets "<target> ..."] [--out <dir>] [--skip-tests] [--compare <SHA256SUMS> | --reproduce]
+       cli/stack/release.sh --publish
+       cli/stack/release.sh --finish <dir>
+       cli/stack/release.sh --check-changelog
 
   --targets     build only these targets (default: all six below)
-  --out         where the files go (default: cli/target/dist/<version>)
+  --out         where the files go (default: cli/stack/target/dist/<version>)
   --skip-tests  build without running cargo test first (the release workflow tests in a job of its own)
   --compare     after building, compare each binary with its line in this SHA256SUMS, a file or an https URL: the
                 same commit built again has to give the same bytes (the release workflow builds every target twice)
   --reproduce   --compare with the SHA256SUMS of the published release of this version; HEAD has to be its tag
-                (git switch --detach qloudpulse-cli-<version>), and cli/ unchanged
-  --publish     build nothing; check origin/main may be released and push the tag qloudpulse-cli-<version>, which
+                (git switch --detach qloudpulse-stack-<version>), and cli/stack/ unchanged
+  --publish     build nothing; check origin/main may be released and push the tag qloudpulse-stack-<version>, which
                 starts the release workflow on GitHub. The workflow builds, attests and publishes
   --finish      write SHA256SUMS and notes.md for the archives already in <dir> (the release workflow, once every
                 target is built)
@@ -96,7 +96,7 @@ CLI=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(git -C "$CLI" rev-parse --show-toplevel)
 VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$CLI/Cargo.toml" | head -1)
 [ -n "$VERSION" ] || fail "no version in $CLI/Cargo.toml"
-TAG="qloudpulse-cli-$VERSION"
+TAG="qloudpulse-stack-$VERSION"
 # Checked before OUT gets its default below, which would otherwise look like an --out the caller passed.
 if [ $PUBLISH -eq 1 ]; then
   [ "$TARGETS" = "$ALL_TARGETS" ] && [ -z "$OUT" ] && [ $SKIP_TESTS -eq 0 ] && [ -z "$COMPARE" ] && [ $REPRODUCE -eq 0 ] \
@@ -105,7 +105,7 @@ fi
 [ -z "$COMPARE" ] || [ $REPRODUCE -eq 0 ] || fail "--reproduce compares with the release; it takes no --compare"
 OUT=${OUT:-$CLI/target/dist/$VERSION}
 COMMIT=$(git -C "$ROOT" rev-parse HEAD)
-# What a binary's --version names (build.rs): the commit, marked when cli/ has changes, and the commit's date in UTC.
+# What a binary's --version names (build.rs): the commit, marked when cli/stack/ has changes, and the commit's date in UTC.
 # Both come from git and not the clock, so the same commit gives the same binary.
 COMMIT_DATE=$(TZ=UTC git -C "$ROOT" log -1 --format=%cd --date=format-local:%Y-%m-%d "$COMMIT")
 MODIFIED=""
@@ -141,13 +141,13 @@ write_installers() { # dir: install.sh and install.ps1 with this version written
 
 write_sums() { # dir: the archives, the binary in each and the install scripts, so the provenance attested for
   # SHA256SUMS covers all of them. A binary is named <archive>/<file>, as
-  # qloudpulse-<version>-x86_64-unknown-linux-musl/qloudpulse: sha256sum -c --ignore-missing passes over those lines,
+  # qloudpulse-stack-<version>-x86_64-unknown-linux-musl/qloudpulse-stack: sha256sum -c --ignore-missing passes over those lines,
   # and an installed binary can be checked by its sum or with gh attestation verify. The binaries are read back out of the archives, so the sums are of what a
   # download holds.
   local dir=$1 archive base tmp f
-  (cd "$dir" && shasum -a 256 qloudpulse-*.tar.gz qloudpulse-*.zip install.sh install.ps1 2>/dev/null >SHA256SUMS || true)
+  (cd "$dir" && shasum -a 256 qloudpulse-stack-*.tar.gz qloudpulse-stack-*.zip install.sh install.ps1 2>/dev/null >SHA256SUMS || true)
   grep -Eq '\.(tar\.gz|zip)$' "$dir/SHA256SUMS" || fail "nothing was packed"
-  for archive in "$dir"/qloudpulse-*.tar.gz "$dir"/qloudpulse-*.zip; do
+  for archive in "$dir"/qloudpulse-stack-*.tar.gz "$dir"/qloudpulse-stack-*.zip; do
     [ -f "$archive" ] || continue
     base=$(basename "$archive")
     base=${base%.tar.gz}
@@ -167,8 +167,8 @@ write_sums() { # dir: the archives, the binary in each and the install scripts, 
 compare_sums() { # theirs ours: each binary built here against its line in theirs
   local theirs=$1 ours=$2 t exe name want got differ=0
   for t in $TARGETS; do
-    case "$t" in *-windows-*) exe=qloudpulse.exe ;; *) exe=qloudpulse ;; esac
-    name="qloudpulse-$VERSION-$t/$exe"
+    case "$t" in *-windows-*) exe=qloudpulse-stack.exe ;; *) exe=qloudpulse-stack ;; esac
+    name="qloudpulse-stack-$VERSION-$t/$exe"
     want=$(awk -v f="$name" '$2 == f || $2 == "*" f { print $1 }' "$theirs")
     got=$(awk -v f="$name" '$2 == f { print $1 }' "$ours")
     [ -n "$want" ] || fail "$COMPARE names no $name (releases up to 0.3.1 list their archives only)"
@@ -209,7 +209,7 @@ write_notes() { # dir built-by
   changes=$(changelog_section "$VERSION")
   [ -n "$changes" ] || changes="(CHANGELOG.md has no section for $VERSION.)"
   cat >"$1/notes.md" <<EOF
-The qloudpulse client $VERSION: \`qloudpulse estimate\` prices a Pulumi change before it is applied.
+The qloudpulse client $VERSION: \`qloudpulse-stack estimate\` prices a Pulumi change before it is applied.
 Built from $COMMIT $2.
 
 $changes
@@ -220,12 +220,12 @@ $changes
 VERSION=$VERSION
 TARGET=x86_64-unknown-linux-musl   # aarch64-unknown-linux-musl, aarch64-apple-darwin, x86_64-apple-darwin
 BASE=https://github.com/$REPO/releases/download/$TAG
-curl -fsSLO "\$BASE/qloudpulse-\$VERSION-\$TARGET.tar.gz"
+curl -fsSLO "\$BASE/qloudpulse-stack-\$VERSION-\$TARGET.tar.gz"
 curl -fsSLO "\$BASE/SHA256SUMS"
 sha256sum -c --ignore-missing SHA256SUMS
-gh attestation verify "qloudpulse-\$VERSION-\$TARGET.tar.gz" --repo $REPO \\
+gh attestation verify "qloudpulse-stack-\$VERSION-\$TARGET.tar.gz" --repo $REPO \\
   --signer-workflow $REPO/.github/workflows/$WORKFLOW --source-ref refs/tags/$TAG
-tar -xzf "qloudpulse-\$VERSION-\$TARGET.tar.gz"
+tar -xzf "qloudpulse-stack-\$VERSION-\$TARGET.tar.gz"
 \`\`\`
 
 On Windows (PowerShell):
@@ -233,19 +233,19 @@ On Windows (PowerShell):
 \`\`\`powershell
 \$Version = "$VERSION"
 \$Base = "https://github.com/$REPO/releases/download/$TAG"
-\$Zip = "qloudpulse-\$Version-x86_64-pc-windows-gnu.zip"   # on Windows on ARM: aarch64-pc-windows-gnullvm
+\$Zip = "qloudpulse-stack-\$Version-x86_64-pc-windows-gnu.zip"   # on Windows on ARM: aarch64-pc-windows-gnullvm
 Invoke-WebRequest "\$Base/\$Zip" -OutFile \$Zip
 Invoke-WebRequest "\$Base/SHA256SUMS" -OutFile SHA256SUMS
 \$Want = (Select-String -Path SHA256SUMS -Pattern ([regex]::Escape(\$Zip))).Line.Split(" ")[0]
 if ((Get-FileHash \$Zip -Algorithm SHA256).Hash -ne \$Want.ToUpper()) { throw "checksum mismatch" }
 gh attestation verify \$Zip --repo $REPO --signer-workflow $REPO/.github/workflows/$WORKFLOW --source-ref refs/tags/$TAG
 Expand-Archive \$Zip -DestinationPath .
-.\\qloudpulse.exe --version
+.\\qloudpulse-stack.exe --version
 \`\`\`
 
-\`qloudpulse-$VERSION.cdx.json\` lists every crate the client is built from (CycloneDX). How to verify a release, build
+\`qloudpulse-stack-$VERSION.cdx.json\` lists every crate the client is built from (CycloneDX). How to verify a release, build
 it from source, and run it in CI without cloud credentials:
-[cli/README.md](https://github.com/$REPO/blob/$TAG/cli/README.md#verify-what-you-run).
+[cli/stack/README.md](https://github.com/$REPO/blob/$TAG/cli/stack/README.md#verify-what-you-run).
 EOF
 }
 
@@ -260,7 +260,7 @@ if [ -n "$FINISH" ]; then
   check_changelog
   # A release has every target or none.
   for t in $ALL_TARGETS; do
-    case "$t" in *-windows-*) f="qloudpulse-$VERSION-$t.zip" ;; *) f="qloudpulse-$VERSION-$t.tar.gz" ;; esac
+    case "$t" in *-windows-*) f="qloudpulse-stack-$VERSION-$t.zip" ;; *) f="qloudpulse-stack-$VERSION-$t.tar.gz" ;; esac
     [ -f "$FINISH/$f" ] || fail "$FINISH has no $f"
   done
   write_installers "$FINISH"
@@ -280,7 +280,7 @@ if [ $PUBLISH -eq 1 ]; then
   # The client's default address has to answer before a release names it (qloudpulse's ADR 0127). The workflow
   # asks again before it publishes.
   DEFAULT=$(sed -n 's/^pub const DEFAULT_ENDPOINT: &str = "\(.*\)";$/\1/p' "$CLI/src/send.rs")
-  [ -n "$DEFAULT" ] || fail "no DEFAULT_ENDPOINT in cli/src/send.rs"
+  [ -n "$DEFAULT" ] || fail "no DEFAULT_ENDPOINT in cli/stack/src/send.rs"
   STATUS=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
     -d '{"formatVersion": 1, "types": []}' "$DEFAULT/catalogue" || true)
   [ "$STATUS" = 200 ] || fail "$DEFAULT/catalogue answers $STATUS, not 200; release once it is live"
@@ -288,7 +288,7 @@ if [ $PUBLISH -eq 1 ]; then
   [ "$COMMIT" = "$(git -C "$ROOT" rev-parse origin/main)" ] \
     || fail "HEAD is not origin/main; release only what main has (git switch main && git pull)"
   if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
-    fail "$TAG is already released in $REPO; raise version in cli/Cargo.toml first"
+    fail "$TAG is already released in $REPO; raise version in cli/stack/Cargo.toml first"
   fi
   if git -C "$ROOT" ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
     fail "the tag $TAG is already on origin; its workflow run is the release (gh run list -R $REPO --workflow $WORKFLOW)"
@@ -314,7 +314,7 @@ if [ $REPRODUCE -eq 1 ]; then
   tagged=$(git -C "$ROOT" rev-parse -q --verify "refs/tags/$TAG^{commit}") \
     || fail "no tag $TAG here: git fetch origin tag $TAG, then git switch --detach $TAG"
   [ "$tagged" = "$COMMIT" ] || fail "HEAD is not $TAG: git switch --detach $TAG"
-  [ -z "$MODIFIED" ] || fail "cli/ has changes; --reproduce builds the tag as it is (git stash, or a clean clone)"
+  [ -z "$MODIFIED" ] || fail "cli/stack/ has changes; --reproduce builds the tag as it is (git stash, or a clean clone)"
   COMPARE="https://github.com/$REPO/releases/download/$TAG/SHA256SUMS"
 fi
 
@@ -331,7 +331,7 @@ mkdir -p "$BUILD"
 # The builds read these from the environment; the Docker ones are passed them by name (docker run -e).
 export QLOUDPULSE_COMMIT="$COMMIT$MODIFIED" QLOUDPULSE_COMMIT_DATE="$COMMIT_DATE" CARGO_AUDITABLE_VERSION
 
-host_tool() { # crate version: a cargo tool installed once under cli/target/tools, for this machine
+host_tool() { # crate version: a cargo tool installed once under cli/stack/target/tools, for this machine
   grep -F "\"$1 $2 " "$TOOLS/.crates.toml" >/dev/null 2>&1 \
     || cargo install --locked --quiet --root "$TOOLS" "$1@$2" \
     || fail "could not install $1 $2 (cargo install)"
@@ -381,7 +381,7 @@ check_binary() { # target binary
   local deps
   deps=$("$TOOLS/bin/rust-audit-info" "$bin" 2>&1 || true)
   case "$deps" in
-    *'"name":"qloudpulse-cli"'*) ;;
+    *'"name":"qloudpulse-stack"'*) ;;
     *) fail "$t: the binary has no dependency list from cargo auditable: $(echo "$deps" | head -c 200)" ;;
   esac
 }
@@ -398,16 +398,16 @@ build_linux() { # target
   # cargo auditable is built once per target into a volume of its own. musl-dev is the one input not pinned by a
   # digest: Alpine keeps only the newest build of a package, so its version is written down beside the binary.
   docker run --rm --platform "$platform" \
-    -v "$CLI:/src:ro" -v qloudpulse-cli-cargo:/usr/local/cargo/registry -v "qloudpulse-cli-tools-$t:/tools" \
+    -v "$CLI:/src:ro" -v qloudpulse-stack-cargo:/usr/local/cargo/registry -v "qloudpulse-stack-tools-$t:/tools" \
     -v "$BUILD/$t:/out" -e OWNER="$OWNER" -e QLOUDPULSE_COMMIT -e QLOUDPULSE_COMMIT_DATE -e CARGO_AUDITABLE_VERSION \
     -w /src -e CARGO_TARGET_DIR=/tmp/target "$RUST_IMAGE" \
     sh -euc 'apk add --no-cache musl-dev >/dev/null
              apk info -v 2>/dev/null | grep -E "^(musl|musl-dev|gcc|binutils)-[0-9]" >/out/packages || true
              cargo install --locked --quiet --root /tools "cargo-auditable@$CARGO_AUDITABLE_VERSION"
              PATH=/tools/bin:$PATH cargo auditable build --release --locked --quiet
-             cp /tmp/target/release/qloudpulse /out/qloudpulse
+             cp /tmp/target/release/qloudpulse-stack /out/qloudpulse-stack
              chown -R "$OWNER" /out
-             /out/qloudpulse --version' >"$BUILD/$t/version"
+             /out/qloudpulse-stack --version' >"$BUILD/$t/version"
 }
 
 build_windows() { # target
@@ -419,7 +419,7 @@ build_windows() { # target
   # (--no-insert-timestamp), and the mingw-w64 packages are pinned to Debian bookworm's builds, so the .exe is the same
   # whenever it is built.
   docker run --rm \
-    -v "$CLI:/src:ro" -v qloudpulse-cli-cargo:/usr/local/cargo/registry -v "qloudpulse-cli-tools-$t:/tools" \
+    -v "$CLI:/src:ro" -v qloudpulse-stack-cargo:/usr/local/cargo/registry -v "qloudpulse-stack-tools-$t:/tools" \
     -v "$BUILD/$t:/out" -e OWNER="$OWNER" -e QLOUDPULSE_COMMIT -e QLOUDPULSE_COMMIT_DATE -e CARGO_AUDITABLE_VERSION \
     -w /src -e CARGO_TARGET_DIR=/tmp/target \
     -e RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-Wl,--no-insert-timestamp" \
@@ -433,8 +433,8 @@ build_windows() { # target
              # The tool runs here, on Linux: RUSTFLAGS are for the Windows build, and +crt-static rules out proc macros.
              env -u RUSTFLAGS cargo install --locked --quiet --root /tools "cargo-auditable@$CARGO_AUDITABLE_VERSION"
              PATH=/tools/bin:$PATH cargo auditable build --release --locked --quiet --target x86_64-pc-windows-gnu
-             cp /tmp/target/x86_64-pc-windows-gnu/release/qloudpulse.exe /out/qloudpulse.exe
-             x86_64-w64-mingw32-objdump -p /out/qloudpulse.exe | sed -n "s/^[[:space:]]*DLL Name: //p" | sort -u >/out/dlls
+             cp /tmp/target/x86_64-pc-windows-gnu/release/qloudpulse-stack.exe /out/qloudpulse-stack.exe
+             x86_64-w64-mingw32-objdump -p /out/qloudpulse-stack.exe | sed -n "s/^[[:space:]]*DLL Name: //p" | sort -u >/out/dlls
              chown -R "$OWNER" /out'
   windows_version "$t"
 }
@@ -442,8 +442,8 @@ build_windows() { # target
 windows_version() { # target
   local t=$1
   # It cannot run here; its version is the one it would print, read from the file. (No grep -q: see check_binary.)
-  if strings -a "$BUILD/$t/qloudpulse.exe" | grep -F "$LONG_VERSION" >/dev/null; then
-    echo "qloudpulse $LONG_VERSION" >"$BUILD/$t/version"
+  if strings -a "$BUILD/$t/qloudpulse-stack.exe" | grep -F "$LONG_VERSION" >/dev/null; then
+    echo "qloudpulse-stack $LONG_VERSION" >"$BUILD/$t/version"
     echo "  (not run here: a Windows binary; its version is read from the file)"
   else
     echo "unknown" >"$BUILD/$t/version"
@@ -462,7 +462,7 @@ build_windows_arm64() { # target
   # UCRT, which Windows 10 and later carry (api-ms-win-crt-*.dll), as every Windows on ARM does.
   # The image is llvm-mingw with the client's Rust copied in, built once and kept by Docker. Its tag is a hash of the
   # two images it is made of: their names with digests are longer than the 128 characters a tag may have.
-  image="qloudpulse-cli-llvm-mingw:$(printf '%s\n%s\n%s\n' "$LLVM_MINGW_IMAGE" "$WINDOWS_IMAGE" "$CARGO_AUDITABLE_VERSION" \
+  image="qloudpulse-stack-llvm-mingw:$(printf '%s\n%s\n%s\n' "$LLVM_MINGW_IMAGE" "$WINDOWS_IMAGE" "$CARGO_AUDITABLE_VERSION" \
     | shasum -a 256 | cut -c1-16)"
   docker build -q -t "$image" - >/dev/null <<EOF
 FROM $WINDOWS_IMAGE AS rust
@@ -473,15 +473,15 @@ ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH=/usr/local/ca
 RUN rustup target add $t && cargo install --locked --quiet cargo-auditable@$CARGO_AUDITABLE_VERSION
 EOF
   docker run --rm \
-    -v "$CLI:/src:ro" -v qloudpulse-cli-cargo:/usr/local/cargo/registry -v "$BUILD/$t:/out" -e OWNER="$OWNER" \
+    -v "$CLI:/src:ro" -v qloudpulse-stack-cargo:/usr/local/cargo/registry -v "$BUILD/$t:/out" -e OWNER="$OWNER" \
     -e QLOUDPULSE_COMMIT -e QLOUDPULSE_COMMIT_DATE -w /src -e CARGO_TARGET_DIR=/tmp/target \
     -e RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-Wl,--no-insert-timestamp" \
     -e CARGO_TARGET_AARCH64_PC_WINDOWS_GNULLVM_LINKER=aarch64-w64-mingw32-clang \
     -e CC_aarch64_pc_windows_gnullvm=aarch64-w64-mingw32-clang -e AR_aarch64_pc_windows_gnullvm=llvm-ar \
     -e T="$t" "$image" \
     sh -euc 'cargo auditable build --release --locked --quiet --target "$T"
-             cp "/tmp/target/$T/release/qloudpulse.exe" /out/qloudpulse.exe
-             llvm-readobj --coff-imports /out/qloudpulse.exe | sed -n "s/^[[:space:]]*Name: //p" | sort -u >/out/dlls
+             cp "/tmp/target/$T/release/qloudpulse-stack.exe" /out/qloudpulse-stack.exe
+             llvm-readobj --coff-imports /out/qloudpulse-stack.exe | sed -n "s/^[[:space:]]*Name: //p" | sort -u >/out/dlls
              chown -R "$OWNER" /out'
   windows_version "$t"
 }
@@ -495,13 +495,13 @@ build_macos() { # target
   (cd "$CLI" && PATH="$TOOLS/bin:$PATH" RUSTUP_TOOLCHAIN="$MACOS_TOOLCHAIN" RUSTFLAGS="$REMAP" \
     CARGO_TARGET_DIR="$CLI/target/release-build" cargo auditable build --release --locked --quiet --target "$t")
   mkdir -p "$BUILD/$t"
-  cp "$CLI/target/release-build/$t/release/qloudpulse" "$BUILD/$t/qloudpulse"
+  cp "$CLI/target/release-build/$t/release/qloudpulse-stack" "$BUILD/$t/qloudpulse-stack"
   case "$t" in
-    "$(uname -m | sed 's/arm64/aarch64/')"-apple-darwin) "$BUILD/$t/qloudpulse" --version >"$BUILD/$t/version" ;;
+    "$(uname -m | sed 's/arm64/aarch64/')"-apple-darwin) "$BUILD/$t/qloudpulse-stack" --version >"$BUILD/$t/version" ;;
     *)
       # The other architecture runs only under Rosetta; without it the file check above is what is checked.
-      if ! "$BUILD/$t/qloudpulse" --version >"$BUILD/$t/version" 2>/dev/null; then
-        echo "qloudpulse $LONG_VERSION" >"$BUILD/$t/version"
+      if ! "$BUILD/$t/qloudpulse-stack" --version >"$BUILD/$t/version" 2>/dev/null; then
+        echo "qloudpulse-stack $LONG_VERSION" >"$BUILD/$t/version"
         echo "  (not run here: $t needs Rosetta)"
       fi
       ;;
@@ -516,10 +516,10 @@ for t in $TARGETS; do
     x86_64-pc-windows-gnu) build_windows "$t" ;;
     aarch64-pc-windows-gnullvm) build_windows_arm64 "$t" ;;
   esac
-  case "$t" in *-windows-*) exe=qloudpulse.exe ;; *) exe=qloudpulse ;; esac
+  case "$t" in *-windows-*) exe=qloudpulse-stack.exe ;; *) exe=qloudpulse-stack ;; esac
   check_binary "$t" "$BUILD/$t/$exe"
-  [ "$(cat "$BUILD/$t/version")" = "qloudpulse $LONG_VERSION" ] \
-    || fail "$t says $(cat "$BUILD/$t/version"), not qloudpulse $LONG_VERSION"
+  [ "$(cat "$BUILD/$t/version")" = "qloudpulse-stack $LONG_VERSION" ] \
+    || fail "$t says $(cat "$BUILD/$t/version"), not qloudpulse-stack $LONG_VERSION"
   if [ -s "$BUILD/$t/packages" ]; then
     echo "  built with $(tr '\n' ' ' <"$BUILD/$t/packages")"
   fi
@@ -528,13 +528,13 @@ for t in $TARGETS; do
   # No user name, extended attributes or build time in the archive.
   case "$t" in
     *-windows-*)
-      (cd "$BUILD/$t" && TZ=UTC zip -q -X "$OUT/qloudpulse-$VERSION-$t.zip" "$exe")
-      echo "  qloudpulse-$VERSION-$t.zip"
+      (cd "$BUILD/$t" && TZ=UTC zip -q -X "$OUT/qloudpulse-stack-$VERSION-$t.zip" "$exe")
+      echo "  qloudpulse-stack-$VERSION-$t.zip"
       ;;
     *)
       # gzip -n: tar -z would write the time of packing into the gzip header.
-      COPYFILE_DISABLE=1 tar -cf - $TAR_OWNER -C "$BUILD/$t" "$exe" | gzip -n >"$OUT/qloudpulse-$VERSION-$t.tar.gz"
-      echo "  qloudpulse-$VERSION-$t.tar.gz"
+      COPYFILE_DISABLE=1 tar -cf - $TAR_OWNER -C "$BUILD/$t" "$exe" | gzip -n >"$OUT/qloudpulse-stack-$VERSION-$t.tar.gz"
+      echo "  qloudpulse-stack-$VERSION-$t.tar.gz"
       ;;
   esac
 done
