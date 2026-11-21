@@ -265,6 +265,19 @@ it was built from is in the signing certificate, which the workflow cannot write
 `--format json --jq '.[].verificationResult.signature.certificate.sourceRepositoryDigest'` to print it, and compare it
 with `git rev-parse "qloudpulse-cli-$VERSION^{commit}"` in a clone whose source you have read.
 
+The binary inside each archive is attested too (from the release after 0.3.1), so the same check works on a client
+you have already installed, wherever it came from:
+
+```bash
+gh attestation verify "$(command -v qloudpulse)" --repo ulfmansson/qloudpulse-public \
+  --signer-workflow ulfmansson/qloudpulse-public/.github/workflows/cli-release.yml
+```
+
+`qloudpulse --version` names the commit a release was built from and that commit's date, as `rustc --version` does:
+`qloudpulse <version> (1ab39062b 2026-11-21)`. That line is a label, written in at build time; the provenance is what
+proves it. A build of your own with plain `cargo build` prints the version alone, and `release.sh` marks one built
+from a changed tree, as `(1ab39062b-modified 2026-11-21)`.
+
 Without the GitHub CLI, or offline, use Sigstore's own [cosign](https://docs.sigstore.dev/cosign/) (3.0 or later)
 with the bundle each release carries:
 
@@ -278,9 +291,14 @@ cosign verify-blob-attestation \
 ```
 
 The release's SBOM, `qloudpulse-$VERSION.cdx.json` (CycloneDX), lists every crate the client is built from, and it is
-signed for the same archives: `gh attestation verify … --predicate-type https://cyclonedx.org/bom`.
+signed for the same archives: `gh attestation verify … --predicate-type https://cyclonedx.org/bom`. Each binary also
+carries that list itself, written in by [cargo auditable](https://github.com/rust-secure-code/cargo-auditable), so an
+installed client can be checked for crates with known vulnerabilities without the SBOM: `cargo audit bin
+"$(command -v qloudpulse)"`, or Trivy or Grype, which read the same list.
 
-**2. The download is whole.** `SHA256SUMS` has the SHA-256 of every archive, as in [Install](#install):
+**2. The download is whole.** `SHA256SUMS` has the SHA-256 of every archive, as in [Install](#install), and of the
+binary in each, named `<archive>/qloudpulse` (or `qloudpulse.exe`), so an installed binary can be checked by its sum
+too: `shasum -a 256 "$(command -v qloudpulse)"`.
 
 ```bash
 sha256sum -c --ignore-missing SHA256SUMS   # on macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
@@ -294,8 +312,26 @@ there, so every run checks the same bytes:
 echo "<sha256 from SHA256SUMS>  qloudpulse-$VERSION-$TARGET.tar.gz" | sha256sum -c -
 ```
 
-**3. Or build it yourself from the tag.** With Rust 1.88 or later; `--locked` builds exactly the crate versions, with
-their checksums, in the tag's `Cargo.lock`:
+**3. Or build it yourself from the tag, and get the same bytes.** The builds are
+[reproducible](https://reproducible-builds.org): built again from the release's tag, with the images and the Rust that
+`release.sh` pins, a binary comes out byte for byte the one the release holds. Nothing in it depends on when or where
+it was built: no timestamps (the PE header has none, and archives carry the commit's time), and no paths of the
+machine. The release workflow itself builds every target twice, on two runners, and signs and publishes nothing unless
+the two agree. To check a release yourself, from a clone, with Docker for the Linux and Windows targets:
+
+```bash
+git switch --detach "qloudpulse-cli-$VERSION"
+cli/release.sh --reproduce --targets x86_64-unknown-linux-musl
+```
+
+It builds the target as the release workflow does and compares the binary with the release's `SHA256SUMS`; releases
+up to 0.3.1 list their archives only. Two inputs are not pinned by digest. The Linux builds install Alpine's
+`musl-dev` when they run, as Alpine keeps only the newest build of a package; the version a build used is printed
+beside it. And a macOS binary is linked by the Mac's own Xcode tools, so it matches only on a Mac with the Xcode of
+GitHub's `macos-15` image.
+
+To build one for yourself instead, with Rust 1.88 or later (`--locked` builds exactly the crate versions, with their
+checksums, in the tag's `Cargo.lock`; its `--version` names no commit):
 
 ```bash
 cargo install --git https://github.com/ulfmansson/qloudpulse-public --tag "qloudpulse-cli-$VERSION" --locked qloudpulse-cli
@@ -421,7 +457,8 @@ default address's catalogue answers 200 (`https://api.qloudpulse.com/v1/estimate
 ADR 0127; client 0.1.0 used `https://app.qloudpulse.com/api/report/public/estimates`, which keeps answering). Then it
 pushes the tag `qloudpulse-cli-<version>`. The tag starts the workflow, which checks the same again, runs
 `cargo test --locked`, builds every target with `release.sh`, runs the two Windows `.exe` files on Windows x86_64 and
-Windows on ARM, writes the SBOM and `SHA256SUMS`, signs provenance for every archive, and publishes the release. Watch
+Windows on ARM, builds every target a second time on another runner and checks that the binaries are the same, writes
+the SBOM and `SHA256SUMS`, signs provenance for every archive and binary, and publishes the release. Watch
 it with `gh run list -R ulfmansson/qloudpulse-public --workflow cli-release.yml`.
 
 The workflow also builds every target, without signing or publishing, on each pull request that changes `cli/`.

@@ -93,11 +93,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Every runner: the macOS builds compile here, and every build reads its binary's dependency list back with
+      # rust-audit-info, which release.sh installs with this Rust.
       - name: Install Rust
-        if: endsWith(matrix.target, '-apple-darwin')
         env:
           TARGET: ${{ matrix.target }}
-        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target "$TARGET" --no-self-update
+        run: |
+          case "$TARGET" in *-apple-darwin) extra="--target $TARGET" ;; *) extra="" ;; esac
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal $extra --no-self-update
       - name: Build, check and pack
         env:
           TARGET: ${{ matrix.target }}
@@ -108,11 +111,21 @@ jobs:
         run: |
           sh "$RUNNER_TEMP/dist/install.sh" --base "$RUNNER_TEMP/dist" --dir "$RUNNER_TEMP/bin"
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' cli/Cargo.toml | head -1)
-          [ "$("$RUNNER_TEMP/bin/qloudpulse" --version)" = "qloudpulse $version" ]
+          date=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y-%m-%d)
+          want="qloudpulse $version (${GITHUB_SHA:0:9} $date)"
+          said=$("$RUNNER_TEMP/bin/qloudpulse" --version)
+          [ "$said" = "$want" ] || { echo "::error::the installed client says '$said', not '$want'"; exit 1; }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cli-${{ matrix.target }}
           path: ${{ runner.temp }}/dist/qloudpulse-*
+          if-no-files-found: error
+          retention-days: 7
+      # This build's sums, which the Reproduce job's build of the same target has to match.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sums-${{ matrix.target }}
+          path: ${{ runner.temp }}/dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 7
       # For the Windows job, which tries install.ps1 on Windows of this architecture.
@@ -152,7 +165,8 @@ jobs:
           Expand-Archive $Zip.FullName -DestinationPath run
           $Said = & ./run/qloudpulse.exe --version
           if ($LASTEXITCODE -ne 0) { throw "qloudpulse.exe --version exited $LASTEXITCODE" }
-          if ($Said -ne "qloudpulse $Version") { throw "qloudpulse.exe says '$Said', not 'qloudpulse $Version'" }
+          $Want = "^qloudpulse $([regex]::Escape($Version)) \($($env:GITHUB_SHA.Substring(0, 9)) \d{4}-\d{2}-\d{2}\)$"
+          if ($Said -notmatch $Want) { throw "qloudpulse.exe says '$Said', not 'qloudpulse $Version' of $env:GITHUB_SHA" }
           & ./run/qloudpulse.exe estimate --help | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "qloudpulse.exe estimate --help exited $LASTEXITCODE" }
           Write-Output $Said
@@ -168,7 +182,8 @@ jobs:
           ./dist/install.ps1 -Base dist -Dir "$env:RUNNER_TEMP\pwsh-bin"
           $Version = (Get-ChildItem dist/qloudpulse-*.zip | Select-Object -First 1).Name -replace '^qloudpulse-([0-9.]+)-.*$', '$1'
           $Said = & "$env:RUNNER_TEMP\pwsh-bin\qloudpulse.exe" --version
-          if ($Said -ne "qloudpulse $Version") { throw "installed qloudpulse.exe says '$Said', not 'qloudpulse $Version'" }
+          $Want = "^qloudpulse $([regex]::Escape($Version)) \($($env:GITHUB_SHA.Substring(0, 9)) \d{4}-\d{2}-\d{2}\)$"
+          if ($Said -notmatch $Want) { throw "installed qloudpulse.exe says '$Said', not 'qloudpulse $Version' of $env:GITHUB_SHA" }
       - name: Install it with install.ps1 (Windows PowerShell, through iex)
         shell: powershell
         run: |
@@ -177,10 +192,50 @@ jobs:
           Get-Content dist/install.ps1 -Raw | Invoke-Expression
           $Version = (Get-ChildItem dist/qloudpulse-*.zip | Select-Object -First 1).Name -replace '^qloudpulse-([0-9.]+)-.*$', '$1'
           $Said = & "$env:RUNNER_TEMP\ps-bin\qloudpulse.exe" --version
-          if ($Said -ne "qloudpulse $Version") { throw "installed qloudpulse.exe says '$Said', not 'qloudpulse $Version'" }
+          $Want = "^qloudpulse $([regex]::Escape($Version)) \($($env:GITHUB_SHA.Substring(0, 9)) \d{4}-\d{2}-\d{2}\)$"
+          if ($Said -notmatch $Want) { throw "installed qloudpulse.exe says '$Said', not 'qloudpulse $Version' of $env:GITHUB_SHA" }
       - name: The next step finds it on PATH
         shell: pwsh
         run: qloudpulse --version
+
+  reproduce:
+    # Every target built a second time, on a runner of its own, has to give the same binary byte for byte: a release
+    # is reproducible (https://reproducible-builds.org), so anyone can build its tag and check the files they were
+    # given against SHA256SUMS (cli/release.sh --reproduce). Nothing is signed or published until this agrees.
+    name: Reproduce ${{ matrix.target }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04 }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm }
+          - { target: aarch64-apple-darwin, os: macos-15 }
+          - { target: x86_64-apple-darwin, os: macos-15-intel }
+          - { target: x86_64-pc-windows-gnu, os: ubuntu-24.04 }
+          - { target: aarch64-pc-windows-gnullvm, os: ubuntu-24.04 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          case "$TARGET" in *-apple-darwin) extra="--target $TARGET" ;; *) extra="" ;; esac
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal $extra --no-self-update
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sums-${{ matrix.target }}
+          path: ${{ runner.temp }}/first
+      - name: Build again and compare
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cli/release.sh --skip-tests --targets "$TARGET" --out "$RUNNER_TEMP/again" --compare "$RUNNER_TEMP/first/SHA256SUMS"
 
   sbom:
     name: SBOM
@@ -225,7 +280,7 @@ jobs:
     # writes to the repository.
     name: Attest
     if: startsWith(github.ref, 'refs/tags/qloudpulse-cli-')
-    needs: [build, windows, sbom]
+    needs: [build, windows, reproduce, sbom]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -247,7 +302,8 @@ jobs:
           path: dist
       - name: SHA256SUMS and release notes
         run: cli/release.sh --finish dist
-      # SLSA build provenance for every archive in SHA256SUMS: this workflow, this commit, this tag.
+      # SLSA build provenance for every archive, binary and install script in SHA256SUMS: this workflow, this commit,
+      # this tag. With the binaries in it, gh attestation verify checks an installed client as well as a download.
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         id: provenance
         with:
@@ -261,7 +317,7 @@ jobs:
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' cli/Cargo.toml | head -1)
           cp "$BUNDLE" "dist/qloudpulse-$version.provenance.sigstore.json"
           echo "sbom=dist/qloudpulse-$version.cdx.json" >>"$GITHUB_OUTPUT"
-      # The SBOM, signed as the bill of materials of the same archives.
+      # The SBOM, signed as the bill of materials of the same files.
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-checksums: dist/SHA256SUMS
