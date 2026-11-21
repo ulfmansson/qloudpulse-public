@@ -1003,6 +1003,54 @@ pub fn rules_save(s: &Shared, form: &HashMap<String, String>) -> Response {
 pub struct TargetView {
     pub name: &'static str,
     pub detail: String,
+    /// For qloudpulse: how an upload would sign in. Never the token.
+    pub state: String,
+    pub state_class: &'static str,
+}
+
+/// How an upload to `endpoint` would sign in, found the way the upload finds its token: `QLOUDPULSE_TOKEN`, else
+/// the token `login` kept. Says where the token comes from and for which company, never the token.
+#[cfg(feature = "upload")]
+fn sign_in_state(endpoint: &str) -> (String, &'static str) {
+    use qloudpulse_cli::{credentials, login};
+    if std::env::var(crate::deliver::qloudpulse::TOKEN_ENV).is_ok_and(|t| !t.trim().is_empty()) {
+        return ("signed in via QLOUDPULSE_TOKEN".into(), "ok");
+    }
+    let origin = match login::origin(endpoint) {
+        Ok(o) => o,
+        Err(e) => return (format!("the endpoint is not usable: {e:#}"), "bad"),
+    };
+    match credentials::system().load(&origin, credentials::now()) {
+        Some(saved) => {
+            let company = login::plain(&saved.company);
+            let until = saved
+                .expires_at
+                .as_deref()
+                .and_then(credentials::day)
+                .map(|d| format!(", until {d}"))
+                .unwrap_or_default();
+            let to = if company.is_empty() {
+                String::new()
+            } else {
+                format!(" to {company}")
+            };
+            (format!("signed in{to} via `qloudpulse login`{until}"), "ok")
+        }
+        None => (
+            "not signed in: run `qloudpulse-collect login` (or `qloudpulse login`), or set QLOUDPULSE_TOKEN. Until \
+             then the qloudpulse delivery fails and is retried at each cycle."
+                .into(),
+            "bad",
+        ),
+    }
+}
+
+#[cfg(not(feature = "upload"))]
+fn sign_in_state(_endpoint: &str) -> (String, &'static str) {
+    (
+        "this build has no qloudpulse upload: the delivery fails and is retried".into(),
+        "bad",
+    )
 }
 
 pub struct BundleRow {
@@ -1032,6 +1080,8 @@ fn targets(config: &Config) -> Vec<TargetView> {
     let mut out = Vec::new();
     if let Some(s3) = &d.s3 {
         out.push(TargetView {
+            state: String::new(),
+            state_class: "",
             name: "s3",
             detail: format!(
                 "s3://{}/{} ({}{})",
@@ -1046,16 +1096,18 @@ fn targets(config: &Config) -> Vec<TargetView> {
         });
     }
     if let Some(q) = &d.qloudpulse {
+        let (state, state_class) = sign_in_state(&q.endpoint);
         out.push(TargetView {
             name: "qloudpulse",
-            detail: format!(
-                "{}, signed in as the qloudpulse CLI is: QLOUDPULSE_TOKEN, else the token `login` kept",
-                q.endpoint
-            ),
+            detail: q.endpoint.clone(),
+            state,
+            state_class,
         });
     }
     if let Some(c) = &d.command {
         out.push(TargetView {
+            state: String::new(),
+            state_class: "",
             name: "command",
             detail: c.argv.join(" "),
         });

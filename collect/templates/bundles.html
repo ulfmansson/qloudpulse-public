@@ -8,7 +8,7 @@
   <div class="panel side small">
     <b>Delivery targets</b>
     {% if targets.is_empty() %}<p class="muted">None configured: bundles stay in the output directory. See <code>[deliver]</code> in the config.</p>{% else %}
-    <ul class="plain">{% for t in targets %}<li><code>{{ t.name }}</code> → {{ t.detail }}</li>{% endfor %}</ul>{% endif %}
+    <ul class="plain">{% for t in targets %}<li><code>{{ t.name }}</code> → {{ t.detail }}{% if !t.state.is_empty() %}<br><span class="{{ t.state_class }}">{{ t.state }}</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
   </div>
 </div>
 <div class="panel">
