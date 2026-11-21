@@ -160,8 +160,10 @@ delivered, never raw snapshots.
 A delivery that fails is retried at the next `run` cycle; the bundle stays in the output directory until every
 configured target has it, and retention never deletes an undelivered bundle.
 
-qloudpulse **deletes an uploaded bundle once it has been ingested**. One that fails ingest is kept at most 7 days for
-a retry and then deleted. What stays is the data in the reports, not the file.
+qloudpulse **keeps at most one bundle per source: the newest it has ingested**. Each bundle is deleted once a newer one
+from the same source has been ingested; the newest stays so it can be replayed again after a late, older bundle, which
+keeps the latest figures (such as the month projection) current. One that fails ingest is kept at most 7 days for a
+retry and then deleted. What stays is the data in the reports, not the files.
 
 ### What qloudpulse does with a bundle
 
@@ -172,7 +174,8 @@ a retry and then deleted. What stays is the data in the reports, not the file.
   same reports. Pricing happens on our side; the client never needs prices.
 - An operation the collectors need that the bundle lacks (an older client) is treated as access denied, and the ingest
   report says which client version adds it.
-- Each bundle is processed as of its own window, once per window, so a late bundle fills in a missed hour.
+- Each bundle is processed as of its own window, once per window, so a late bundle fills in a missed hour. A bundle
+  more than 13 days old is refused at upload: qloudpulse keeps hourly data for 14 days.
 - An AWS account is either connected live or fed by bundles, never both. A company may run several clients, each with
   its own `source_id`, but an account belongs to exactly one source, and CUR comes only from the payer's source.
 - The current and the previous major schema are accepted for at least 6 months.
