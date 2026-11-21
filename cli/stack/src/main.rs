@@ -7,16 +7,16 @@ use std::process::{Command as Process, ExitCode, ExitStatus, Stdio};
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 
-use qloudpulse_cli::catalogue::Catalogue;
-use qloudpulse_cli::credentials::{self, Kept, Saved};
-use qloudpulse_cli::login::{self, SignedIn};
-use qloudpulse_cli::pulumi::{self, Options};
-use qloudpulse_cli::render::{self, Style};
-use qloudpulse_cli::request::{ChangeKind, FORMAT_VERSION, MAX_RESOURCES, Response};
-use qloudpulse_cli::{send, token, version, wrap};
+use qloudpulse_stack::catalogue::Catalogue;
+use qloudpulse_stack::credentials::{self, Kept, Saved};
+use qloudpulse_stack::login::{self, SignedIn};
+use qloudpulse_stack::pulumi::{self, Options};
+use qloudpulse_stack::render::{self, Style};
+use qloudpulse_stack::request::{ChangeKind, FORMAT_VERSION, MAX_RESOURCES, Response};
+use qloudpulse_stack::{send, token, version, wrap};
 
 #[derive(Parser)]
-#[command(name = "qloudpulse", version, about = "qloudpulse from the command line", after_help = CONNECT)]
+#[command(name = "qloudpulse-stack", version = version::LONG_VERSION, about = "qloudpulse from the command line", after_help = CONNECT)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -29,7 +29,7 @@ Connecting to your company:
   event-source token from Settings, Events works too. On hosted qloudpulse, Your tokens is
   https://app.qloudpulse.com/ui/?profile#my-tokens.
   Put the token in QLOUDPULSE_TOKEN, for example from a CI secret, never in an option, so it
-  stays out of logs and shell history. On your own machine, `qloudpulse login` signs in with
+  stays out of logs and shell history. On your own machine, `qloudpulse-stack login` signs in with
   your browser and keeps a token in the system keychain; QLOUDPULSE_TOKEN wins over it. With
   neither, a run at a terminal offers to sign in, or takes a pasted token, hidden, for that
   run only.
@@ -42,28 +42,28 @@ const ENVIRONMENT: &str = "\
 Environment:
   QLOUDPULSE_TOKEN      A token of your own (qpev_...), from Your tokens under your name in
                         qloudpulse. Needed on every run but --dry-run, even one with nothing
-                        to price. Unset, the token `qloudpulse login` kept is used; with none,
+                        to price. Unset, the token `qloudpulse-stack login` kept is used; with none,
                         a run at a terminal offers to sign in with the browser; in CI or
                         without a terminal the run stops
   QLOUDPULSE_ENDPOINT   The same as --endpoint
   QLOUDPULSE_CATALOGUE  The same as --catalogue
   QLOUDPULSE_CREDENTIALS_FILE
-                        Keep the token of `qloudpulse login` in this file (0600) instead of
+                        Keep the token of `qloudpulse-stack login` in this file (0600) instead of
                         the system keychain";
 
 /// How `estimate` is used, shown under its help.
 const ESTIMATE_EXAMPLE: &str = "\
 Example:
-  pulumi preview --json --show-sames -s prod | qloudpulse estimate > comment.md";
+  pulumi preview --json --show-sames -s prod | qloudpulse-stack estimate > comment.md";
 
 /// Where Pulumi's arguments start, shown under `pulumi preview` and `pulumi up`.
 const PULUMI_ARGS: &str = "\
 Pulumi's arguments:
-  qloudpulse's options come first. From the first word it does not know, everything goes to
-  Pulumi as it is, so `qloudpulse pulumi preview -s prod --format json` hands --format to
+  qloudpulse-stack's options come first. From the first word it does not know, everything goes to
+  Pulumi as it is, so `qloudpulse-stack pulumi preview -s prod --format json` hands --format to
   Pulumi. A -- in front of Pulumi's arguments makes the split plain. Pulumi's --json is
   refused, as the estimate is printed on the same stdout; for JSON, run
-  `pulumi preview --json --show-sames | qloudpulse estimate`. Pulumi's flags are read as words of
+  `pulumi preview --json --show-sames | qloudpulse-stack estimate`. Pulumi's flags are read as words of
   their own: -y, not -yf.
 
   The priced preview has no terminal to prompt on: a stack with a passphrase needs
@@ -79,8 +79,8 @@ How it runs:
   fails (no token, the network, a refused version) exits 1, after the diff.
 
 Examples:
-  qloudpulse pulumi preview -s payments-prod
-  qloudpulse pulumi preview --format json -- -s payments-prod --diff";
+  qloudpulse-stack pulumi preview -s payments-prod
+  qloudpulse-stack pulumi preview --format json -- -s payments-prod --diff";
 
 /// How `pulumi up` runs, shown under its help.
 const PULUMI_UP: &str = "\
@@ -100,8 +100,8 @@ How it runs:
   instead, and pulumi up does not run.
 
 Examples:
-  qloudpulse pulumi up -s payments-prod
-  qloudpulse pulumi up --require-estimate -- -s payments-prod --yes";
+  qloudpulse-stack pulumi up -s payments-prod
+  qloudpulse-stack pulumi up --require-estimate -- -s payments-prod --yes";
 
 #[derive(Subcommand)]
 enum Command {
@@ -125,7 +125,7 @@ enum Command {
     #[command(after_help = format!("{LOGIN}\n\n{CONNECT}"))]
     Login(AccountArgs),
 
-    /// Remove the token `qloudpulse login` kept on this machine.
+    /// Remove the token `qloudpulse-stack login` kept on this machine.
     ///
     /// The token still works until it expires or you remove it under Your tokens in qloudpulse.
     #[command(after_help = CONNECT)]
@@ -154,7 +154,7 @@ struct AccountArgs {
 enum PulumiCommand {
     /// `pulumi preview` with its usual diff, then the estimate of the change.
     ///
-    /// Prints Pulumi's diff, then the comment `qloudpulse estimate` prints: text at a terminal, Markdown piped, or with
+    /// Prints Pulumi's diff, then the comment `qloudpulse-stack estimate` prints: text at a terminal, Markdown piped, or with
     /// --format json its answer.
     #[command(after_help = format!("{PULUMI_PREVIEW}\n\n{PULUMI_ARGS}\n\n{ENVIRONMENT}\n\n{CONNECT}"))]
     Preview(PreviewArgs),
@@ -192,13 +192,25 @@ struct PriceArgs {
     #[arg(long, env = "QLOUDPULSE_CATALOGUE")]
     catalogue: Option<PathBuf>,
 
-    /// The AWS region of resources whose provider and stack name none, such as eu-west-1.
+    /// The AWS region, such as eu-west-1, of every resource for which neither the preview nor its provider names one.
+    ///
+    /// A resource's region is, first found: its own region (AWS provider v7), its provider's region, --region, the
+    /// stack's aws:region, AWS_REGION, AWS_DEFAULT_REGION, and the region of the AWS profile in use (the provider's
+    /// profile, else the stack's aws:profile, else AWS_PROFILE, else default) in AWS_CONFIG_FILE or ~/.aws/config. Only
+    /// the region is read from that file, never credentials. --region comes before the stack and this machine, as
+    /// the choice made for this run.
     #[arg(long)]
     region: Option<String>,
 
     /// Send the cloud ID of each resource that exists before the change, so its usage comes from what it really used.
     #[arg(long)]
     with_resource_ids: bool,
+
+    /// Ask qloudpulse to price the change and keep nothing of it: no names or URNs are sent, and there is no page, link
+    /// or point in the stack's history. Without it qloudpulse keeps the estimate with its resources' names, unless your
+    /// company chose to keep nothing.
+    #[arg(long, env = "QLOUDPULSE_NO_STORE")]
+    no_store: bool,
 
     /// What to print: the comment in Markdown, for a pull request, or as plain text, or the answer as JSON. Without
     /// it: text when stdout is a terminal, Markdown when it is piped or redirected (`> comment.md`).
@@ -211,7 +223,7 @@ struct PreviewArgs {
     #[command(flatten)]
     price: PriceArgs,
 
-    /// The arguments of `pulumi preview`, such as -s payments-prod --diff. They follow qloudpulse's options.
+    /// The arguments of `pulumi preview`, such as -s payments-prod --diff. They follow qloudpulse-stack's options.
     #[arg(value_name = "PULUMI_ARGS", trailing_var_arg = true, allow_hyphen_values = true)]
     pulumi_args: Vec<OsString>,
 }
@@ -226,7 +238,7 @@ struct UpArgs {
     #[arg(long)]
     require_estimate: bool,
 
-    /// The arguments of `pulumi up`, such as -s payments-prod --yes. They follow qloudpulse's options.
+    /// The arguments of `pulumi up`, such as -s payments-prod --yes. They follow qloudpulse-stack's options.
     #[arg(value_name = "PULUMI_ARGS", trailing_var_arg = true, allow_hyphen_values = true)]
     pulumi_args: Vec<OsString>,
 }
@@ -295,7 +307,7 @@ fn counts(estimate: &pulumi::Estimate) -> String {
 }
 
 /// The token a run that sends needs, checked before anything else: from QLOUDPULSE_TOKEN, else the one kept by
-/// `qloudpulse login`, else, at a terminal, from signing in with the browser or a pasted one. None for a dry run.
+/// `qloudpulse-stack login`, else, at a terminal, from signing in with the browser or a pasted one. None for a dry run.
 fn token_for(args: &PriceArgs) -> Result<Option<String>> {
     if args.dry_run {
         return Ok(None);
@@ -311,7 +323,7 @@ fn token_for(args: &PriceArgs) -> Result<Option<String>> {
     .map(Some)
 }
 
-/// The token `qloudpulse login` kept for the qloudpulse behind the endpoint, unless it has expired.
+/// The token `qloudpulse-stack login` kept for the qloudpulse behind the endpoint, unless it has expired.
 fn kept_token(endpoint: &str) -> Option<String> {
     let origin = login::origin(endpoint).ok()?;
     credentials::system()
@@ -403,7 +415,9 @@ fn price(args: &PriceArgs, token: Option<&str>, input: &str) -> Result<String> {
     let preview = pulumi::parse(input)?;
     let options = Options {
         region: args.region.clone(),
+        aws: pulumi::AwsEnvironment::from_system(),
         with_resource_ids: args.with_resource_ids,
+        keep_nothing: args.no_store,
     };
     let catalogue = match &args.catalogue {
         Some(path) => Catalogue::parse(
@@ -421,6 +435,9 @@ fn price(args: &PriceArgs, token: Option<&str>, input: &str) -> Result<String> {
     let request = &estimate.request;
 
     eprintln!("qloudpulse: {}", counts(&estimate));
+    if estimate.no_region > 0 {
+        eprintln!("qloudpulse: {}", render::no_region(estimate.no_region, Style::Text));
+    }
 
     // No token only with --dry-run.
     let Some(token) = token else {
@@ -434,10 +451,15 @@ fn price(args: &PriceArgs, token: Option<&str>, input: &str) -> Result<String> {
             estimate_id: None,
             currency: "USD".into(),
             url: None,
+            stored: None,
             resources: vec![],
         }
     } else {
-        send::send(&args.endpoint, token, request)?
+        let response = send::send(&args.endpoint, token, request)?;
+        if args.no_store {
+            check_kept_nothing(&response)?;
+        }
+        response
     };
 
     let style = match format(args.format, std::io::stdout().is_terminal()) {
@@ -450,6 +472,19 @@ fn price(args: &PriceArgs, token: Option<&str>, input: &str) -> Result<String> {
         let _ = writeln!(out, "\n{}", style.small(line));
     }
     Ok(out)
+}
+
+/// With `--no-store`, that qloudpulse says it kept nothing. An endpoint from before ADR 0140 does not read `store` and
+/// keeps the estimate, without names: its answer, with an id or a page or without `stored: false`, is refused rather
+/// than printed as if nothing had been kept.
+fn check_kept_nothing(response: &Response) -> Result<()> {
+    if response.kept_nothing() {
+        return Ok(());
+    }
+    bail!(
+        "--no-store, but this qloudpulse kept the estimate: it is older than --no-store and keeps every estimate it \
+         prices (without resource names). Leave out --no-store, or ask your qloudpulse's admins to update it"
+    )
 }
 
 fn estimate(args: &EstimateArgs) -> Result<ExitCode> {
@@ -524,8 +559,8 @@ fn exit_code(status: ExitStatus) -> ExitCode {
 fn refuse_json(args: &[OsString], command: &str) -> Result<()> {
     if wrap::wants_json(args) {
         bail!(
-            "qloudpulse pulumi {command} takes no --json, as the estimate is printed on the same stdout: run \
-             `pulumi preview --json --show-sames | qloudpulse estimate` for JSON, or `pulumi {command} --json` without \
+            "qloudpulse-stack pulumi {command} takes no --json, as the estimate is printed on the same stdout: run \
+             `pulumi preview --json --show-sames | qloudpulse-stack estimate` for JSON, or `pulumi {command} --json` without \
              qloudpulse"
         );
     }

@@ -10,10 +10,67 @@ has lines.
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-11-19
+Needs a qloudpulse with ADR 0140 (report service with migration V35) before it is released: an older endpoint ignores
+`--no-store`, which the client then refuses.
 
-The first release since 0.1.0. 0.2.0 was merged on 2026-11-18 but never released, so its changes are in this list
-too.
+## [0.4.0] - 2026-11-21
+
+
+### Added
+
+- `qloudpulse-stack --version` names the commit a release was built from and that commit's date, as rustc does:
+  `qloudpulse-stack <version> (1ab39062b 2026-11-21)`.
+- Each binary carries the list of crates it was built from, written in by cargo auditable, so `cargo audit bin`,
+  Trivy or Grype can check an installed client for crates with known vulnerabilities.
+- `SHA256SUMS` and the signed build provenance cover the binary inside each archive as well as the archive, so
+  `gh attestation verify "$(command -v qloudpulse-stack)"` checks an installed client.
+- Releases are reproducible: the release workflow builds every target twice, on two runners, and publishes nothing
+  unless the binaries are the same, and `cli/stack/release.sh --reproduce` at a release's tag builds it again and compares
+  with the release's `SHA256SUMS`.
+- `--no-store` (also `QLOUDPULSE_NO_STORE`): qloudpulse prices the change and keeps nothing, and the client sends no
+  names or URNs. The comment has no link and says nothing was kept, as it also does when a company's admins chose to
+  keep nothing. An answer that shows the estimate was kept anyway, as from an endpoint older than ADR 0140, stops the
+  run with an error.
+
+### Changed
+
+- **Renamed: the client is now `qloudpulse-stack`**, to make room for other qloudpulse command-line tools. The binary
+  is `qloudpulse-stack` (`qloudpulse-stack.exe` on Windows), releases are tagged `qloudpulse-stack-<version>` and
+  their archives are `qloudpulse-stack-<version>-<target>.tar.gz` (or `.zip`), and the source moved to `cli/stack/`.
+  Replace `qloudpulse` with `qloudpulse-stack` in pipelines and scripts. `QLOUDPULSE_TOKEN` and the other
+  `QLOUDPULSE_*` variables, and the token `login` kept, are unchanged and shared by every qloudpulse CLI. A token
+  `login` makes from now on is named `qloudpulse-stack <version> on <os> <arch>`. Releases up to 0.3.1 keep their
+  names: tag `qloudpulse-cli-<version>`, binary `qloudpulse`.
+- `--region` now wins over the stack's `aws:region`: it is the region of every resource for which neither the preview
+  nor its provider names one. Before, the stack's `aws:region` came first.
+- Each resource is sent with its name and its Pulumi URN, and qloudpulse keeps them with the estimate, so its page and
+  the stack's cost history name every resource (qloudpulse's ADR 0140). From such a qloudpulse the link is the short
+  `…/ui/?estimate=est_…`, without the names after `#`; to an older endpoint's link the client still adds them.
+- At a terminal, "See it in qloudpulse" is the last line, after the table and notes. The pull request comment keeps it
+  under the headline.
+
+### Fixed
+
+- A resource's region is found the way the AWS provider finds it, so a stack whose region comes from somewhere other
+  than its provider's `region` or the stack's `aws:region` is no longer sent with `"region": null` and left
+  unpriced. First found: the resource's own `region` (AWS provider v7), from its inputs or outputs; its provider's
+  `region`, from the new state, else the old one, so a provider whose region is known only after apply keeps the one
+  it had; `--region`; the stack's `aws:region`; `AWS_REGION`; `AWS_DEFAULT_REGION`; and the region of the AWS profile
+  in use (the provider's `profile`, else the stack's `aws:profile`, else `AWS_PROFILE`, else `default`) in
+  `AWS_CONFIG_FILE` or `~/.aws/config`. Only the region is read from that file, never credentials, and every value
+  must still be a region name.
+- A resource that still has no region is said on stderr and in the comment, with how to give it one
+  (`pulumi config set aws:region <region>` or `--region`), instead of leaving the totals empty without a word.
+- A priced attribute the inputs leave out, such as a default the provider filled in (an EBS volume's `type`, an
+  instance's root volume type), is sent from the outputs: for a resource left the same, and for the side before an
+  update, a replacement or a delete. On the side after an update or a replacement it is taken from the old outputs
+  only when neither side's inputs set it, so the two sides do not differ by a default only one of them names. A
+  value hidden in the inputs is never filled, and an unknown or secret output is named under `unknown`, not sent.
+
+## [0.3.1] - 2026-11-21
+
+The first release since 0.1.0. 0.2.0 was merged on 2026-11-18 but never released, and 0.3.0 was tagged on 2026-11-21
+but its release run failed before it published anything, so their changes are in this list too.
 
 ### Added
 
@@ -101,6 +158,7 @@ too.
   `--endpoint`.
 - Static binaries for Linux x86_64 and arm64, and binaries for macOS on both architectures, with `SHA256SUMS`.
 
-[Unreleased]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-cli-0.3.0...main
-[0.3.0]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-cli-0.1.0...qloudpulse-cli-0.3.0
+[Unreleased]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-stack-0.4.0...main
+[0.4.0]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-cli-0.3.1...qloudpulse-stack-0.4.0
+[0.3.1]: https://github.com/ulfmansson/qloudpulse-public/compare/qloudpulse-cli-0.1.0...qloudpulse-cli-0.3.1
 [0.1.0]: https://github.com/ulfmansson/qloudpulse-public/releases/tag/qloudpulse-cli-0.1.0

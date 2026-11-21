@@ -1,4 +1,4 @@
-# cargo deny check advisories licenses sources, run on every pull request by .github/workflows/cli-checks.yml.
+# cargo deny check advisories licenses sources, run on every pull request by .github/workflows/cli-stack-checks.yml.
 # The configuration format is cargo-deny's: https://embarkstudios.github.io/cargo-deny/checks/cfg.html
 
 [graph]
@@ -16,7 +16,15 @@ targets = [
 [advisories]
 # Every RustSec advisory fails the check: a vulnerability, an unmaintained or unsound crate, or a yanked version. One
 # that does not apply is listed here with the reason, never silently.
-ignore = []
+ignore = [
+  # zbus's own crates, merged into zbus 6 and so marked unmaintained in 2026-11; no vulnerability. They come only
+  # through keyring's Linux secret-service store (keyring 4.2 -> zbus-secret-service-keyring-store 1.0 ->
+  # secret-service 5.2 -> zbus 5), which has no release on zbus 6 yet (secret-service 6 is a release candidate).
+  # Remove these once keyring's store moves to zbus 6.
+  { id = "RUSTSEC-2026-0370", reason = "zvariant: merged into zbus 6; reached only via keyring's secret-service store on zbus 5" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus_names: merged into zbus 6; reached only via keyring's secret-service store on zbus 5" },
+  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: merged into zbus 6; reached only via keyring's secret-service store on zbus 5" },
+]
 
 [licenses]
 # The licences of the crates the client is built from today, all permissive and compatible with its Apache-2.0. A

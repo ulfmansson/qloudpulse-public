@@ -1,4 +1,4 @@
-//! `qloudpulse login`: signs the client in with the browser, as OAuth's device authorization grant (RFC 8628) does
+//! `qloudpulse-stack login`: signs the client in with the browser, as OAuth's device authorization grant (RFC 8628) does
 //! (qloudpulse's ADR 0135). The client asks qloudpulse for a code, shows it, opens the browser where a member approves
 //! it, and asks every few seconds until qloudpulse hands it a personal token. The client never listens on a port, so
 //! it works over SSH, and the code can be approved on another device.
@@ -64,7 +64,7 @@ pub fn client() -> String {
         "aarch64" => "arm64",
         other => other,
     };
-    format!("qloudpulse {} on {os} {arch}", env!("CARGO_PKG_VERSION"))
+    format!("qloudpulse-stack {} on {os} {arch}", env!("CARGO_PKG_VERSION"))
 }
 
 /// One answer: its status and its body.
@@ -279,7 +279,7 @@ pub fn sign_in(
     loop {
         clock.sleep(interval);
         if clock.now() >= deadline {
-            bail!("the code ran out before it was approved: run `qloudpulse login` again");
+            bail!("the code ran out before it was approved: run `qloudpulse-stack login` again");
         }
         let answer = match http.post(&token_url, &json!({"deviceCode": started.device_code})) {
             Ok(answer) => answer,
@@ -307,7 +307,7 @@ pub fn sign_in(
                     Some("authorization_pending") => {}
                     Some("slow_down") => interval = (interval + 5).min(60),
                     Some("expired_token") => {
-                        bail!("the login expired or was already used: run `qloudpulse login` again")
+                        bail!("the login expired or was already used: run `qloudpulse-stack login` again")
                     }
                     Some("access_denied") => bail!("the login was not approved: {detail}"),
                     _ => bail!("qloudpulse refused the login (400): {detail}"),
@@ -493,7 +493,7 @@ mod tests {
     fn the_client_names_its_version_and_system_only() {
         let client = client();
         assert!(
-            client.starts_with(&format!("qloudpulse {} on ", env!("CARGO_PKG_VERSION"))),
+            client.starts_with(&format!("qloudpulse-stack {} on ", env!("CARGO_PKG_VERSION"))),
             "{client}"
         );
         assert!(client.len() <= 100 && !client.contains('\n'));
@@ -618,7 +618,7 @@ mod tests {
             run.result
                 .unwrap_err()
                 .to_string()
-                .contains("run `qloudpulse login` again")
+                .contains("run `qloudpulse-stack login` again")
         );
     }
 

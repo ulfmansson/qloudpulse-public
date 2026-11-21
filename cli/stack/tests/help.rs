@@ -4,7 +4,7 @@
 use std::process::Command;
 
 fn help(args: &[&str]) -> String {
-    let out = Command::new(env!("CARGO_BIN_EXE_qloudpulse"))
+    let out = Command::new(env!("CARGO_BIN_EXE_qloudpulse-stack"))
         .args(args)
         .output()
         .unwrap();
@@ -45,7 +45,7 @@ fn every_help_names_the_token_and_where_it_is_made() {
 #[test]
 fn the_helps_name_login_and_where_it_keeps_the_token() {
     let top = help(&["--help"]);
-    for said in ["login", "logout", "qloudpulse login", "system keychain"] {
+    for said in ["login", "logout", "qloudpulse-stack login", "system keychain"] {
         assert!(top.contains(said), "--help does not say {said:?}:\n{top}");
     }
     let login = help(&["login", "--help"]);
@@ -77,13 +77,13 @@ fn the_pulumi_helps_say_how_they_run() {
         assert!(up.contains(said), "pulumi up --help does not say {said:?}:\n{up}");
     }
     for text in [&preview, &up] {
-        assert!(text.contains("qloudpulse's options come first"), "{text}");
+        assert!(text.contains("qloudpulse-stack's options come first"), "{text}");
     }
 }
 
 #[test]
 fn without_a_token_it_says_where_to_get_one() {
-    let out = Command::new(env!("CARGO_BIN_EXE_qloudpulse"))
+    let out = Command::new(env!("CARGO_BIN_EXE_qloudpulse-stack"))
         .args(["estimate", "tests/fixtures/preview-update.json"])
         .env_remove("QLOUDPULSE_TOKEN")
         .env("QLOUDPULSE_CREDENTIALS_FILE", "/nonexistent/qloudpulse-credentials")
