@@ -1,7 +1,9 @@
-//! The link from the comment to the estimate's page in qloudpulse (qloudpulse's ADR 0133): the answer's `url`, and
-//! after `#` the names of the resources sent, `names=<base64url of {"r…": "name"}>`. A browser never sends what follows
-//! `#` to a server, so the names reach only the browser of whoever opens the link; the page (`namesFromHash`) shows
-//! them beside the keys qloudpulse holds.
+//! The link from the comment to the estimate's page in qloudpulse (qloudpulse's ADR 0133): the answer's `url`.
+//!
+//! qloudpulse keeps the names it is sent (ADR 0140), so its link is short and printed as it is. An endpoint from before
+//! that keeps only keys: to its link the client adds after `#` the names of the resources sent,
+//! `names=<base64url of {"r…": "name"}>`. A browser never sends what follows `#` to a server, so those names reach
+//! only the browser of whoever opens the link; the page (`namesFromHash`) shows them beside the keys it holds.
 
 use serde_json::{Map, Value};
 
@@ -48,10 +50,16 @@ fn page_name(name: &str) -> Option<String> {
     (!clean.is_empty()).then_some(clean)
 }
 
-/// The link to the estimate's page with the names of what was sent: the changed resources' always, then the unchanged
-/// ones while the link stays within [`MAX_LINK`]. None without a URL the comment can show.
-pub fn page_link(url: Option<&str>, locals: &[Local]) -> Option<String> {
+/// The link to the estimate's page. None without a URL the comment can show, or when qloudpulse kept nothing. As it
+/// is when qloudpulse kept the names (`stored`); from an endpoint that does not say, with the names of what was sent
+/// after `#`: the changed resources' always, then the unchanged ones while the link stays within [`MAX_LINK`].
+pub fn page_link(url: Option<&str>, stored: Option<bool>, locals: &[Local]) -> Option<String> {
     let url = url.filter(|u| is_plain_url(u))?;
+    match stored {
+        Some(true) => return Some(url.to_string()),
+        Some(false) => return None,
+        None => {}
+    }
     let changed = locals.iter().filter(|l| l.change != ChangeKind::Same);
     let same = locals.iter().filter(|l| l.change == ChangeKind::Same);
 
@@ -108,6 +116,20 @@ mod tests {
             .clone()
     }
 
+    /// An endpoint from before ADR 0140, which does not say whether it kept the names.
+    fn page_link_old(url: Option<&str>, locals: &[Local]) -> Option<String> {
+        page_link(url, None, locals)
+    }
+
+    #[test]
+    fn a_qloudpulse_that_kept_the_names_gets_its_short_link_and_one_that_kept_nothing_none() {
+        let locals = [local(1, "orders", ChangeKind::Update)];
+        let url = "https://app.qloudpulse.com/ui/?estimate=est_01";
+        assert_eq!(page_link(Some(url), Some(true), &locals).as_deref(), Some(url));
+        assert_eq!(page_link(Some(url), Some(false), &locals), None);
+        assert_eq!(page_link(Some("javascript:alert(1)"), Some(true), &locals), None);
+    }
+
     fn local(i: usize, name: &str, change: ChangeKind) -> Local {
         Local {
             key: format!("r{i:016x}"),
@@ -137,7 +159,7 @@ mod tests {
             local(2, "wëb \"api\"\u{1b}[2J", ChangeKind::Same),
             local(3, "", ChangeKind::Create),
         ];
-        let link = page_link(Some("https://app.qloudpulse.com/ui/?estimate=est_01"), &locals).unwrap();
+        let link = page_link_old(Some("https://app.qloudpulse.com/ui/?estimate=est_01"), &locals).unwrap();
         assert!(
             link.starts_with("https://app.qloudpulse.com/ui/?estimate=est_01#names="),
             "{link}"
@@ -158,7 +180,7 @@ mod tests {
     #[test]
     fn a_long_name_is_cut_to_what_the_page_takes() {
         let long = "n".repeat(400);
-        let link = page_link(
+        let link = page_link_old(
             Some("https://q.example/ui/?estimate=e"),
             &[local(1, &long, ChangeKind::Update)],
         )
@@ -173,7 +195,7 @@ mod tests {
             .map(|i| local(i, &format!("changed-{i}"), ChangeKind::Update))
             .collect();
         locals.extend((100..2100).map(|i| local(i, &format!("volume-{i}"), ChangeKind::Same)));
-        let link = page_link(Some(url), &locals).unwrap();
+        let link = page_link_old(Some(url), &locals).unwrap();
         assert!(link.len() <= MAX_LINK, "{}", link.len());
         let names = decode(&link);
         assert!((0..40).all(|i| names.contains_key(&format!("r{i:016x}"))));
@@ -185,7 +207,7 @@ mod tests {
         let changed: Vec<Local> = (0..400)
             .map(|i| local(i, &"c".repeat(30), ChangeKind::Update))
             .collect();
-        let link = page_link(Some(url), &changed).unwrap();
+        let link = page_link_old(Some(url), &changed).unwrap();
         assert!(link.len() > MAX_LINK);
         assert_eq!(decode(&link).len(), 400);
     }
@@ -193,7 +215,7 @@ mod tests {
     #[test]
     fn no_url_or_one_the_comment_cannot_show_is_no_link() {
         let locals = [local(1, "orders", ChangeKind::Update)];
-        assert_eq!(page_link(None, &locals), None);
+        assert_eq!(page_link_old(None, &locals), None);
         for bad in [
             "javascript:alert(1)",
             "ftp://q.example/x",
@@ -201,14 +223,14 @@ mod tests {
             "https://q.example/a b",
             "https://q.example/\n",
         ] {
-            assert_eq!(page_link(Some(bad), &locals), None, "{bad:?}");
+            assert_eq!(page_link_old(Some(bad), &locals), None, "{bad:?}");
         }
         assert_eq!(
-            page_link(Some("https://q.example/ui/?estimate=e"), &[]).as_deref(),
+            page_link_old(Some("https://q.example/ui/?estimate=e"), &[]).as_deref(),
             Some("https://q.example/ui/?estimate=e")
         );
         assert!(
-            page_link(Some("https://q.example/ui/?estimate=e#tab"), &locals)
+            page_link_old(Some("https://q.example/ui/?estimate=e#tab"), &locals)
                 .unwrap()
                 .contains("#tab&names=")
         );

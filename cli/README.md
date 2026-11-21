@@ -119,6 +119,7 @@ qloudpulse pulumi up -s payments-prod
 | `--dry-run` | Print the request that would be sent, and send nothing. The only run that needs no token |
 | `--region <region>` | The region of every resource for which neither the preview nor its provider names one. It wins over the stack's `aws:region` and this machine's AWS settings. See [What it sends](#what-it-sends) for the whole order |
 | `--with-resource-ids` | Send the cloud ID of each resource that exists before the change, so its usage comes from what it really used |
+| `--no-store` | Have qloudpulse price the change and keep nothing: no names or URNs are sent, and there is no page, link or point in the stack's history. Also `QLOUDPULSE_NO_STORE=1`. See [What qloudpulse keeps](#what-qloudpulse-keeps) |
 | `--format <markdown\|text\|json>` | The comment in Markdown, for a pull request, or as plain text, or qloudpulse's answer as JSON. Without it: text when stdout is a terminal, Markdown when it is piped or redirected, as in `> comment.md` |
 | `--endpoint <url>` | Another address, such as your own qloudpulse install, also `QLOUDPULSE_ENDPOINT`. https only; http only to localhost. The types are asked about at this address and `/catalogue` |
 | `--catalogue <file>` | Read the answer from a file instead of asking, also `QLOUDPULSE_CATALOGUE`, to pin what is sent. `qloudpulse estimate --dry-run` shows the types; `curl -fsS -H 'Content-Type: application/json' -d '{"formatVersion": 1, "types": ["aws:rds/instance:Instance"]}' https://api.qloudpulse.com/v1/estimates/catalogue > catalogue.json` saves an answer |
@@ -197,7 +198,7 @@ In GitHub Actions:
 
 ## What it sends
 
-Only what sets a price. For each resource the change creates, updates, replaces or deletes, of a type in the
+What sets a price, and what the resource is called. For each resource the change creates, updates, replaces or deletes, of a type in the
 catalogue:
 
 - its type token and the change;
@@ -213,14 +214,14 @@ catalogue:
   `[secret]`, is left out and its attribute named under `unknown`. One the inputs leave out, such as a default the
   provider filled in, is taken from the outputs of the state that exists: before the change, and, on the side after
   an update or a replacement, only when neither side's inputs set it;
-- a key, `r` and 16 hex digits of the SHA-256 of its URN. The URN, with its resource name, stays in CI, and the
-  comment's names come from the preview the client still holds;
+- a key, `r` and 16 hex digits of the SHA-256 of its URN;
+- its name, the URN's last part, and its URN, so that qloudpulse's pages name it. Neither with `--no-store`;
 - for a type whose catalogue entry has `references`, such as an ECS service's `taskDefinition`, the key of the resource
   each one names (from Pulumi's `propertyDependencies`), so qloudpulse can price the two together;
 - with `--with-resource-ids`, its cloud ID.
 
 Every resource the change leaves the same, of a type in the catalogue, is sent too, as `"change": "same"`: its type,
-region, catalogue attributes (from its outputs where its inputs leave one out) and key, never its cloud ID, even with `--with-resource-ids`. qloudpulse answers each
+region, catalogue attributes (from its outputs where its inputs leave one out), key, name and URN, never its cloud ID, even with `--with-resource-ids`. qloudpulse answers each
 with one figure for now and after, so the comment gives the whole stack's monthly cost beside what the change adds,
 and prices a changed resource with one it refers to, such as an ECS service with its task definition. Pulumi lists
 unchanged resources only with `pulumi preview --json --show-sames`; without it the comment says so, and a
@@ -232,13 +233,27 @@ Once per request, the stack goes as `"stack": "project/stack"`, from the URNs wh
 qloudpulse's Pulumi stacks page can list the estimate under it. Types of the catalogue's providers (`aws`) that it
 does not list are counted by type, except those the catalogue names under `free`, which AWS charges nothing for of
 their own (IAM, a VPC and its parts, S3 bucket settings): those are neither sent nor counted, and the comment lists
-them as no charge of their own. Nothing else from the preview is sent: no resource names, tags, config, outputs
-other than the catalogue's attributes and the region, or secrets.
+them as no charge of their own. Nothing else from the preview is sent: no tags, config, outputs other than the
+catalogue's attributes and the region, or secrets.
 
-The comment links to the estimate's page in qloudpulse ("See it in qloudpulse") when the answer gives its address.
-The resource names travel only in the link's `#fragment`, `#names=` and base64url of a JSON object of key to name,
-which a browser never sends to a server: they reach only the browser of whoever opens the link. `--dry-run` prints exactly what would go. The request and the answer are
-[`estimate.schema.json`](estimate.schema.json).
+The comment links to the estimate's page in qloudpulse ("See it in qloudpulse") when the answer gives its address:
+under the headline in a pull request, and as the last line at a terminal. `--dry-run` prints exactly what would go.
+The request and the answer are [`estimate.schema.json`](estimate.schema.json).
+
+### What qloudpulse keeps
+
+By default qloudpulse keeps each estimate, with its resources' names and URNs, for 400 days (qloudpulse's ADR 0140):
+that is the estimate's page and its point in the stack's cost history, where each resource has its own name.
+
+With `--no-store`, qloudpulse prices the change and keeps nothing of it, and the client sends no names or URNs. The
+comment is all there is: it has no link, and says that nothing was kept. A company's admins can also choose to keep
+nothing for every run, whatever the flag; the comment then says the same. An endpoint from before ADR 0140 ignores
+`--no-store` and keeps every estimate: the client then stops with an error instead of printing a comment as if
+nothing were kept.
+
+An endpoint from before ADR 0140 keeps no names. To its page's link the client adds the names after `#`, as
+`#names=` and base64url of a JSON object of key to name, which a browser never sends to a server: they reach only
+the browser of whoever opens the link.
 
 ## Verify what you run
 
@@ -416,7 +431,8 @@ qloudpulse estimate --dry-run preview.json | jq .
 ```
 
 The request is what [What it sends](#what-it-sends) describes, in the format of
-[`estimate.schema.json`](estimate.schema.json): no names, tags, config, outputs or secrets.
+[`estimate.schema.json`](estimate.schema.json): resource names and URNs (none with `--no-store`), and no tags,
+config, outputs or secrets.
 
 ## Changing it
 

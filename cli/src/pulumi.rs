@@ -72,6 +72,8 @@ pub struct Options {
     pub aws: AwsEnvironment,
     /// Send the cloud ID of each resource that exists before the change.
     pub with_resource_ids: bool,
+    /// `--no-store`: ask qloudpulse to keep nothing, and send no names or URNs (qloudpulse's ADR 0140).
+    pub keep_nothing: bool,
 }
 
 /// The AWS region settings of the machine the client runs on, as the AWS provider falls back to them: the
@@ -235,6 +237,24 @@ pub fn stack_of(preview: &Preview) -> Option<String> {
 /// The resource's name: the URN's last part.
 fn name(urn: &str) -> &str {
     urn.rsplit_once("::").map_or(urn, |(_, n)| n)
+}
+
+/// The longest name qloudpulse keeps.
+pub const MAX_NAME: usize = 300;
+/// The longest URN qloudpulse keeps.
+pub const MAX_URN: usize = 1000;
+
+/// The name and URN a resource is sent with, as qloudpulse takes them (ADR 0140): the name without control characters
+/// and cut to [`MAX_NAME`], the URN only as it is and when it fits. Neither with `--no-store`.
+fn identity(urn: &str, options: &Options) -> (Option<String>, Option<String>) {
+    if options.keep_nothing {
+        return (None, None);
+    }
+    let name: String = name(urn).chars().filter(|c| !c.is_control()).take(MAX_NAME).collect();
+    let name = (!name.is_empty()).then_some(name);
+    let urn = (urn.starts_with("urn:pulumi:") && urn.chars().count() <= MAX_URN && !urn.chars().any(char::is_control))
+        .then(|| urn.to_string());
+    (name, urn)
 }
 
 /// A provider reference is `<provider URN>::<provider id>`.
@@ -678,8 +698,11 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
             label: priced.label.to_string(),
             change,
         });
+        let (sent_name, sent_urn) = identity(urn, options);
         resources.push(ResourceChange {
             key,
+            name: sent_name,
+            urn: sent_urn,
             change,
             type_token: state.type_token.clone(),
             region,
@@ -692,8 +715,7 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
     }
 
     // Every resource the change leaves the same goes too, so that the comment can add up what the stack costs: Pulumi
-    // lists them with `--show-sames`. Only what a changed resource sends goes for each, never its cloud ID, and its
-    // name stays in CI. Those of the catalogue's providers that it does not price are counted for the comment only;
+    // lists them with `--show-sames`. Only what a changed resource sends goes for each, never its cloud ID. Those of the catalogue's providers that it does not price are counted for the comment only;
     // `notPriced` is the change's.
     let mut stack_listed = false;
     let mut stack_not_priced = 0;
@@ -757,8 +779,11 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
             label: priced.label.to_string(),
             change: ChangeKind::Same,
         });
+        let (sent_name, sent_urn) = identity(urn, options);
         resources.push(ResourceChange {
             key,
+            name: sent_name,
+            urn: sent_urn,
             change: ChangeKind::Same,
             type_token: state.type_token.clone(),
             region: region_of(g),
@@ -776,6 +801,7 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
             format_version: FORMAT_VERSION,
             tool: Tool::Pulumi,
             stack: stack_of(preview),
+            store: options.keep_nothing.then_some(false),
             resources,
             not_priced: not_priced
                 .into_iter()
@@ -944,6 +970,7 @@ mod tests {
                 .collect(),
             },
             with_resource_ids: false,
+            keep_nothing: false,
         };
         (config, options)
     }

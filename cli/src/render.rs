@@ -286,12 +286,11 @@ pub fn render(response: &Response, estimate: &Estimate, style: Style) -> String 
         "this change moves the monthly cost by less than $1".to_string()
     };
     let _ = writeln!(out, "{}\n", style.heading(&headline));
-    let link = page_link(response.url.as_deref(), &estimate.locals);
-    if let Some(link) = &link {
-        let _ = match style {
-            Style::Markdown => writeln!(out, "[See it in qloudpulse]({link})\n"),
-            Style::Text => writeln!(out, "See it in qloudpulse: {link}\n"),
-        };
+    // In a pull request the link goes under the headline, where a reviewer looks first; at a terminal it is the last
+    // line, where the eye ends up once the table has scrolled past.
+    let link = page_link(response.url.as_deref(), response.stored, &estimate.locals);
+    if let (Some(link), Style::Markdown) = (&link, style) {
+        let _ = writeln!(out, "[See it in qloudpulse]({link})\n");
     }
     if let Some(line) = stack_line(&answers, estimate, style) {
         let _ = writeln!(out, "{line}\n");
@@ -408,8 +407,12 @@ pub fn render(response: &Response, estimate: &Estimate, style: Style) -> String 
     if let Some(id) = &response.estimate_id {
         let _ = write!(footer, " Estimate {}.", style.code(id));
     }
+    if response.stored == Some(false) {
+        footer.push_str(" qloudpulse kept nothing of it: there is no page to open.");
+    }
     let _ = writeln!(out, "{}", style.small(&footer));
-    if link.is_some() && style == Style::Markdown {
+    // Only an endpoint from before ADR 0140 is sent the names in the link alone.
+    if link.is_some() && style == Style::Markdown && response.stored.is_none() {
         let _ = writeln!(
             out,
             "{}",
@@ -418,6 +421,9 @@ pub fn render(response: &Response, estimate: &Estimate, style: Style) -> String 
                  sends to a server."
             )
         );
+    }
+    if let (Some(link), Style::Text) = (&link, style) {
+        let _ = writeln!(out, "\nSee it in qloudpulse: {link}");
     }
     out
 }

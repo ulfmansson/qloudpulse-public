@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/ulfmansson/qloudpulse-public/main/cli/estimate.schema.json",
   "title": "Estimate of an infrastructure change",
-  "description": "What `qloudpulse estimate` sends to POST https://api.qloudpulse.com/v1/estimates (formerly /api/report/public/estimates on app.qloudpulse.com), and what qloudpulse answers. The request carries only what sets a price: resource names stay in CI, and each resource is named by a key the client derives from it.",
+  "description": "What `qloudpulse estimate` sends to POST https://api.qloudpulse.com/v1/estimates (formerly /api/report/public/estimates on app.qloudpulse.com), and what qloudpulse answers. The request carries what sets a price and, by default, each resource's name and Pulumi URN, which qloudpulse keeps with the estimate (qloudpulse's ADR 0140). Each resource is matched by a key the client derives from it. With \"store\": false (--no-store), or when the company keeps nothing, qloudpulse prices the change and keeps nothing.",
   "oneOf": [{ "$ref": "#/$defs/request" }, { "$ref": "#/$defs/response" }, { "$ref": "#/$defs/catalogueQuestion" }, { "$ref": "#/$defs/catalogue" }],
   "$defs": {
     "request": {
@@ -22,7 +22,12 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 200,
-          "description": "The project and stack, such as shop/prod, from the resources' URNs (docs/adr/0133). The Pulumi stacks page lists estimates by it. Resource names are never sent."
+          "description": "The project and stack, such as shop/prod, from the resources' URNs (docs/adr/0133). The Pulumi stacks page lists estimates by it."
+        },
+        "store": {
+          "type": "boolean",
+          "default": true,
+          "description": "false (qloudpulse estimate --no-store): price the change and keep nothing, no estimate, no page, no point in the stack's history, and the answer says stored: false (ADR 0140); the client then sends no names or URNs. Left out or true: kept, with the names and URNs sent, unless the company keeps nothing for every run. An endpoint from before 2026-11-21 ignores it and keeps the estimate: the answer then carries estimateId and no stored, which the client refuses."
         },
         "resources": {
           "type": "array",
@@ -54,6 +59,20 @@
           "type": "string",
           "pattern": "^r[0-9a-f]{16}$",
           "description": "r + the first 16 hex digits of the SHA-256 of the resource's Pulumi URN. The answer names the resource by it."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "description": "What the resource is called: the name its URN ends with, such as orders-db, without control characters and cut to 300. Kept with the estimate and shown on its page and its stack's (ADR 0140). Left out with --no-store, and by a client from before 2026-11-21."
+        },
+        "urn": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "pattern": "^urn:pulumi:[^\\u0000-\\u001f\\u007f]+$",
+          "description": "The resource's Pulumi URN, whose SHA-256 the key starts: sent only as it is, so left out when it is longer or has a control character. Kept beside the name (ADR 0140); left out with --no-store."
         },
         "change": {
           "enum": ["create", "update", "replace", "delete", "same"],
@@ -186,13 +205,17 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 100,
-          "description": "Names this estimate, so the change event sent after apply can refer to it."
+          "description": "Names this estimate, so the change event sent after apply can refer to it. Only in an answer that was kept."
         },
         "currency": { "const": "USD" },
+        "stored": {
+          "type": "boolean",
+          "description": "Whether qloudpulse kept the estimate (ADR 0140). false when the request said store: false or the company keeps nothing for every run: the answer then has no estimateId and no url, and nothing of the request was written. Left out by an endpoint from before 2026-11-21, which kept every estimate."
+        },
         "url": {
           "type": "string",
           "pattern": "^https?://",
-          "description": "The estimate's page in the reports (docs/adr/0133). The client adds #names=<base64url of a JSON object of key to name> for the resources it sent, which the browser never sends to a server."
+          "description": "The estimate's page in the reports (docs/adr/0133). Only in an answer that was kept. The page names the resources from what was kept, and the client prints it as it is; to the page of an endpoint from before 2026-11-21, which says nothing of stored, it adds #names=<base64url of a JSON object of key to name>, which the browser never sends to a server."
         },
         "resources": {
           "type": "array",
