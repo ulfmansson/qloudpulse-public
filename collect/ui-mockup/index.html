@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- The mockup holds itself to the real UI's promise: nothing loads from anywhere, nothing is fetched. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>qloudpulse-collect · local UI (mockup)</title>
+<style>
+:root {
+  --bg: #f6f6f4; --panel: #ffffff; --fg: #1c1e21; --muted: #676d74; --line: #e2e2de; --line2: #eeeeea;
+  --accent: #2b63d1; --accent-bg: #e8effc; --ok: #1d7f47; --ok-bg: #e3f4ea; --warn: #9a5c00; --warn-bg: #fdf1dc;
+  --bad: #b8312f; --bad-bg: #fbe6e5; --code: #f3f3ef; --chg: #fff1c9; --drop: #fbe3e2; --add: #e3f4ea;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15171a; --panel: #1d2024; --fg: #e5e5e2; --muted: #9aa0a7; --line: #2f3338; --line2: #262a2f;
+    --accent: #7ba5ff; --accent-bg: #1f2a40; --ok: #5cc98a; --ok-bg: #18301f; --warn: #e6a94a; --warn-bg: #352a14;
+    --bad: #ff8380; --bad-bg: #3a1d1d; --code: #181b1e; --chg: #3a3016; --drop: #3d2023; --add: #18301f;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 0 0 10px; }
+h3 { font-size: 13px; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+p { margin: 0 0 8px; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+
+header.top { background: var(--panel); border-bottom: 1px solid var(--line); }
+.top .row1 { display: flex; align-items: center; gap: 14px; padding: 10px 20px; flex-wrap: wrap; }
+.brand { font-weight: 650; font-size: 15px; letter-spacing: -.01em; }
+.brand small { font-weight: 400; color: var(--muted); margin-left: 6px; }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.chip { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 12px; white-space: nowrap; background: var(--bg); }
+.chip b { font-weight: 600; }
+.chip.lock::before { content: "🔒 "; }
+.top .row2 { display: flex; align-items: stretch; padding: 0 20px; gap: 2px; border-top: 1px solid var(--line2); flex-wrap: wrap; }
+nav a { display: inline-block; padding: 9px 14px; color: var(--muted); border-bottom: 2px solid transparent; font-weight: 500; }
+nav a:hover { color: var(--fg); text-decoration: none; }
+nav a.on { color: var(--fg); border-bottom-color: var(--accent); }
+.runstate { margin-left: auto; align-self: center; font-size: 12px; color: var(--muted); }
+.runstate b { color: var(--fg); }
+
+main { padding: 18px 20px 40px; max-width: 1560px; margin: 0 auto; }
+section.view { display: none; }
+section.view.on { display: block; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
+.grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.grid-rules { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); gap: 14px; align-items: start; }
+@media (max-width: 1000px) { .grid2, .grid-rules { grid-template-columns: 1fr; } }
+.headline { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+.headline .grow { flex: 1; min-width: 260px; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.card .n { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.card .l { font-size: 12px; color: var(--muted); }
+.card.warn .n { color: var(--warn); }
+.card.bad .n { color: var(--bad); }
+
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line2); vertical-align: top; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; border-bottom-color: var(--line); white-space: nowrap; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.click { cursor: pointer; }
+tr.click:hover td { background: var(--accent-bg); }
+tr.sel td { background: var(--accent-bg); }
+.scroll { overflow-x: auto; }
+
+.pill { display: inline-block; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 20px; white-space: nowrap; }
+.p-keep { background: var(--ok-bg); color: var(--ok); }
+.p-drop { background: var(--bad-bg); color: var(--bad); }
+.p-pseudonymize { background: var(--accent-bg); color: var(--accent); }
+.p-replace { background: var(--warn-bg); color: var(--warn); }
+.p-default { opacity: .75; font-weight: 500; }
+.ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+.st { font-weight: 600; white-space: nowrap; }
+
+button, .btn { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover { filter: brightness(1.08); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.link { border: none; background: none; color: var(--accent); padding: 0; }
+input[type=text], select { font: inherit; font-size: 13px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); color: var(--fg); }
+input[type=text].mono { font-family: var(--mono); font-size: 12.5px; }
+input.err { border-color: var(--bad); }
+
+.note { border-left: 3px solid var(--line); padding: 6px 10px; background: var(--bg); border-radius: 0 6px 6px 0; margin: 8px 0; font-size: 13px; }
+.note.info { border-left-color: var(--accent); }
+.note.warn { border-left-color: var(--warn); background: var(--warn-bg); }
+.note.bad { border-left-color: var(--bad); background: var(--bad-bg); }
+.note.ok { border-left-color: var(--ok); background: var(--ok-bg); }
+ul.plain { margin: 0; padding-left: 18px; }
+ul.plain li { margin: 3px 0; }
+
+.bar { height: 6px; background: var(--accent); border-radius: 3px; opacity: .55; min-width: 2px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; word-break: break-all; }
+
+/* side-by-side preview */
+.sbs { width: 100%; table-layout: fixed; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+.sbs td { border: none; padding: 0 8px; white-space: pre-wrap; word-break: break-all; line-height: 17px; width: 50%; font-size: 11.5px; }
+.sbs td.l { border-right: 1px solid var(--line); }
+.sbs th { font-family: system-ui, sans-serif; position: sticky; top: 0; background: var(--panel); }
+.sbs tr.chg td.r { background: var(--chg); }
+.sbs tr.chg td.l { background: color-mix(in srgb, var(--chg) 45%, transparent); }
+.sbs tr.drop td.l { background: var(--drop); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--bad) 60%, transparent); }
+.sbs tr.drop td.r { background: repeating-linear-gradient(135deg, transparent 0 6px, var(--line2) 6px 8px); }
+.preview-box { max-height: 560px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--code); }
+
+pre.code { background: var(--code); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; overflow: auto; margin: 0; max-height: 520px; }
+pre.code .add { background: var(--add); display: inline-block; width: 100%; }
+pre.code .cm { color: var(--muted); }
+.legend span { display: inline-block; margin-right: 12px; font-size: 12px; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; border: 1px solid var(--line); }
+
+.rule-row td { vertical-align: middle; }
+.errtext { color: var(--bad); font-size: 12px; }
+.dirty { color: var(--warn); font-weight: 600; font-size: 12px; }
+.tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.tabs button.on { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.spacer { flex: 1; }
+.spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+footer { color: var(--muted); font-size: 12px; text-align: center; padding: 10px 20px 30px; }
+.hidden { display: none !important; }
+.tight td, .tight th { padding: 4px 8px; }
+.deliv { display: inline-flex; gap: 4px; flex-wrap: nowrap; }
+.dv { font-size: 11.5px; padding: 0 6px; border-radius: 4px; line-height: 19px; border: 1px solid var(--line); white-space: nowrap; }
+.dv.ok { background: var(--ok-bg); border-color: transparent; }
+.dv.bad { background: var(--bad-bg); border-color: transparent; }
+.dv.off { opacity: .5; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="row1">
+    <div class="brand">qloudpulse-collect <small>0.1.0 · local UI</small></div>
+    <div class="chips">
+      <span class="chip lock" title="The UI binds 127.0.0.1 only. The Host header is checked against DNS rebinding.">listening on <b class="mono">127.0.0.1:7781</b></span>
+      <span class="chip" title="The token printed at startup. Without it every page answers 401.">session token <b class="mono">••••••••9f2c</b> ✓</span>
+      <span class="chip" title="source_id in the config: names this client among several a company may run.">source_id <b class="mono">eu-prod</b></span>
+      <span class="chip" title="An HMAC of a fixed string. Names the pseudonym key without revealing it; a new key changes every pseudonym.">key fingerprint <b class="mono">7d3a91c0e45b28f6</b></span>
+    </div>
+  </div>
+  <div class="row2">
+    <nav id="nav">
+      <a href="#analyze" data-v="analyze">Analyze</a>
+      <a href="#rules" data-v="rules">Rules <span id="navDirty" class="dirty hidden">●</span></a>
+      <a href="#bundles" data-v="bundles">Bundles</a>
+      <a href="#runs" data-v="runs">Run history</a>
+    </nav>
+    <div class="runstate">under <code>run --every 1h --ui</code> · last run <b>07:05 UTC</b> · next run <b>08:05 UTC</b> · config <code>/srv/qloudpulse-collect/qloudpulse-collect.toml</code></div>
+  </div>
+</header>
+
+<main>
+
+<!-- ============================ ANALYZE ============================ -->
+<section class="view" id="v-analyze">
+  <div class="headline">
+    <div class="grow">
+      <h1>Analyze</h1>
+      <p class="muted">What the collector reads, which tag keys it found, and what the current rules do with them. Sample values are shown here, on this machine, and never written to disk by the UI.</p>
+    </div>
+    <div class="panel" style="margin:0; min-width: 380px;">
+      <div class="toolbar" style="margin-bottom:6px;">
+        <label class="small muted" for="srcSel">Analyzing</label>
+        <select id="srcSel">
+          <option value="sample">Raw sample, in memory</option>
+          <option value="bundle">Bundle qloudpulse-eu-prod-20261121T0600Z.tgz (as it left)</option>
+        </select>
+      </div>
+      <div id="sampleState" class="small"></div>
+      <div class="toolbar" style="margin-top:8px;">
+        <button class="primary" id="collectBtn">Collect sample now (held in memory only)</button>
+        <button id="forgetBtn">Forget sample</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="cards" id="sumCards"></div>
+
+  <div class="panel">
+    <div class="toolbar" style="margin-bottom:8px;">
+      <h2 style="margin:0;">Tag keys</h2>
+      <span class="spacer"></span>
+      <label class="small"><input type="checkbox" id="showValues" checked> show sample values</label>
+      <a class="small" href="#rules">Edit rules →</a>
+    </div>
+    <div class="scroll"><table id="tagTable"></table></div>
+    <p class="small muted" style="margin-top:8px;">Action is what <code>[tags]</code> in the saved config does with the key: <code>drop</code>, then <code>pseudonymize</code>, then <code>replace</code>, then <code>keep</code>, then the default (<span id="defaultWord">deny</span>).</p>
+  </div>
+
+  <div class="grid2">
+    <div>
+      <div class="panel">
+        <h2>What the rules cost in qloudpulse</h2>
+        <div id="impact"></div>
+      </div>
+      <div class="panel">
+        <h2>Secret and personal-data scan</h2>
+        <p class="small muted">Runs on what would be packed. <code>pack</code> refuses while a finding is open (or until <code>--allow-findings</code>).</p>
+        <table class="tight" id="scanTable"></table>
+      </div>
+      <div class="panel">
+        <h2>Errors recorded</h2>
+        <p class="small muted">Replayed to qloudpulse as the same error, so its collectors degrade exactly as they would live.</p>
+        <table class="tight" id="errTable"></table>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Calls by operation</h2>
+      <p class="small muted" id="opsNote"></p>
+      <table class="tight" id="opsTable"></table>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ RULES ============================ -->
+<section class="view" id="v-rules">
+  <div class="headline">
+    <div class="grow">
+      <h1>Rules</h1>
+      <p class="muted">Edits <code>[tags]</code> and <code>[[fields]]</code> in the config. Saving goes through the same validation as the CLI and writes with <code>toml_edit</code>, so comments and the rest of the file stay as they are. Under <code>run</code>, a saved change takes effect at the next cycle.</p>
+    </div>
+    <div class="toolbar">
+      <span id="dirtyNote" class="dirty hidden">unsaved changes</span>
+      <button id="revertBtn">Revert</button>
+      <button class="primary" id="saveBtn">Save to config</button>
+    </div>
+  </div>
+  <div id="saveMsg"></div>
+
+  <div class="grid-rules">
+    <div>
+      <div class="panel">
+        <div class="toolbar" style="margin-bottom:6px;">
+          <h2 style="margin:0;">[tags]</h2>
+          <span class="spacer"></span>
+          <span class="small muted">A tag no rule names is</span>
+          <label class="small"><input type="radio" name="tdef" value="deny"> dropped (<code>deny</code>)</label>
+          <label class="small"><input type="radio" name="tdef" value="allow"> kept (<code>allow</code>)</label>
+        </div>
+        <div class="scroll"><table id="ruleTags"></table></div>
+        <div class="toolbar" style="margin-top:8px;">
+          <input type="text" class="mono" id="newTagKey" placeholder="tag key, e.g. Department" style="width: 220px;">
+          <button id="addTagBtn">Add key</button>
+          <span class="small muted">Keys found in the sample are listed already.</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="toolbar" style="margin-bottom:6px;">
+          <h2 style="margin:0;">[[fields]]</h2>
+          <span class="spacer"></span>
+          <button id="addFieldBtn">Add field rule</button>
+        </div>
+        <p class="small muted">A path is field names separated by dots, matched against the <em>end</em> of a field's path in the answer, with the list wrappers <code>item</code>/<code>member</code> left out: <code>instancesSet.privateDnsName</code>, or just <code>privateDnsName</code> for every one.</p>
+        <table id="ruleFields"></table>
+        <datalist id="fieldNames"></datalist>
+        <p class="small muted" style="margin-top:8px;">Fields qloudpulse prices from cannot be changed: <span class="mono" id="reqList"></span>. <button class="link small" id="tryPriced">Try a rule on instancesSet.instanceType</button></p>
+      </div>
+
+      <div class="panel">
+        <div class="toolbar" style="margin-bottom:6px;">
+          <h2 style="margin:0;">What will be saved</h2>
+          <span class="spacer"></span>
+          <span class="legend"><span><i class="sw" style="background:var(--add)"></i>changed since saved</span></span>
+        </div>
+        <p class="small muted">Only the two sections this page edits. File loaded at 07:19 UTC, sha256 <code>3e1f9a0c…</code>; saving refuses if the file changed on disk since then.</p>
+        <pre class="code" id="tomlOut"></pre>
+      </div>
+    </div>
+
+    <div style="position: sticky; top: 10px;">
+      <div class="panel">
+        <div class="toolbar" style="margin-bottom:6px;">
+          <h2 style="margin:0;">Preview: one recorded answer</h2>
+          <span class="spacer"></span>
+          <select id="recSel">
+            <option value="ec2">ec2:DescribeInstances · 111122223333 · eu-west-1 · page 1</option>
+          </select>
+        </div>
+        <p class="small muted">Left: the raw answer from AWS (in memory). Right: the same answer with the rules on this page, unsaved ones included. Redaction works on the parsed body and writes it back in the same format.</p>
+        <div class="legend" style="margin-bottom:6px;"><span><i class="sw" style="background:var(--chg)"></i>changed</span><span><i class="sw" style="background:var(--drop)"></i>removed</span><span class="muted">pseudonyms: <code>p_</code> + 16 hex, HMAC with key 7d3a91c0e45b28f6</span></div>
+        <div class="preview-box"><table class="sbs" id="sbs"></table></div>
+        <div id="recStats" class="small" style="margin-top:8px;"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ BUNDLES ============================ -->
+<section class="view" id="v-bundles">
+  <div class="headline">
+    <div class="grow">
+      <h1>Bundles</h1>
+      <p class="muted">Every <code>.tgz</code> in <code>/srv/qloudpulse-collect/bundles</code>, newest first, and which delivery target has it. A bundle stays until every configured target has it; retention (168 bundles) never deletes an undelivered one.</p>
+    </div>
+    <div class="panel small" style="margin:0;">
+      <b>Delivery targets</b>
+      <ul class="plain">
+        <li><code>s3</code> → <code>s3://example-finops-exports/qloudpulse/</code> (eu-west-1, SSE-KMS <code>alias/finops-exports</code>)</li>
+        <li><code>qloudpulse</code> → <code>https://api.qloudpulse.com/v1/collection-bundles</code>, token from <code>QLOUDPULSE_UPLOAD_TOKEN</code></li>
+        <li><code>command</code> → <code>/usr/local/bin/archive-bundle {bundle}</code></li>
+      </ul>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="scroll"><table id="bundleTable"></table></div>
+  </div>
+  <div id="bundleDetail"></div>
+</section>
+
+<!-- ============================ RUNS ============================ -->
+<section class="view" id="v-runs">
+  <div class="headline">
+    <div class="grow">
+      <h1>Run history</h1>
+      <p class="muted">Each cycle of <code>run --every 1h</code>: collect the hour that just ended, pack, deliver everything pending, prune. Runs start 5 minutes past the hour (<code>[run] minute = 5</code>) so the hour is complete.</p>
+    </div>
+    <div class="cards" style="margin:0; grid-template-columns: repeat(3, minmax(140px, 1fr));">
+      <div class="card"><div class="l">Next run</div><div class="n">08:05</div><div class="l">UTC · window 07:00–08:00</div></div>
+      <div class="card"><div class="l">Running since</div><div class="n" style="font-size:16px; padding-top:5px;">18 Nov 14:05</div><div class="l">UTC · 66 cycles</div></div>
+      <div class="card warn"><div class="l">Pending deliveries</div><div class="n">1</div><div class="l">retried at the next run</div></div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="scroll"><table id="runTable"></table></div>
+  </div>
+</section>
+
+</main>
+<footer>Mockup with invented data. In the real UI every view is its own server-rendered page (<code>/analyze</code>, <code>/rules</code>, <code>/bundles</code>, <code>/runs</code>), the preview comes from the Rust redactor, and the JS is a small embedded file served from 127.0.0.1. This page makes no network requests.</footer>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------- reference data (mirrors collect/src/config.rs)
+const FEATURE_TAGS = {
+  "Name": "resource names in reports",
+  "Environment": "the Environment column and environment rules",
+  "Team": "cost by team and tag rules",
+  "Company": "the Company column and tag rules",
+  "eks:cluster-name": "matching EKS nodes to their instances",
+  "aws:eks:cluster-name": "matching EKS nodes to their instances",
+  "karpenter.sh/nodepool": "Kubernetes node pools",
+  "eks:nodegroup-name": "Kubernetes node groups",
+  "aws:autoscaling:groupName": "Auto Scaling group cost",
+};
+const REQUIRED_FIELDS = ["instanceType","InstanceType","platformDetails","instanceLifecycle","volumeType","size","iops","throughput","DBInstanceClass","Engine","AllocatedStorage","StorageType","MultiAZ","CacheNodeType","NumCacheNodes","spotPrice","availabilityZone","AvailabilityZone","BillingMode","ProvisionedThroughput","TableSizeBytes"];
+
+// ---------------------------------------------------------------- the in-memory sample (invented)
+const SAMPLE_TAGS = [
+  { key: "Name", count: 1042, distinct: 611, samples: ["web-prod-eu-1", "batch-worker-03", "core-prod-default-7xk2p"], ops: ["ec2:DescribeInstances", "ec2:DescribeVolumes", "rds:DescribeDBInstances"] },
+  { key: "Environment", count: 988, distinct: 4, samples: ["prod", "staging", "dev"], ops: ["ec2:DescribeInstances", "rds:DescribeDBInstances", "eks:DescribeCluster"] },
+  { key: "Team", count: 940, distinct: 9, samples: ["payments", "platform", "data"], ops: ["ec2:DescribeInstances", "ec2:DescribeVolumes", "secretsmanager:ListSecrets"] },
+  { key: "Owner", count: 702, distinct: 58, samples: ["anna.berg@example.com", "j.okafor@example.com", "lin.wei@example.com"], ops: ["ec2:DescribeInstances", "rds:DescribeDBInstances"] },
+  { key: "CostCenter", count: 655, distinct: 12, samples: ["4410-ops", "4420-data", "4600-platform"], ops: ["ec2:DescribeInstances", "ec2:DescribeVolumes"] },
+  { key: "Project", count: 512, distinct: 21, samples: ["checkout-v2", "ledger", "search-reindex"], ops: ["ec2:DescribeInstances", "elasticache:DescribeCacheClusters"] },
+  { key: "aws:autoscaling:groupName", count: 214, distinct: 17, samples: ["web-prod-eu-asg", "batch-spot-asg", "eks-core-prod-sys-2a"], ops: ["ec2:DescribeInstances"] },
+  { key: "aws:cloudformation:stack-name", count: 188, distinct: 31, samples: ["network-base", "ledger-db", "eksctl-core-prod-cluster"], ops: ["ec2:DescribeInstances", "ec2:DescribeVolumes"] },
+  { key: "aws:cloudformation:logical-id", count: 188, distinct: 44, samples: ["NodeGroup", "PrimaryDB", "NatGatewayA"], ops: ["ec2:DescribeInstances"] },
+  { key: "CreatedBy", count: 140, distinct: 6, samples: ["terraform", "jdoe", "ci-bot"], ops: ["ec2:DescribeInstances", "ec2:DescribeVolumes"] },
+  { key: "eks:cluster-name", count: 96, distinct: 2, samples: ["core-prod", "core-staging"], ops: ["ec2:DescribeInstances"] },
+  { key: "aws:eks:cluster-name", count: 96, distinct: 2, samples: ["core-prod", "core-staging"], ops: ["ec2:DescribeInstances"] },
+  { key: "kubernetes.io/cluster/core-prod", count: 71, distinct: 1, samples: ["owned"], ops: ["ec2:DescribeInstances", "ec2:DescribeVolumes"] },
+  { key: "Backup", count: 77, distinct: 2, samples: ["daily", "weekly"], ops: ["ec2:DescribeVolumes", "rds:DescribeDBInstances"] },
+  { key: "eks:nodegroup-name", count: 64, distinct: 5, samples: ["sys-2a", "sys-2b", "gpu-a10"], ops: ["ec2:DescribeInstances"] },
+  { key: "karpenter.sh/nodepool", count: 32, distinct: 2, samples: ["default", "gpu"], ops: ["ec2:DescribeInstances"] },
+  { key: "DataClassification", count: 40, distinct: 3, samples: ["internal", "confidential", "public"], ops: ["rds:DescribeDBInstances", "secretsmanager:ListSecrets"] },
+];
+const OPS = [
+  ["cloudwatch:GetMetricStatistics", 612], ["ec2:DescribeInstances", 96], ["kms:DescribeKey", 84], ["ec2:DescribeNetworkInterfaces", 63],
+  ["ec2:DescribeVolumes", 54], ["dynamodb:DescribeTable", 41], ["ec2:DescribeSpotPriceHistory", 27], ["logs:DescribeLogGroups", 27],
+  ["elbv2:DescribeLoadBalancers", 18], ["ecs:ListContainerInstances", 12], ["cloudwatch:DescribeAlarms", 9], ["ds:DescribeDirectories", 9],
+  ["dynamodb:ListTables", 9], ["ec2:DescribeAddresses", 9], ["ec2:DescribeClientVpnEndpoints", 9], ["ec2:DescribeNatGateways", 9],
+  ["ec2:DescribeTransitGatewayAttachments", 9], ["ec2:DescribeVpcEndpoints", 9], ["ec2:DescribeVpnConnections", 9], ["ecs:ListClusters", 9],
+  ["eks:ListClusters", 9], ["elasticache:DescribeCacheClusters", 9], ["kinesis:ListStreams", 9], ["kms:ListKeys", 9],
+  ["rds:DescribeDBInstances", 9], ["secretsmanager:ListSecrets", 9], ["eks:DescribeCluster", 4], ["ec2:DescribeRegions", 3],
+  ["s3:ListAllMyBuckets", 3], ["sts:GetCallerIdentity", 3],
+];
+const CLIENT_OPS = ["ec2:DescribeRegions", "sts:GetCallerIdentity"]; // planning calls; never packed
+const ERRORS = [
+  ["ec2:DescribeClientVpnEndpoints UnauthorizedOperation", 3, "eu-north-1 in all 3 accounts: the region was opted in after the role's SCP was written"],
+  ["ds:DescribeDirectories AccessDeniedException", 3, "the role lacks ds:DescribeDirectories in 444455556666"],
+  ["cloudwatch:GetMetricStatistics Throttling", 2, "still throttled after 5 retries"],
+];
+const TOTAL = OPS.reduce((a, o) => a + o[1], 0);
+const PACKED = OPS.filter(o => !CLIENT_OPS.includes(o[0])).reduce((a, o) => a + o[1], 0);
+
+// ---------------------------------------------------------------- rules state
+const SAVED0 = {
+  tags: {
+    default: "deny",
+    keep: ["Environment", "Team", "eks:cluster-name", "aws:eks:cluster-name", "karpenter.sh/nodepool", "eks:nodegroup-name", "aws:autoscaling:groupName", "Backup"],
+    drop: ["CreatedBy"],
+    pseudonymize: ["Name", "Owner"],
+    replace: [{ key: "CostCenter", pattern: "^(\\d+)-.*$", with: "$1" }],
+  },
+  fields: [
+    { path: "privateDnsName", action: "pseudonymize", pattern: "", with: "" },
+    { path: "keyName", action: "drop", pattern: "", with: "" },
+    { path: "privateIpAddress", action: "replace", pattern: "^(\\d+\\.\\d+)\\..*$", with: "$1.x.x" },
+  ],
+};
+const clone = o => JSON.parse(JSON.stringify(o));
+let saved = clone(SAVED0);
+let st = clone(SAVED0);
+
+// ---------------------------------------------------------------- helpers
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = n => n.toLocaleString("en-US");
+function h32(str, seed) {
+  let h = seed >>> 0;
+  for (let i = 0; i < str.length; i++) { h = Math.imul(h ^ str.charCodeAt(i), 2654435761); h = (h << 13) | (h >>> 19); }
+  h = Math.imul(h ^ (h >>> 16), 2246822507); h = Math.imul(h ^ (h >>> 13), 3266489909); h ^= h >>> 16;
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+// Stands in for HMAC-SHA256(key, "qloudpulse-collect/v1\0value\0" + value)[..16]
+const pseudo = v => "p_" + h32(v, 0x7d3a91c0) + h32(v, 0xe45b28f6);
+const fakeHex = (seed, n) => { let s = ""; let i = 0; while (s.length < n) s += h32(seed + ":" + (i++), 0x51ed270b); return s.slice(0, n); };
+
+function tagAction(rules, key) {
+  const t = rules.tags;
+  if (t.drop.includes(key)) return { a: "drop" };
+  if (t.pseudonymize.includes(key)) return { a: "pseudonymize" };
+  const ri = t.replace.findIndex(r => r.key === key);
+  if (ri >= 0) return { a: "replace", r: t.replace[ri] };
+  if (t.keep.includes(key)) return { a: "keep" };
+  return { a: t.default === "allow" ? "keep" : "drop", dflt: true };
+}
+function safeRegex(p) { try { return new RegExp(p); } catch (e) { return null; } }
+function tagOut(rules, key, value) {
+  const act = tagAction(rules, key);
+  if (act.a === "drop") return null;
+  if (act.a === "pseudonymize") return pseudo(value);
+  if (act.a === "replace") {
+    if (!act.r.pattern) return act.r.with;
+    const re = safeRegex(act.r.pattern);
+    return re ? value.replace(re, act.r.with) : value;
+  }
+  return value;
+}
+function fieldError(f) {
+  if (!f.path.trim()) return "a path is needed";
+  const last = f.path.split(".").pop();
+  if (REQUIRED_FIELDS.includes(last)) return "the rule for " + f.path + " would change a field qloudpulse prices from; remove it";
+  if (f.action === "replace" && !f.with) return "the replace rule for " + f.path + " needs `with`";
+  if (f.pattern && !safeRegex(f.pattern)) return "the pattern for " + f.path + " is not a valid regex";
+  return "";
+}
+function tagErrors(rules) {
+  const errs = [];
+  rules.tags.replace.forEach(r => { if (r.pattern && !safeRegex(r.pattern)) errs.push("the pattern for tag " + r.key + " is not a valid regex"); });
+  return errs;
+}
+function fieldRuleFor(rules, path) {
+  for (const f of rules.fields) {
+    if (fieldError(f)) continue;
+    const seg = f.path.split(".");
+    if (seg.length <= path.length && seg.every((s, i) => s === path[path.length - seg.length + i])) return f;
+  }
+  return null;
+}
+function applyField(f, v) {
+  if (f.action === "drop") return null;
+  if (f.action === "pseudonymize") return pseudo(v);
+  if (!f.pattern) return f.with;
+  const re = safeRegex(f.pattern);
+  return re ? v.replace(re, f.with) : v;
+}
+function featureImpact(rules) {
+  const out = [];
+  for (const [k, f] of Object.entries(FEATURE_TAGS)) {
+    const a = tagAction(rules, k);
+    if (a.a === "drop") out.push({ key: k, a: "drop", text: "dropping tag " + k + " disables " + f, dflt: a.dflt });
+    if (a.a === "pseudonymize") out.push({ key: k, a: "pseudonymize", text: "pseudonymizing tag " + k + " makes " + f + " show pseudonyms" });
+  }
+  return out;
+}
+const pill = (a, dflt) => `<span class="pill p-${a}${dflt ? " p-default" : ""}" title="${dflt ? "no rule names this key; the default applies" : ""}">${a}${dflt ? " (default)" : ""}</span>`;
+
+// ---------------------------------------------------------------- the recorded answer used by the preview
+const E = (n, ...c) => ({ n, c });
+const L = (n, t) => ({ n, t });
+const tagSet = pairs => E("tagSet", ...pairs.map(([k, v]) => E("item", L("key", k), L("value", v))));
+const EC2_RAW = Object.assign(E("DescribeInstancesResponse",
+  L("requestId", "8f1c2b9e-6a1d-4c47-9d2e-0b7a3f5e1c22"),
+  E("reservationSet",
+    E("item",
+      L("reservationId", "r-0d4e1f2a3b4c5d6e7"),
+      L("ownerId", "111122223333"),
+      E("instancesSet",
+        E("item",
+          L("instanceId", "i-0a1b2c3d4e5f60718"),
+          L("imageId", "ami-0c1d2e3f4a5b6c7d8"),
+          E("instanceState", L("code", "16"), L("name", "running")),
+          L("privateDnsName", "ip-10-20-31-14.eu-west-1.compute.internal"),
+          L("keyName", "ops-eu-2024"),
+          L("instanceType", "m6i.large"),
+          L("launchTime", "2026-10-02T08:14:55.000Z"),
+          E("placement", L("availabilityZone", "eu-west-1a"), L("tenancy", "default")),
+          L("subnetId", "subnet-0f1e2d3c4b5a69788"),
+          L("vpcId", "vpc-0123abcd4567ef890"),
+          L("privateIpAddress", "10.20.31.14"),
+          L("platformDetails", "Linux/UNIX"),
+          E("networkInterfaceSet",
+            E("item",
+              L("networkInterfaceId", "eni-0aa11bb22cc33dd44"),
+              L("privateDnsName", "ip-10-20-31-14.eu-west-1.compute.internal"),
+              L("privateIpAddress", "10.20.31.14"))),
+          tagSet([["Name", "web-prod-eu-1"], ["Environment", "prod"], ["Team", "payments"], ["Owner", "anna.berg@example.com"],
+                  ["CostCenter", "4410-ops"], ["Project", "checkout-v2"], ["CreatedBy", "terraform"], ["aws:autoscaling:groupName", "web-prod-eu-asg"]])),
+        E("item",
+          L("instanceId", "i-07f6e5d4c3b2a1908"),
+          L("imageId", "ami-0a9b8c7d6e5f40312"),
+          E("instanceState", L("code", "16"), L("name", "running")),
+          L("privateDnsName", "ip-10-20-48-201.eu-west-1.compute.internal"),
+          L("instanceType", "m7g.xlarge"),
+          L("instanceLifecycle", "spot"),
+          L("launchTime", "2026-11-21T05:41:09.000Z"),
+          E("placement", L("availabilityZone", "eu-west-1b"), L("tenancy", "default")),
+          L("subnetId", "subnet-0a1b2c3d4e5f60789"),
+          L("vpcId", "vpc-0123abcd4567ef890"),
+          L("privateIpAddress", "10.20.48.201"),
+          L("platformDetails", "Linux/UNIX"),
+          tagSet([["Name", "core-prod-default-7xk2p"], ["Environment", "prod"], ["Team", "platform"], ["karpenter.sh/nodepool", "default"],
+                  ["eks:cluster-name", "core-prod"], ["aws:eks:cluster-name", "core-prod"], ["kubernetes.io/cluster/core-prod", "owned"]])))))),
+  { attr: ' xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"' });
+
+// Walks the raw tree and the redacted tree together, so removed lines leave a gap on the right.
+function previewRows(rules) {
+  const rows = [];
+  const stats = { tags: { keep: 0, drop: 0, pseudonymize: 0, replace: 0 }, fields: 0 };
+  const ind = d => "  ".repeat(d);
+  const open = n => "<" + n.n + (n.attr || "") + ">";
+  function emit(node, d, path, dropped) {
+    const p = (node.n === "item" || node.n === "member") ? path : path.concat(node.n);
+    if (node.n === "tagSet" && !dropped) {
+      rows.push({ l: ind(d) + "<tagSet>", r: ind(d) + "<tagSet>" });
+      for (const it of node.c) {
+        const k = it.c[0].t, v = it.c[1].t;
+        const act = tagAction(rules, k);
+        const out = tagOut(rules, k, v);
+        stats.tags[act.a]++;
+        const lines = [ind(d + 1) + "<item>", ind(d + 2) + "<key>" + k + "</key>", ind(d + 2) + "<value>" + v + "</value>", ind(d + 1) + "</item>"];
+        if (out === null) { lines.forEach(l => rows.push({ l, r: null, cls: "drop", why: "tag " + k + ": " + act.a + (act.dflt ? " (default)" : "") })); continue; }
+        rows.push({ l: lines[0], r: lines[0] }); rows.push({ l: lines[1], r: lines[1] });
+        const rv = ind(d + 2) + "<value>" + out + "</value>";
+        rows.push({ l: lines[2], r: rv, cls: out !== v ? "chg" : "", why: "tag " + k + ": " + act.a });
+        rows.push({ l: lines[3], r: lines[3] });
+      }
+      rows.push({ l: ind(d) + "</tagSet>", r: ind(d) + "</tagSet>" });
+      return;
+    }
+    const rule = dropped ? null : fieldRuleFor(rules, p);
+    if (node.t !== undefined) {
+      const raw = ind(d) + "<" + node.n + ">" + node.t + "</" + node.n + ">";
+      if (rule) {
+        const out = applyField(rule, node.t);
+        if (out !== node.t) stats.fields++;
+        if (out === null) { rows.push({ l: raw, r: null, cls: "drop", why: "field rule " + rule.path + ": drop" }); return; }
+        rows.push({ l: raw, r: ind(d) + "<" + node.n + ">" + out + "</" + node.n + ">", cls: out !== node.t ? "chg" : "", why: "field rule " + rule.path + ": " + rule.action });
+        return;
+      }
+      rows.push({ l: raw, r: dropped ? null : raw, cls: dropped ? "drop" : "" });
+      return;
+    }
+    const gone = dropped || (rule && rule.action === "drop");
+    if (rule && rule.action === "drop" && !dropped) stats.fields++;
+    rows.push({ l: ind(d) + open(node), r: gone ? null : ind(d) + open(node), cls: gone ? "drop" : "" });
+    node.c.forEach(c => emit(c, d + 1, p, gone));
+    rows.push({ l: ind(d) + "</" + node.n + ">", r: gone ? null : ind(d) + "</" + node.n + ">", cls: gone ? "drop" : "" });
+  }
+  emit(EC2_RAW, 0, [], false);
+  return { rows, stats };
+}
+const redactedXml = rules => '<?xml version="1.0" encoding="UTF-8"?>\n' + previewRows(rules).rows.filter(r => r.r !== null).map(r => r.r).join("\n");
+
+// ---------------------------------------------------------------- TOML
+const tq = s => '"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+function tomlArr(name, items) {
+  const one = name + " = [" + items.map(tq).join(", ") + "]";
+  if (one.length <= 96) return one;
+  const lines = []; let cur = name + " = [";
+  items.forEach((it, i) => {
+    const piece = tq(it) + (i < items.length - 1 ? ", " : "]");
+    if ((cur + piece).length > 96) { lines.push(cur.trimEnd()); cur = " ".repeat(name.length + 4); }
+    cur += piece;
+  });
+  lines.push(cur);
+  return lines.join("\n");
+}
+function toml(rules) {
+  const t = rules.tags; const o = [];
+  o.push("[tags]");
+  o.push('# A tag no rule names is dropped ("deny") or kept ("allow").');
+  o.push("default = " + tq(t.default));
+  o.push("# The keys qloudpulse features read. `analyze` lists every key found and what each rule costs.");
+  o.push(tomlArr("keep", t.keep));
+  o.push(tomlArr("drop", t.drop));
+  o.push(tomlArr("pseudonymize", t.pseudonymize) + "   # the same value always gives the same pseudonym, which only you can reverse");
+  t.replace.forEach(r => {
+    o.push(""); o.push("[[tags.replace]]"); o.push("key = " + tq(r.key));
+    if (r.pattern) o.push("pattern = " + tq(r.pattern));
+    o.push("with = " + tq(r.with));
+  });
+  o.push("");
+  o.push("# Rules for any field, by the end of its path in the answer (list wrappers `item`/`member` left out).");
+  o.push("# Actions: drop, replace (with, optional pattern), pseudonymize. Fields qloudpulse prices from are refused.");
+  rules.fields.forEach(f => {
+    o.push("[[fields]]"); o.push("path = " + tq(f.path)); o.push("action = " + tq(f.action));
+    if (f.pattern) o.push("pattern = " + tq(f.pattern));
+    if (f.action === "replace") o.push("with = " + tq(f.with || ""));
+    o.push("");
+  });
+  return o.join("\n").trimEnd() + "\n";
+}
+
+// ---------------------------------------------------------------- ANALYZE view
+let sample = { at: "07:22:10 UTC", age: "19 min" };
+function renderAnalyze() {
+  const fromBundle = $("srcSel").value === "bundle";
+  const showVals = $("showValues").checked;
+  $("defaultWord").textContent = saved.tags.default;
+  // sample status
+  if (fromBundle) {
+    $("sampleState").innerHTML = `Reading <code>calls/aws-cost-collect.ndjson</code> from the bundle: redacted values, exactly what left this machine. Manifest sums <span class="ok">✓ verified</span>.`;
+  } else if (sample) {
+    $("sampleState").innerHTML = `Collected <b>${sample.at}</b> (${sample.age} ago) from 3 accounts × 3 regions with your credentials. <span class="ok">Held in memory only</span>; discarded when the UI stops or you press Forget.`;
+  } else {
+    $("sampleState").innerHTML = `<span class="warn">No sample in memory.</span> Collect one to see raw tag values and preview rules on real answers.`;
+  }
+  // tag rows
+  const tags = SAMPLE_TAGS.map(t => {
+    const act = tagAction(saved, t.key);
+    if (!fromBundle) return Object.assign({}, t, { act });
+    if (act.a === "drop") return null;
+    const samples = t.samples.map(v => tagOut(saved, t.key, v));
+    const distinct = act.a === "replace" ? Math.min(t.distinct, 9) : t.distinct;
+    return Object.assign({}, t, { act, samples, distinct });
+  }).filter(Boolean);
+  const nOps = OPS.length - (fromBundle ? CLIENT_OPS.length : 0);
+  const cards = [
+    [fmt(fromBundle ? PACKED : TOTAL), "recorded calls" + (fromBundle ? "" : " (after dedupe)")],
+    ["3", "accounts"], ["3", "regions"], [nOps, "operations"],
+    [tags.length, "tag keys" + (fromBundle ? " left" : " found")],
+    [ERRORS.reduce((a, e) => a + e[1], 0), "errors recorded", "warn"],
+    [fromBundle ? "0" : "1", "open scan findings", fromBundle ? "" : "bad"],
+    [featureImpact(saved).length, "features affected", "warn"],
+  ];
+  $("sumCards").innerHTML = cards.map(c => `<div class="card ${c[2] || ""}"><div class="n">${c[0]}</div><div class="l">${c[1]}</div></div>`).join("");
+  $("tagTable").innerHTML = `<tr><th>Key</th><th class="num">Tags</th><th class="num">Distinct values</th>${showVals ? "<th>Sample values" + (fromBundle ? " (as sent)" : "") + "</th>" : ""}<th>Action</th><th>qloudpulse feature it feeds</th><th>Seen in</th></tr>` +
+    tags.map(t => `<tr>
+      <td class="mono">${esc(t.key)}</td><td class="num">${fmt(t.count)}</td><td class="num">${fmt(t.distinct)}</td>
+      ${showVals ? `<td class="mono small">${t.samples.map(esc).join(", ")}</td>` : ""}
+      <td>${pill(t.act.a, t.act.dflt)}${t.act.a === "replace" ? ` <span class="mono small muted">${esc(t.act.r.pattern || "*")} → ${esc(t.act.r.with)}</span>` : ""}</td>
+      <td class="small">${FEATURE_TAGS[t.key] ? esc(FEATURE_TAGS[t.key]) : '<span class="muted">—</span>'}</td>
+      <td class="small muted">${t.ops.map(esc).join("<br>")}</td></tr>`).join("");
+  // impact
+  const imp = featureImpact(saved);
+  const found = k => SAMPLE_TAGS.some(t => t.key === k);
+  $("impact").innerHTML = imp.length === 0
+    ? `<div class="note ok">The saved rules keep every tag key qloudpulse features read.</div>`
+    : `<ul class="plain">${imp.map(i => `<li>${pill(i.a, i.dflt)} ${esc(i.text)}${found(i.key) ? "" : ` <span class="small muted">— not found in this sample, so nothing is lost today</span>`}</li>`).join("")}</ul>
+       <p class="small muted" style="margin-top:8px;">Fields qloudpulse prices from (instance type, volume size, AZ, …) can never be changed, so cost figures stay exact whatever the rules.</p>`;
+  // scan
+  const scan = [
+    ["tag Owner", "58 email addresses", tagAction(saved, "Owner").a !== "keep", tagAction(saved, "Owner").a],
+    ["privateIpAddress", "1,212 private IPv4 addresses", !!fieldRuleFor(saved, ["instancesSet", "privateIpAddress"]), "replace"],
+    ["networkInterfaceSet.description", "3 values look like email addresses (ec2:DescribeNetworkInterfaces)", false, ""],
+    ["tag Project", "1 high-entropy string (\"tok_9Hq…\")", tagAction(saved, "Project").a !== "keep", tagAction(saved, "Project").a],
+  ];
+  $("scanTable").innerHTML = `<tr><th>Where</th><th>Hit</th><th>State</th></tr>` + scan.map(s => {
+    const open = !s[2] && !fromBundle;
+    return `<tr><td class="mono small">${esc(s[0])}</td><td class="small">${esc(s[1])}</td><td class="small">${s[2]
+      ? `<span class="ok">✓ handled</span> <span class="muted">(${esc(s[3])})</span>`
+      : open ? `<span class="bad">open — pack refuses</span><br><a href="#rules" data-addfield="networkInterfaceSet.description">add field rule</a> · <button class="link small" data-allow="1">allow-list</button>` : `<span class="ok">✓ handled</span>`}</td></tr>`;
+  }).join("");
+  // errors
+  $("errTable").innerHTML = `<tr><th>Operation and code</th><th class="num">Records</th><th>Note</th></tr>` + ERRORS.map(e => `<tr><td class="mono small">${esc(e[0])}</td><td class="num">${e[1]}</td><td class="small muted">${esc(e[2])}</td></tr>`).join("");
+  // ops
+  const max = OPS[0][1];
+  $("opsNote").innerHTML = fromBundle
+    ? `${fmt(PACKED)} calls in the bundle. The planning calls (<code>sts:GetCallerIdentity</code>, <code>ec2:DescribeRegions</code>) are not packed.`
+    : `${fmt(TOTAL)} calls, every one on the compiled-in read-only allow-list (call plan 0.1.0-seed).`;
+  $("opsTable").innerHTML = `<tr><th>Operation</th><th class="num">Records</th><th style="width:35%"></th></tr>` +
+    OPS.filter(o => !(fromBundle && CLIENT_OPS.includes(o[0]))).map(o => `<tr><td class="mono small">${esc(o[0])}${CLIENT_OPS.includes(o[0]) ? ' <span class="muted">(planning, not packed)</span>' : ""}</td><td class="num">${fmt(o[1])}</td><td><div class="bar" style="width:${Math.max(1, (o[1] / max) * 100)}%"></div></td></tr>`).join("");
+}
+$("srcSel").addEventListener("change", renderAnalyze);
+$("showValues").addEventListener("change", renderAnalyze);
+$("collectBtn").addEventListener("click", () => {
+  const b = $("collectBtn"); b.disabled = true; $("forgetBtn").disabled = true;
+  const steps = ["assuming roles in 3 accounts", "111122223333: 31 operations in 3 regions", "444455556666: 31 operations in 3 regions", "777788889999: 31 operations in 3 regions", "analyzing"];
+  let i = 0;
+  const tick = () => {
+    if (i < steps.length) { $("sampleState").innerHTML = `<span class="spinner"></span> Collecting into memory: ${steps[i++]}…`; setTimeout(tick, 550); return; }
+    sample = { at: "07:41:32 UTC", age: "a few seconds" }; b.disabled = false; $("forgetBtn").disabled = false; $("srcSel").value = "sample"; renderAnalyze();
+  };
+  tick();
+});
+$("forgetBtn").addEventListener("click", () => { sample = null; renderAnalyze(); });
+document.addEventListener("click", e => {
+  const a = e.target.closest("[data-addfield]");
+  if (a) { st.fields.push({ path: a.dataset.addfield, action: "drop", pattern: "", with: "" }); renderRules(); }
+  const al = e.target.closest("[data-allow]");
+  if (al) { al.parentElement.innerHTML = `<span class="warn">allow-listed</span> <span class="muted small">(added to <code>[scan] allow</code> on save)</span>`; }
+});
+
+// ---------------------------------------------------------------- RULES view
+function allTagKeys() {
+  const keys = SAMPLE_TAGS.map(t => t.key);
+  const t = st.tags;
+  [...t.keep, ...t.drop, ...t.pseudonymize, ...t.replace.map(r => r.key), ...Object.keys(FEATURE_TAGS)].forEach(k => { if (!keys.includes(k)) keys.push(k); });
+  return keys;
+}
+function setTagAction(key, a) {
+  const t = st.tags;
+  t.keep = t.keep.filter(k => k !== key); t.drop = t.drop.filter(k => k !== key); t.pseudonymize = t.pseudonymize.filter(k => k !== key);
+  const old = t.replace.find(r => r.key === key);
+  t.replace = t.replace.filter(r => r.key !== key);
+  if (a === "keep") t.keep.push(key);
+  if (a === "drop") t.drop.push(key);
+  if (a === "pseudonymize") t.pseudonymize.push(key);
+  if (a === "replace") t.replace.push(old || { key, pattern: "", with: "redacted" });
+}
+function renderRules() {
+  const t = st.tags;
+  document.querySelectorAll('input[name=tdef]').forEach(r => { r.checked = r.value === t.default; });
+  const counts = Object.fromEntries(SAMPLE_TAGS.map(s => [s.key, s.count]));
+  $("ruleTags").innerHTML = `<tr><th>Key <span class="muted" style="font-weight:400">· cost in qloudpulse</span></th><th class="num">In sample</th><th>Action</th><th>Details</th></tr>` + allTagKeys().map(k => {
+    const act = tagAction(st, k);
+    const listed = !act.dflt;
+    const sel = listed ? act.a : "default";
+    const opts = [["default", "default (" + (t.default === "allow" ? "keep" : "drop") + ")"], ["keep", "keep"], ["drop", "drop"], ["pseudonymize", "pseudonymize"], ["replace", "replace…"]]
+      .map(([v, l]) => `<option value="${v}"${v === sel ? " selected" : ""}>${l}</option>`).join("");
+    let details = "";
+    if (act.a === "replace") {
+      const ri = t.replace.indexOf(act.r);
+      const bad = act.r.pattern && !safeRegex(act.r.pattern);
+      details = `<input type="text" class="mono${bad ? " err" : ""}" data-rp="${ri}" value="${esc(act.r.pattern)}" placeholder="pattern (whole value if empty)" style="width:130px"> → <input type="text" class="mono" data-rw="${ri}" value="${esc(act.r.with)}" placeholder="with" style="width:80px">`;
+    }
+    let cost = "";
+    if (FEATURE_TAGS[k]) {
+      if (act.a === "drop") cost = `<span class="bad small">disables ${esc(FEATURE_TAGS[k])}</span>`;
+      else if (act.a === "pseudonymize") cost = `<span class="warn small">${esc(FEATURE_TAGS[k])} show pseudonyms</span>`;
+      else if (act.a === "replace") cost = `<span class="warn small">${esc(FEATURE_TAGS[k])} see replaced values</span>`;
+      else cost = `<span class="ok small">feeds ${esc(FEATURE_TAGS[k])}</span>`;
+    }
+    return `<tr class="rule-row"><td><span class="mono">${esc(k)}</span>${cost ? "<br>" + cost : ""}</td><td class="num small">${counts[k] ? fmt(counts[k]) : '<span class="muted">—</span>'}</td>
+      <td><select data-tag="${esc(k)}">${opts}</select></td><td class="small" style="white-space:nowrap">${details}</td></tr>`;
+  }).join("");
+  // fields
+  $("ruleFields").innerHTML = `<tr><th>Path</th><th>Action</th><th>Pattern</th><th>With</th><th></th></tr>` + st.fields.map((f, i) => {
+    const err = fieldError(f);
+    return `<tr class="rule-row"><td><input type="text" class="mono${err ? " err" : ""}" data-fp="${i}" value="${esc(f.path)}" list="fieldNames" placeholder="e.g. privateDnsName" style="width: 100%; min-width: 150px"></td>
+      <td><select data-fa="${i}">${["drop", "replace", "pseudonymize"].map(a => `<option${a === f.action ? " selected" : ""}>${a}</option>`).join("")}</select></td>
+      <td><input type="text" class="mono" data-fpat="${i}" value="${esc(f.pattern)}" ${f.action === "replace" ? "" : "disabled"} style="width: 120px"></td>
+      <td><input type="text" class="mono" data-fw="${i}" value="${esc(f.with)}" ${f.action === "replace" ? "" : "disabled"} style="width: 64px"></td>
+      <td><button class="link small" data-fdel="${i}">remove</button></td></tr>` + (err ? `<tr><td colspan="5" class="errtext" style="border-bottom:none; padding-top:0;">✗ ${esc(err)}</td></tr>` : "");
+  }).join("");
+  renderPreviewAndToml();
+}
+function renderPreviewAndToml() {
+  const { rows, stats } = previewRows(st);
+  $("sbs").innerHTML = `<tr><th class="l">raw (in memory)</th><th>redacted (would leave)</th></tr>` +
+    rows.map(r => `<tr class="${r.cls || ""}" title="${esc(r.why || "")}"><td class="l">${esc(r.l)}</td><td class="r">${r.r === null ? "" : esc(r.r)}</td></tr>`).join("");
+  $("recStats").innerHTML = `This record: tags kept <b>${stats.tags.keep}</b>, dropped <b>${stats.tags.drop}</b>, pseudonymized <b>${stats.tags.pseudonymize}</b>, replaced <b>${stats.tags.replace}</b>; field values changed <b>${stats.fields}</b>. Hover a line to see the rule.`;
+  // toml with changed lines marked
+  const now = toml(st), before = toml(saved);
+  const beforeLines = new Set(before.split("\n"));
+  $("tomlOut").innerHTML = now.split("\n").map(l => {
+    const h = l.startsWith("#") ? `<span class="cm">${esc(l)}</span>` : esc(l).replace(/(\s+#.*)$/, '<span class="cm">$1</span>');
+    return beforeLines.has(l) ? h : `<span class="add">${h || " "}</span>`;
+  }).join("\n");
+  const dirty = now !== before;
+  const errs = st.fields.map(fieldError).filter(Boolean).concat(tagErrors(st));
+  $("dirtyNote").classList.toggle("hidden", !dirty);
+  $("navDirty").classList.toggle("hidden", !dirty);
+  $("saveBtn").disabled = !dirty || errs.length > 0;
+  $("saveBtn").title = errs.length ? "Fix: " + errs.join("; ") : "";
+  if (errs.length) $("saveMsg").innerHTML = `<div class="note bad">The config would be refused, so it cannot be saved: ${errs.map(esc).join("; ")}.</div>`;
+  else if (dirty) $("saveMsg").innerHTML = "";
+}
+$("v-rules").addEventListener("change", e => {
+  const el = e.target;
+  if (el.name === "tdef") { st.tags.default = el.value; renderRules(); return; }
+  if (el.dataset.tag !== undefined) { setTagAction(el.dataset.tag, el.value === "default" ? null : el.value); renderRules(); return; }
+  if (el.dataset.fa !== undefined) { st.fields[+el.dataset.fa].action = el.value; renderRules(); return; }
+});
+$("v-rules").addEventListener("input", e => {
+  const el = e.target, d = el.dataset;
+  if (d.rp !== undefined) st.tags.replace[+d.rp].pattern = el.value;
+  else if (d.rw !== undefined) st.tags.replace[+d.rw].with = el.value;
+  else if (d.fp !== undefined) st.fields[+d.fp].path = el.value.trim();
+  else if (d.fpat !== undefined) st.fields[+d.fpat].pattern = el.value;
+  else if (d.fw !== undefined) st.fields[+d.fw].with = el.value;
+  else return;
+  el.classList.toggle("err", (d.fp !== undefined && !!fieldError(st.fields[+d.fp])) || (d.rp !== undefined && !!el.value && !safeRegex(el.value)));
+  renderPreviewAndToml();
+  // re-render the field errors without losing focus: only on blur
+});
+$("v-rules").addEventListener("focusout", e => { if (e.target.dataset.fp !== undefined) renderRules(); });
+$("v-rules").addEventListener("click", e => {
+  const d = e.target.dataset;
+  if (d.fdel !== undefined) { st.fields.splice(+d.fdel, 1); renderRules(); }
+});
+$("addFieldBtn").addEventListener("click", () => { st.fields.push({ path: "", action: "pseudonymize", pattern: "", with: "" }); renderRules(); });
+$("tryPriced").addEventListener("click", () => { st.fields.push({ path: "instancesSet.instanceType", action: "drop", pattern: "", with: "" }); renderRules(); });
+$("addTagBtn").addEventListener("click", () => {
+  const k = $("newTagKey").value.trim(); if (!k) return;
+  if (!allTagKeys().includes(k)) st.tags.keep.push(k);
+  $("newTagKey").value = ""; renderRules();
+});
+$("revertBtn").addEventListener("click", () => { st = clone(saved); $("saveMsg").innerHTML = ""; renderRules(); });
+$("saveBtn").addEventListener("click", () => {
+  saved = clone(st);
+  $("saveMsg").innerHTML = `<div class="note ok">Saved <code>[tags]</code> and <code>[[fields]]</code> to <code>/srv/qloudpulse-collect/qloudpulse-collect.toml</code> (comments kept). New config sha256 <code>${fakeHex(toml(saved), 8)}…</code>. The running loop uses it from the next cycle, <b>08:05 UTC</b>; bundles already packed are unchanged.</div>`;
+  renderRules(); renderAnalyze();
+});
+$("reqList").textContent = REQUIRED_FIELDS.join(", ");
+(function () {
+  const names = new Set();
+  (function walk(n) { if (n.t !== undefined) names.add(n.n); else n.c.forEach(walk); })(EC2_RAW);
+  ["networkInterfaceSet.description", "instancesSet.privateDnsName", "DBInstanceIdentifier", "Endpoint.Address", "LogGroupName", "SecretList.Name"].forEach(n => names.add(n));
+  $("fieldNames").innerHTML = [...names].sort().map(n => `<option value="${esc(n)}">`).join("");
+})();
+
+// ---------------------------------------------------------------- BUNDLES view
+const ACCOUNTS = ["111122223333", "444455556666", "777788889999"];
+const REGIONS = ["eu-west-1", "eu-north-1", "us-east-1"];
+const B = (label, win, at, records, kb, d, extra) => Object.assign({ label, win, at, records, kb, d }, extra || {});
+const OK = { s3: "ok", qloudpulse: "ok", command: "ok" };
+const BUNDLES = [
+  B("20261121T0600Z", "21 Nov 06:00–07:00", "07:05:48", PACKED, 412, { s3: "ok", qloudpulse: "fail", command: "ok" }, { dnote: "qloudpulse: operation timed out after 30s at 07:05; retried at 08:05" }),
+  B("20261121T0500Z", "21 Nov 05:00–06:00", "06:05:51", 1279, 409, OK),
+  B("20261121T0400Z", "21 Nov 04:00–05:00", "05:05:39", 1201, 388, OK, { failures: ["777788889999/us-east-1: ecs:ListContainerInstances: ThrottlingException, still throttled after 5 retries; the collector stopped early"] }),
+  B("20261121T0300Z", "21 Nov 03:00–04:00", "04:05:44", 1276, 407, OK, { oldcfg: true }),
+  B("20261121T0200Z", "21 Nov 02:00–03:00", "03:05:22", 862, 281, OK, { oldcfg: true, accounts: ["111122223333", "777788889999"], failures: ["444455556666: could not assume arn:aws:iam::444455556666:role/qloudpulse-collect: AccessDenied: User is not authorized to perform sts:AssumeRole"] }),
+  B("20261121T0100Z", "21 Nov 01:00–02:00", "02:05:47", 1270, 405, OK, { oldcfg: true }),
+  B("20261121T0000Z", "21 Nov 00:00–01:00", "01:05:40", 1268, 404, OK, { oldcfg: true }),
+  B("20261120T2300Z", "20 Nov 23:00–00:00", "00:05:58", 1543, 1187, OK, { oldcfg: true, daily: true }),
+  B("20261120T2200Z", "20 Nov 22:00–23:00", "23:05:41", 1262, 401, OK, { oldcfg: true }),
+];
+const dv = (name, s) => `<span class="dv ${s === "ok" ? "ok" : s === "fail" ? "bad" : "off"}">${name} ${s === "ok" ? "✓" : s === "fail" ? "✗ pending" : "–"}</span>`;
+let openBundle = null;
+function renderBundles() {
+  $("bundleTable").innerHTML = `<tr><th>Bundle</th><th>Window (UTC)</th><th>Packed</th><th class="num">Records</th><th class="num">Size</th><th>Delivered to</th><th>Notes</th></tr>` +
+    BUNDLES.map((b, i) => `<tr class="click${openBundle === i ? " sel" : ""}" data-b="${i}">
+      <td class="mono small">qloudpulse-eu-prod-${b.label}.tgz</td><td class="small">${b.win}</td><td class="small">${b.at}</td>
+      <td class="num">${fmt(b.records)}</td><td class="num small">${fmt(b.kb)} KB</td>
+      <td><span class="deliv">${dv("s3", b.d.s3)}${dv("qloudpulse", b.d.qloudpulse)}${dv("command", b.d.command)}</span></td>
+      <td class="small">${b.dnote ? `<span class="bad">${esc(b.dnote)}</span>` : ""}${b.failures ? `<span class="warn">${b.failures.length} collector failure</span>` : ""}${b.daily ? `<span class="muted">daily part: 90-day spot price history</span>` : ""}${b.oldcfg && !b.failures && !b.daily ? '<span class="muted">earlier config</span>' : ""}</td></tr>`).join("");
+}
+let recFilter = "";
+function bundleRecords(b) {
+  const recs = [];
+  const rules = b.oldcfg ? Object.assign(clone(saved), { tags: Object.assign(clone(saved.tags), { pseudonymize: ["Name"] }) }) : saved;
+  const accts = b.accounts || ACCOUNTS;
+  const xml = (inner) => '<?xml version="1.0" encoding="UTF-8"?>\n' + inner;
+  accts.forEach(acct => REGIONS.forEach(region => {
+    const R = (service, operation, page, status, body, ctype, extra) => recs.push(Object.assign({
+      collector: "aws-cost-collect", account: acct, region, service, operation, page,
+      request: service === "ec2" || service === "rds"
+        ? { method: "POST", host: `${service}.${region}.amazonaws.com`, path: "/", headers: [["content-type", "application/x-www-form-urlencoded; charset=utf-8"]], body: `Action=${operation}&Version=${service === "ec2" ? "2016-11-15" : "2014-10-31"}` }
+        : { method: "POST", host: `${service === "cloudwatch" ? "monitoring" : service}.${region}.amazonaws.com`, path: "/", headers: [["content-type", "application/x-amz-json-1.0"], ["x-amz-target", operation]], body: "{}" },
+      response: { status, headers: [["content-type", ctype]], body },
+    }, extra || {}));
+    if (acct === "111122223333" && region === "eu-west-1") R("ec2", "DescribeInstances", 1, 200, redactedXml(rules), "text/xml;charset=UTF-8");
+    else R("ec2", "DescribeInstances", 1, 200, xml(`<DescribeInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">\n  <requestId>${fakeHex(acct + region, 8)}-…</requestId>\n  <reservationSet>…</reservationSet>\n</DescribeInstancesResponse>`), "text/xml;charset=UTF-8");
+    R("ec2", "DescribeVolumes", 1, 200, xml(`<DescribeVolumesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">\n  <volumeSet>\n    <item>\n      <volumeId>vol-0${fakeHex(acct + region + "v", 16)}</volumeId>\n      <size>200</size>\n      <volumeType>gp3</volumeType>\n      <iops>3000</iops>\n      <throughput>125</throughput>\n      <availabilityZone>${region}a</availabilityZone>\n      <tagSet>\n        <item><key>Name</key><value>${pseudo("ledger-db-data")}</value></item>\n        <item><key>Team</key><value>data</value></item>\n        <item><key>Backup</key><value>daily</value></item>\n      </tagSet>\n    </item>\n  </volumeSet>\n</DescribeVolumesResponse>`), "text/xml;charset=UTF-8");
+    if (region === "eu-north-1") R("ec2", "DescribeClientVpnEndpoints", 1, 403, xml(`<Response><Errors><Error><Code>UnauthorizedOperation</Code><Message>You are not authorized to perform this operation.</Message></Error></Errors><RequestID>${fakeHex(acct + "vpn", 8)}-…</RequestID></Response>`), "text/xml;charset=UTF-8", { error_code: "UnauthorizedOperation" });
+    R("rds", "DescribeDBInstances", 1, 200, xml(`<DescribeDBInstancesResponse xmlns="http://rds.amazonaws.com/doc/2014-10-31/">\n  <DescribeDBInstancesResult>\n    <DBInstances>\n      <DBInstance>\n        <DBInstanceIdentifier>ledger-${region}</DBInstanceIdentifier>\n        <DBInstanceClass>db.r6g.large</DBInstanceClass>\n        <Engine>postgres</Engine>\n        <AllocatedStorage>500</AllocatedStorage>\n        <StorageType>gp3</StorageType>\n        <MultiAZ>true</MultiAZ>\n        <TagList>\n          <Tag><Key>Environment</Key><Value>prod</Value></Tag>\n${b.oldcfg ? "" : `          <Tag><Key>Owner</Key><Value>${pseudo("lin.wei@example.com")}</Value></Tag>\n`}        </TagList>\n      </DBInstance>\n    </DBInstances>\n  </DescribeDBInstancesResult>\n</DescribeDBInstancesResponse>`), "text/xml");
+    R("dynamodb", "ListTables", 1, 200, JSON.stringify({ TableNames: ["orders", "sessions", "ledger-events"] }), "application/x-amz-json-1.0");
+    if (acct === "444455556666") R("ds", "DescribeDirectories", 1, 400, JSON.stringify({ __type: "AccessDeniedException", Message: "User is not authorized to perform: ds:DescribeDirectories" }), "application/x-amz-json-1.1", { error_code: "AccessDeniedException" });
+    R("cloudwatch", "GetMetricStatistics", 1, 200, JSON.stringify({ Label: "CPUUtilization", Datapoints: [{ Timestamp: "2026-11-21T06:00:00Z", Average: 37.4, Unit: "Percent" }] }), "application/x-amz-json-1.0");
+    if (region === "eu-west-1") R("eks", "DescribeCluster", 1, 200, JSON.stringify({ cluster: { name: "core-prod", version: "1.33", status: "ACTIVE", tags: { Environment: "prod", Team: "platform" } } }), "application/json");
+  }));
+  return recs;
+}
+function renderBundleDetail() {
+  if (openBundle === null) { $("bundleDetail").innerHTML = `<p class="muted">Open a bundle to check its manifest and browse its records.</p>`; return; }
+  const b = BUNDLES[openBundle];
+  const accts = b.accounts || ACCOUNTS;
+  const rules = b.oldcfg ? Object.assign(clone(saved), { tags: Object.assign(clone(saved.tags), { pseudonymize: ["Name"] }) }) : saved;
+  const ndjsonSha = fakeHex("ndjson" + b.label, 64);
+  const cfgSha = b.oldcfg ? "b70c22d1" + fakeHex("oldcfg", 56) : "3e1f9a0c" + fakeHex("cfg", 56);
+  const recs = bundleRecords(b);
+  const ops = [...new Set(recs.map(r => r.service + ":" + r.operation))].sort();
+  const shown = recs.filter(r => !recFilter || (r.service + ":" + r.operation) === recFilter);
+  const manifest = {
+    schema_version: "1.0.0", tool: "qloudpulse-collect", tool_version: "0.1.0", call_plan_version: "0.1.0-seed", call_plan_seed: true,
+    source_id: "eu-prod", window: { start: b.label.replace(/(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)Z/, "$1-$2-$3T$4:$5:00Z"), end: "…" },
+    collected_at: "…" + b.at + "Z", accounts: accts, regions: REGIONS, failures: b.failures || [],
+    files: [{ path: "calls/aws-cost-collect.ndjson", sha256: ndjsonSha, bytes: b.kb * 9417, records: b.records }],
+    config_sha256: cfgSha,
+    rules: { tag_default: rules.tags.default, tags_kept: rules.tags.keep, tags_dropped: rules.tags.drop, tags_pseudonymized: rules.tags.pseudonymize, tags_replaced: rules.tags.replace.map(r => r.key), fields: rules.fields.map(f => f.path + " " + f.action) },
+    redaction: { tags: Object.fromEntries(SAMPLE_TAGS.map(t => { const a = tagAction(rules, t.key); return [t.key, [a.a, t.count]]; })), fields: Object.fromEntries(rules.fields.map(f => [f.path, { privateDnsName: 1318, keyName: 377, privateIpAddress: 1212 }[f.path] || 0])) },
+    key_fingerprint: "7d3a91c0e45b28f6",
+    feature_impact: featureImpact(rules).map(i => i.text),
+  };
+  const red = manifest.redaction;
+  const tagRows = Object.entries(red.tags).sort((a, c) => c[1][1] - a[1][1]);
+  $("bundleDetail").innerHTML = `
+  <div class="panel">
+    <div class="toolbar" style="margin-bottom:10px;">
+      <h2 style="margin:0;" class="mono">qloudpulse-eu-prod-${b.label}.tgz</h2>
+      <span class="pill p-keep">✓ every file matches its manifest SHA-256</span>
+      <span class="spacer"></span>
+      <button id="reverify">Verify again</button>
+      <button id="rawManifest">${showRawManifest ? "Summary" : "manifest.json"}</button>
+      <button id="deliverNow" ${b.d.qloudpulse === "fail" ? "" : "disabled"}>Deliver pending now</button>
+    </div>
+    <div id="verifyMsg"></div>
+    ${showRawManifest ? `<pre class="code">${esc(JSON.stringify(manifest, null, 2))}</pre>` : `
+    <div class="grid2">
+      <div>
+        <h3>Manifest</h3>
+        <dl class="kv">
+          <dt>window</dt><dd>${b.win} UTC</dd>
+          <dt>collected_at</dt><dd>${b.label.slice(0, 4)}-${b.label.slice(4, 6)}-${b.label.slice(6, 8)} ${b.at} UTC</dd>
+          <dt>schema_version</dt><dd class="mono">1.0.0</dd>
+          <dt>tool</dt><dd class="mono">qloudpulse-collect 0.1.0</dd>
+          <dt>call_plan_version</dt><dd class="mono">0.1.0-seed <span class="warn small">(hand-made seed plan)</span></dd>
+          <dt>accounts</dt><dd class="mono">${accts.join(", ")}${accts.length < 3 ? ' <span class="warn">(1 skipped, see failures)</span>' : ""}</dd>
+          <dt>regions</dt><dd class="mono">${REGIONS.join(", ")}</dd>
+          <dt>failures</dt><dd>${(b.failures || []).length ? `<ul class="plain warn small">${b.failures.map(f => `<li>${esc(f)}</li>`).join("")}</ul>` : '<span class="ok">none</span>'}</dd>
+          <dt>config_sha256</dt><dd class="mono small">${cfgSha.slice(0, 16)}… ${b.oldcfg ? '<span class="warn">packed with an earlier config; current is 3e1f9a0c…</span>' : '<span class="ok">same as the current config</span>'}</dd>
+          <dt>key_fingerprint</dt><dd class="mono">7d3a91c0e45b28f6 <span class="ok small">same key as now</span></dd>
+        </dl>
+        <h3>Files</h3>
+        <table class="tight"><tr><th>Path</th><th>SHA-256</th><th class="num">Bytes</th><th class="num">Records</th><th></th></tr>
+          <tr><td class="mono small">calls/aws-cost-collect.ndjson</td><td class="mono small" title="${ndjsonSha}">${ndjsonSha.slice(0, 20)}…</td><td class="num small">${fmt(b.kb * 9417)}</td><td class="num">${fmt(b.records)}</td><td class="ok">✓</td></tr>
+          <tr><td class="mono small">manifest.json</td><td class="small muted" colspan="4">the manifest itself (not hashed in itself)</td></tr>
+        </table>
+        <h3>Rules applied</h3>
+        <dl class="kv small">
+          <dt>tag default</dt><dd>${pill(rules.tags.default === "deny" ? "drop" : "keep")} <span class="mono">${rules.tags.default}</span></dd>
+          <dt>kept</dt><dd class="mono">${rules.tags.keep.join(", ") || "—"}</dd>
+          <dt>dropped</dt><dd class="mono">${rules.tags.drop.join(", ") || "—"}</dd>
+          <dt>pseudonymized</dt><dd class="mono">${rules.tags.pseudonymize.join(", ") || "—"}</dd>
+          <dt>replaced</dt><dd class="mono">${rules.tags.replace.map(r => r.key).join(", ") || "—"}</dd>
+          <dt>fields</dt><dd class="mono">${rules.fields.map(f => f.path + " " + f.action).join(", ") || "—"}</dd>
+        </dl>
+      </div>
+      <div>
+        <h3>Redaction stats</h3>
+        <table class="tight"><tr><th>Tag key</th><th>Action</th><th class="num">Tags</th></tr>
+          ${tagRows.map(([k, [a, n]]) => `<tr><td class="mono small">${esc(k)}</td><td>${pill(a)}</td><td class="num small">${fmt(n)}</td></tr>`).join("")}
+          ${Object.entries(red.fields).map(([p, n]) => `<tr><td class="mono small">field ${esc(p)}</td><td>${pill(rules.fields.find(f => f.path === p).action)}</td><td class="num small">${fmt(n)} values</td></tr>`).join("")}
+        </table>
+        <h3>Feature impact</h3>
+        ${manifest.feature_impact.length ? `<ul class="plain small">${manifest.feature_impact.map(l => `<li>${esc(l)}</li>`).join("")}</ul>` : '<p class="ok small">none</p>'}
+      </div>
+    </div>`}
+  </div>
+  <div class="panel">
+    <div class="toolbar" style="margin-bottom:8px;">
+      <h2 style="margin:0;">Records <span class="muted small">(${fmt(b.records)} in the bundle; a sample shown)</span></h2>
+      <span class="spacer"></span>
+      <select id="recFilter"><option value="">all operations</option>${ops.map(o => `<option${o === recFilter ? " selected" : ""}>${o}</option>`).join("")}</select>
+    </div>
+    <div class="grid2">
+      <div class="scroll" style="max-height: 520px; overflow:auto;"><table class="tight" id="recTable">
+        <tr><th>#</th><th>Account</th><th>Region</th><th>Operation</th><th class="num">Page</th><th>Status</th></tr>
+        ${shown.map((r, i) => `<tr class="click${openRec === i ? " sel" : ""}" data-r="${i}"><td class="small muted">${i + 1}</td><td class="mono small">${r.account}</td><td class="small">${r.region}</td><td class="mono small">${r.service}:${r.operation}</td><td class="num small">${r.page}</td><td class="small ${r.response.status >= 400 ? "warn" : "ok"}">${r.response.status}${r.error_code ? " " + r.error_code : ""}</td></tr>`).join("")}
+      </table></div>
+      <div id="recView">${renderRecord(shown[openRec] || shown[0])}</div>
+    </div>
+  </div>`;
+}
+function renderRecord(r) {
+  if (!r) return "";
+  const head = Object.assign({}, r, { response: Object.assign({}, r.response, { body: "‹" + fmt(r.response.body.length) + " bytes, below›" }) });
+  return `<h3 style="margin-top:0;">Record, as one line of calls/aws-cost-collect.ndjson (pretty-printed)</h3>
+    <pre class="code" style="max-height:220px;">${esc(JSON.stringify(head, null, 2))}</pre>
+    <h3>response.body, exactly as it leaves</h3>
+    <pre class="code" style="max-height:300px;">${esc(r.response.body.startsWith("{") ? JSON.stringify(JSON.parse(r.response.body), null, 2) : r.response.body)}</pre>`;
+}
+let openRec = 0, showRawManifest = false;
+$("v-bundles").addEventListener("click", e => {
+  const tr = e.target.closest("tr[data-b]");
+  if (tr) { openBundle = +tr.dataset.b; openRec = 0; recFilter = ""; showRawManifest = false; renderBundles(); renderBundleDetail(); $("bundleDetail").scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+  const rr = e.target.closest("tr[data-r]");
+  if (rr) { openRec = +rr.dataset.r; renderBundleDetail(); return; }
+  if (e.target.id === "rawManifest") { showRawManifest = !showRawManifest; renderBundleDetail(); }
+  if (e.target.id === "reverify") { $("verifyMsg").innerHTML = `<div class="note ok">Re-read the .tgz and hashed every file: 1 of 1 matches its manifest SHA-256.</div>`; }
+  if (e.target.id === "deliverNow") {
+    const btn = e.target; btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> uploading…';
+    setTimeout(() => { BUNDLES[openBundle].d.qloudpulse = "ok"; BUNDLES[openBundle].dnote = ""; renderBundles(); renderBundleDetail();
+      $("verifyMsg").innerHTML = `<div class="note ok">Delivered to qloudpulse: <code>202 Accepted</code>, reference <code>cb_01JDX4M7Q2</code>. The client read nothing else from the answer.</div>`; }, 1400);
+  }
+});
+$("v-bundles").addEventListener("change", e => { if (e.target.id === "recFilter") { recFilter = e.target.value; openRec = 0; renderBundleDetail(); } });
+
+// ---------------------------------------------------------------- RUNS view
+const RUNS = [
+  { at: "21 Nov 07:05", win: "06:00–07:00", dur: "48s", acc: "3/3", rec: PACKED, b: "20261121T0600Z", d: { s3: "ok", qloudpulse: "fail", command: "ok" }, st: "warn",
+    w: ["delivery failed: qloudpulse: POST https://api.qloudpulse.com/v1/collection-bundles: operation timed out after 30s; the next run retries", "rule cost: pseudonymizing tag Name makes resource names in reports show pseudonyms"] },
+  { at: "21 Nov 06:05", win: "05:00–06:00", dur: "51s", acc: "3/3", rec: 1279, b: "20261121T0500Z", d: OK, st: "ok", w: ["rule cost: pseudonymizing tag Name makes resource names in reports show pseudonyms"] },
+  { at: "21 Nov 05:05", win: "04:00–05:00", dur: "1m 39s", acc: "3/3", rec: 1201, b: "20261121T0400Z", d: OK, st: "warn",
+    w: ["collector stopped early: 777788889999/us-east-1: ecs:ListContainerInstances: ThrottlingException, still throttled after 5 retries (recorded; qloudpulse replays the error)", "config changed at 04:52 (Owner: drop → pseudonymize); this run used the new config"] },
+  { at: "21 Nov 04:05", win: "03:00–04:00", dur: "44s", acc: "3/3", rec: 1276, b: "20261121T0300Z", d: OK, st: "ok", w: [] },
+  { at: "21 Nov 03:05", win: "02:00–03:00", dur: "22s", acc: "2/3", rec: 862, b: "20261121T0200Z", d: OK, st: "warn",
+    w: ["account skipped: 444455556666: could not assume arn:aws:iam::444455556666:role/qloudpulse-collect: AccessDenied"] },
+  { at: "21 Nov 02:05", win: "01:00–02:00", dur: "47s", acc: "3/3", rec: 1270, b: "20261121T0100Z", d: OK, st: "ok", w: ["pruned 1 bundle (keep_bundles = 168)"] },
+  { at: "21 Nov 01:05", win: "00:00–01:00", dur: "40s", acc: "3/3", rec: 1268, b: "20261121T0000Z", d: OK, st: "ok", w: [] },
+  { at: "21 Nov 00:05", win: "20 Nov 23:00–00:00", dur: "2m 58s", acc: "3/3", rec: 1543, b: "20261120T2300Z", d: OK, st: "ok", w: ["daily: read the 90-day spot price history (daily_hour = 0)"] },
+  { at: "20 Nov 23:05", win: "22:00–23:00", dur: "41s", acc: "3/3", rec: 1262, b: "20261120T2200Z", d: OK, st: "ok", w: [] },
+  { at: "20 Nov 22:05", win: "21:00–22:00", dur: "31s", acc: "0/3", rec: 0, b: "", d: null, st: "bad",
+    w: ["cycle failed: no account could be read: sts.eu-west-1.amazonaws.com: dns error: failed to lookup address information. The window 21:00–22:00 has no bundle: inventory is read live, so a missed hour cannot be collected afterwards"] },
+];
+function renderRuns() {
+  const label = { ok: '<span class="st ok">✓ ok</span>', warn: '<span class="st warn">▲ warnings</span>', bad: '<span class="st bad">✗ failed</span>' };
+  $("runTable").innerHTML = `<tr><th>Started (UTC)</th><th>Window</th><th>Result</th><th class="num">Took</th><th class="num">Accounts</th><th class="num">Records</th><th>Bundle</th><th>Delivery</th><th>Warnings</th></tr>` +
+    `<tr><td class="small"><b>21 Nov 08:05</b></td><td class="small">07:00–08:00</td><td colspan="7" class="small muted">scheduled · also retries qloudpulse for qloudpulse-eu-prod-20261121T0600Z.tgz</td></tr>` +
+    RUNS.map(r => `<tr><td class="small" style="white-space:nowrap">${r.at}</td><td class="small" style="white-space:nowrap">${r.win}</td><td>${label[r.st]}</td><td class="num small">${r.dur}</td><td class="num small">${r.acc}</td><td class="num">${r.rec ? fmt(r.rec) : "—"}</td>
+      <td class="mono small">${r.b ? `<a href="#bundles" data-open="${r.b}">${r.b}.tgz</a>` : "—"}</td>
+      <td>${r.d ? `<span class="deliv">${dv("s3", r.d.s3)}${dv("qloudpulse", r.d.qloudpulse)}${dv("command", r.d.command)}</span>` : "—"}</td>
+      <td class="small">${r.w.length ? `<ul class="plain">${r.w.map(w => `<li class="${/failed|stopped|skipped/.test(w) ? (r.st === "bad" ? "bad" : "warn") : "muted"}">${esc(w)}</li>`).join("")}</ul>` : '<span class="muted">—</span>'}</td></tr>`).join("");
+}
+$("v-runs").addEventListener("click", e => {
+  const a = e.target.closest("[data-open]");
+  if (a) { openBundle = BUNDLES.findIndex(b => b.label === a.dataset.open); openRec = 0; recFilter = ""; setTimeout(() => { renderBundles(); renderBundleDetail(); }, 0); }
+});
+
+// ---------------------------------------------------------------- routing
+const VIEWS = ["analyze", "rules", "bundles", "runs"];
+function route(want) {
+  const v = want || (location.hash || "#analyze").slice(1);
+  const view = VIEWS.includes(v) ? v : "analyze";
+  document.querySelectorAll("section.view").forEach(s => s.classList.toggle("on", s.id === "v-" + view));
+  document.querySelectorAll("#nav a").forEach(a => a.classList.toggle("on", a.dataset.v === view));
+  window.scrollTo(0, 0);
+}
+window.addEventListener("hashchange", () => route());
+// Links switch views directly too, so the mockup also works where the URL cannot carry a hash (file previews, artifacts).
+document.addEventListener("click", e => {
+  const a = e.target.closest('a[href^="#"]');
+  if (!a || !VIEWS.includes(a.getAttribute("href").slice(1))) return;
+  e.preventDefault();
+  const v = a.getAttribute("href").slice(1);
+  try { history.replaceState(null, "", "#" + v); } catch (err) { /* opaque origin */ }
+  route(v);
+});
+renderAnalyze(); renderRules(); renderBundles(); renderBundleDetail(); renderRuns(); route();
+</script>
+</body>
+</html>
