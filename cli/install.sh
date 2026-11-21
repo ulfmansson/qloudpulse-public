@@ -4,8 +4,9 @@
 #
 #   curl -fsSL https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-cli-<version>/install.sh | sh
 #
-# The copy attached to a release installs that release; this copy in the repository needs --version. On Windows, use
-# install.ps1 from the same release. Plain POSIX sh: it runs under dash, busybox and macOS's sh.
+# The copy attached to a release installs that release; this copy in the repository installs the newest release, or
+# --version. On Windows, use install.ps1 from the same release. Plain POSIX sh: it runs under dash, busybox and
+# macOS's sh.
 set -eu
 
 # A release's copy has its version here (cli/release.sh writes it); this one has none.
@@ -16,7 +17,8 @@ usage() {
   cat <<'EOF'
 Usage: install.sh [--version <version>] [--dir <dir>] [--attest] [--base <url or dir>]
 
-  --version  the client version to install (default: the release this script came with)
+  --version  the client version to install (default: the release this script came with; for the copy in the
+             repository, the newest release)
   --dir      where the binary goes (default: $QLOUDPULSE_INSTALL_DIR, or ~/.local/bin)
   --attest   also check the archive's signed build provenance with gh (gh attestation verify); needs gh signed in
   --base     where the archives and SHA256SUMS are, a URL or a directory (default: $QLOUDPULSE_DOWNLOAD_BASE, or
@@ -45,7 +47,22 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-[ -n "$VERSION" ] || fail "no version: pass --version <version> (this copy is not from a release)"
+latest_version() { # the newest qloudpulse-cli-<version> release, or nothing
+  # Not GitHub's "latest": that is the cluster agent's release, in the same repository. The API's JSON has one field
+  # per line, so sed finds the tags without a JSON parser.
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --proto '=https' --tlsv1.2 -H 'Accept: application/vnd.github+json' \
+      "https://api.github.com/repos/$REPO/releases?per_page=100"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O - --header 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPO/releases?per_page=100"
+  fi | sed -n 's/^ *"tag_name": *"qloudpulse-cli-\([0-9][0-9.]*\)",*$/\1/p' | sort -t . -k 1,1n -k 2,2n -k 3,3n | tail -n 1
+}
+
+if [ -z "$VERSION" ]; then
+  [ -z "$BASE" ] || fail "no version: pass --version <version> with --base"
+  VERSION=$(latest_version)
+  [ -n "$VERSION" ] || fail "could not find the newest release on github.com/$REPO; pass --version <version>"
+fi
 case "$VERSION" in
   v*|qloudpulse-cli-*) VERSION=${VERSION#v}; VERSION=${VERSION#qloudpulse-cli-} ;;
 esac
