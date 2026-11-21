@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Suggest a feature in qloudpulse (customers)
+    url: https://app.qloudpulse.com/account/requests
+    about: Ask from inside the app, where you can add screenshots and see our answer.
+  - name: See and star feature requests
+    url: https://qloudpulse.com/requests.html
+    about: What others have asked for and where each stands. Star the ones you want too.
+  - name: Report a security vulnerability
+    url: https://github.com/ulfmansson/qloudpulse-public/blob/main/CONTRIBUTING.md#we-do-want-your-bug-reports-and-feature-requests
+    about: Do not open a public issue. Mail support@qloudpulse.com with "Security" in the subject.

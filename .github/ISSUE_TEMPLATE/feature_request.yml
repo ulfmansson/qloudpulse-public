@@ -1,0 +1,27 @@
+name: Feature request
+description: Something you need from the agent, the chart or a CLI.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Customers can also use **Suggest a feature** in qloudpulse, and anyone can star what others have asked for on
+        [qloudpulse.com/requests.html](https://qloudpulse.com/requests.html).
+
+        We build what we take on ourselves; we do not accept pull requests. Any code you include here is licensed to us
+        under the Apache License 2.0, as the rest of this repository is.
+  - type: textarea
+    id: need
+    attributes:
+      label: What you are trying to do
+      description: The problem, in your own setup's terms. What you need matters more to us than a particular solution.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What you do today instead
+  - type: textarea
+    id: idea
+    attributes:
+      label: How you imagine it working
