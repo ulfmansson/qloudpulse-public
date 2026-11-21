@@ -2,14 +2,14 @@
 # Installs the qloudpulse client on Linux or macOS: picks the archive for this machine, checks it against the release's
 # SHA256SUMS, and puts the binary in ~/.local/bin (or --dir).
 #
-#   curl -fsSL https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-cli-<version>/install.sh | sh
+#   curl -fsSL https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-stack-<version>/install.sh | sh
 #
 # The copy attached to a release installs that release; this copy in the repository installs the newest release, or
 # --version. On Windows, use install.ps1 from the same release. Plain POSIX sh: it runs under dash, busybox and
 # macOS's sh.
 set -eu
 
-# A release's copy has its version here (cli/release.sh writes it); this one has none.
+# A release's copy has its version here (cli/stack/release.sh writes it); this one has none.
 DEFAULT_VERSION=""
 REPO=ulfmansson/qloudpulse-public
 
@@ -47,7 +47,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-latest_version() { # the newest qloudpulse-cli-<version> release, or nothing
+latest_version() { # the newest qloudpulse-stack-<version> release, or nothing
   # Not GitHub's "latest": that is the cluster agent's release, in the same repository. The API's JSON has one field
   # per line, so sed finds the tags without a JSON parser.
   if command -v curl >/dev/null 2>&1; then
@@ -55,7 +55,7 @@ latest_version() { # the newest qloudpulse-cli-<version> release, or nothing
       "https://api.github.com/repos/$REPO/releases?per_page=100"
   elif command -v wget >/dev/null 2>&1; then
     wget -q -O - --header 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPO/releases?per_page=100"
-  fi | sed -n 's/^ *"tag_name": *"qloudpulse-cli-\([0-9][0-9.]*\)",*$/\1/p' | sort -t . -k 1,1n -k 2,2n -k 3,3n | tail -n 1
+  fi | sed -n 's/^ *"tag_name": *"qloudpulse-stack-\([0-9][0-9.]*\)",*$/\1/p' | sort -t . -k 1,1n -k 2,2n -k 3,3n | tail -n 1
 }
 
 if [ -z "$VERSION" ]; then
@@ -64,12 +64,12 @@ if [ -z "$VERSION" ]; then
   [ -n "$VERSION" ] || fail "could not find the newest release on github.com/$REPO; pass --version <version>"
 fi
 case "$VERSION" in
-  v*|qloudpulse-cli-*) VERSION=${VERSION#v}; VERSION=${VERSION#qloudpulse-cli-} ;;
+  v*|qloudpulse-stack-*) VERSION=${VERSION#v}; VERSION=${VERSION#qloudpulse-stack-} ;;
 esac
 case "$VERSION" in
   *[!0-9.]*|"") fail "not a version: $VERSION (for example 0.2.0)" ;;
 esac
-TAG="qloudpulse-cli-$VERSION"
+TAG="qloudpulse-stack-$VERSION"
 BASE=${BASE:-https://github.com/$REPO/releases/download/$TAG}
 if [ -z "$DIR" ]; then
   [ -n "${HOME:-}" ] || fail "no HOME; pass --dir"
@@ -88,16 +88,16 @@ case "$os" in
       arch=arm64
     fi
     ;;
-  MINGW*|MSYS*|CYGWIN*) fail "this is Windows: use install.ps1 from the same release (see cli/README.md)" ;;
-  *) fail "no build for $os; build from source (cli/README.md)" ;;
+  MINGW*|MSYS*|CYGWIN*) fail "this is Windows: use install.ps1 from the same release (see cli/stack/README.md)" ;;
+  *) fail "no build for $os; build from source (cli/stack/README.md)" ;;
 esac
 case "$arch" in
   x86_64|amd64) arch=x86_64 ;;
   aarch64|arm64) arch=aarch64 ;;
-  *) fail "no build for $arch on $os; build from source (cli/README.md)" ;;
+  *) fail "no build for $arch on $os; build from source (cli/stack/README.md)" ;;
 esac
 TARGET="$arch-$os"
-ARCHIVE="qloudpulse-$VERSION-$TARGET.tar.gz"
+ARCHIVE="qloudpulse-stack-$VERSION-$TARGET.tar.gz"
 
 if command -v sha256sum >/dev/null 2>&1; then
   sha256() { sha256sum "$1" | cut -d ' ' -f 1; }
@@ -122,10 +122,10 @@ fetch() { # name destination
   esac
 }
 
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/qloudpulse.XXXXXX") || fail "cannot make a temporary directory"
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/qloudpulse-stack.XXXXXX") || fail "cannot make a temporary directory"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-say "qloudpulse $VERSION for $TARGET"
+say "qloudpulse-stack $VERSION for $TARGET"
 fetch "$ARCHIVE" "$TMP/$ARCHIVE"
 fetch SHA256SUMS "$TMP/SHA256SUMS"
 
@@ -138,20 +138,20 @@ got=$(sha256 "$TMP/$ARCHIVE")
 if [ $ATTEST -eq 1 ]; then
   command -v gh >/dev/null 2>&1 || fail "--attest needs gh (https://cli.github.com)"
   gh attestation verify "$TMP/$ARCHIVE" --repo "$REPO" \
-    --signer-workflow "$REPO/.github/workflows/cli-release.yml" --source-ref "refs/tags/$TAG" >&2 \
+    --signer-workflow "$REPO/.github/workflows/cli-stack-release.yml" --source-ref "refs/tags/$TAG" >&2 \
     || fail "$ARCHIVE has no provenance from $REPO's release workflow at $TAG; nothing was installed"
 fi
 
 tar -xzf "$TMP/$ARCHIVE" -C "$TMP" qloudpulse
-"$TMP/qloudpulse" --version >/dev/null 2>&1 \
+"$TMP/qloudpulse-stack" --version >/dev/null 2>&1 \
   || fail "the downloaded qloudpulse does not run here (if ${TMPDIR:-/tmp} is mounted noexec, set TMPDIR to another directory)"
 
 mkdir -p "$DIR" || fail "cannot create $DIR; pass --dir, or run with the rights to write there"
 # Copied next to the old one and moved over it, so a running qloudpulse is never half written.
-cp "$TMP/qloudpulse" "$DIR/.qloudpulse.new" || fail "cannot write to $DIR; pass --dir, or run with the rights to write there"
-chmod 755 "$DIR/.qloudpulse.new"
-mv -f "$DIR/.qloudpulse.new" "$DIR/qloudpulse"
-say "installed $("$DIR/qloudpulse" --version) as $DIR/qloudpulse"
+cp "$TMP/qloudpulse-stack" "$DIR/.qloudpulse-stack.new" || fail "cannot write to $DIR; pass --dir, or run with the rights to write there"
+chmod 755 "$DIR/.qloudpulse-stack.new"
+mv -f "$DIR/.qloudpulse-stack.new" "$DIR/qloudpulse-stack"
+say "installed $("$DIR/qloudpulse-stack" --version) as $DIR/qloudpulse-stack"
 
 # On a GitHub Actions runner, the later steps of the job find it.
 if [ -n "${GITHUB_PATH:-}" ]; then

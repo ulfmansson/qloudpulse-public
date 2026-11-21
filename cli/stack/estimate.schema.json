@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/ulfmansson/qloudpulse-public/main/cli/estimate.schema.json",
+  "$id": "https://raw.githubusercontent.com/ulfmansson/qloudpulse-public/main/cli/stack/estimate.schema.json",
   "title": "Estimate of an infrastructure change",
-  "description": "What `qloudpulse estimate` sends to POST https://api.qloudpulse.com/v1/estimates (formerly /api/report/public/estimates on app.qloudpulse.com), and what qloudpulse answers. The request carries what sets a price and, by default, each resource's name and Pulumi URN, which qloudpulse keeps with the estimate (qloudpulse's ADR 0140). Each resource is matched by a key the client derives from it. With \"store\": false (--no-store), or when the company keeps nothing, qloudpulse prices the change and keeps nothing.",
+  "description": "What `qloudpulse-stack estimate` sends to POST https://api.qloudpulse.com/v1/estimates (formerly /api/report/public/estimates on app.qloudpulse.com), and what qloudpulse answers. The request carries what sets a price and, by default, each resource's name and Pulumi URN, which qloudpulse keeps with the estimate (qloudpulse's ADR 0140). Each resource is matched by a key the client derives from it. With \"store\": false (--no-store), or when the company keeps nothing, qloudpulse prices the change and keeps nothing.",
   "oneOf": [{ "$ref": "#/$defs/request" }, { "$ref": "#/$defs/response" }, { "$ref": "#/$defs/catalogueQuestion" }, { "$ref": "#/$defs/catalogue" }],
   "$defs": {
     "request": {
@@ -27,7 +27,7 @@
         "store": {
           "type": "boolean",
           "default": true,
-          "description": "false (qloudpulse estimate --no-store): price the change and keep nothing, no estimate, no page, no point in the stack's history, and the answer says stored: false (ADR 0140); the client then sends no names or URNs. Left out or true: kept, with the names and URNs sent, unless the company keeps nothing for every run. An endpoint from before 2026-11-21 ignores it and keeps the estimate: the answer then carries estimateId and no stored, which the client refuses."
+          "description": "false (qloudpulse-stack estimate --no-store): price the change and keep nothing, no estimate, no page, no point in the stack's history, and the answer says stored: false (ADR 0140); the client then sends no names or URNs. Left out or true: kept, with the names and URNs sent, unless the company keeps nothing for every run. An endpoint from before 2026-11-21 ignores it and keeps the estimate: the answer then carries estimateId and no stored, which the client refuses."
         },
         "resources": {
           "type": "array",

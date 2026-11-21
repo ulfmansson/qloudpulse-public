@@ -15,14 +15,14 @@ Needs a qloudpulse with ADR 0140 (report service with migration V35) before it i
 
 ### Added
 
-- `qloudpulse --version` names the commit a release was built from and that commit's date, as rustc does:
-  `qloudpulse <version> (1ab39062b 2026-11-21)`.
+- `qloudpulse-stack --version` names the commit a release was built from and that commit's date, as rustc does:
+  `qloudpulse-stack <version> (1ab39062b 2026-11-21)`.
 - Each binary carries the list of crates it was built from, written in by cargo auditable, so `cargo audit bin`,
   Trivy or Grype can check an installed client for crates with known vulnerabilities.
 - `SHA256SUMS` and the signed build provenance cover the binary inside each archive as well as the archive, so
-  `gh attestation verify "$(command -v qloudpulse)"` checks an installed client.
+  `gh attestation verify "$(command -v qloudpulse-stack)"` checks an installed client.
 - Releases are reproducible: the release workflow builds every target twice, on two runners, and publishes nothing
-  unless the binaries are the same, and `cli/release.sh --reproduce` at a release's tag builds it again and compares
+  unless the binaries are the same, and `cli/stack/release.sh --reproduce` at a release's tag builds it again and compares
   with the release's `SHA256SUMS`.
 - `--no-store` (also `QLOUDPULSE_NO_STORE`): qloudpulse prices the change and keeps nothing, and the client sends no
   names or URNs. The comment has no link and says nothing was kept, as it also does when a company's admins chose to
@@ -31,6 +31,13 @@ Needs a qloudpulse with ADR 0140 (report service with migration V35) before it i
 
 ### Changed
 
+- **Renamed: the client is now `qloudpulse-stack`**, to make room for other qloudpulse command-line tools. The binary
+  is `qloudpulse-stack` (`qloudpulse-stack.exe` on Windows), releases are tagged `qloudpulse-stack-<version>` and
+  their archives are `qloudpulse-stack-<version>-<target>.tar.gz` (or `.zip`), and the source moved to `cli/stack/`.
+  Replace `qloudpulse` with `qloudpulse-stack` in pipelines and scripts. `QLOUDPULSE_TOKEN` and the other
+  `QLOUDPULSE_*` variables, and the token `login` kept, are unchanged and shared by every qloudpulse CLI. A token
+  `login` makes from now on is named `qloudpulse-stack <version> on <os> <arch>`. Releases up to 0.3.1 keep their
+  names: tag `qloudpulse-cli-<version>`, binary `qloudpulse`.
 - `--region` now wins over the stack's `aws:region`: it is the region of every resource for which neither the preview
   nor its provider names one. Before, the stack's `aws:region` came first.
 - Each resource is sent with its name and its Pulumi URN, and qloudpulse keeps them with the estimate, so its page and

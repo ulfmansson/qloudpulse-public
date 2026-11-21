@@ -1,4 +1,4 @@
-//! `qloudpulse login` and `logout`, and the token they keep, through the binary. The keychain is never touched:
+//! `qloudpulse-stack login` and `logout`, and the token they keep, through the binary. The keychain is never touched:
 //! `QLOUDPULSE_CREDENTIALS_FILE` names a file in a directory of the test's own, as on a machine without a keychain.
 
 use std::path::PathBuf;
@@ -22,7 +22,7 @@ impl Dir {
         self.0.join("credentials")
     }
 
-    /// Writes the file as `qloudpulse login` does, with one token for this qloudpulse.
+    /// Writes the file as `qloudpulse-stack login` does, with one token for this qloudpulse.
     fn keep(&self, origin: &str, expires_at: &str) {
         let text = format!(r#"{{"{origin}": {{"token": "{TOKEN}", "company": "acme", "expiresAt": "{expires_at}"}}}}"#);
         std::fs::write(self.credentials(), text).unwrap();
@@ -30,7 +30,7 @@ impl Dir {
 
     fn run(&self, args: &[&str], stdin: &str) -> (bool, String, String) {
         use std::io::Write as _;
-        let mut child = Command::new(env!("CARGO_BIN_EXE_qloudpulse"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_qloudpulse-stack"))
             .args(args)
             .env_remove("QLOUDPULSE_TOKEN")
             .env_remove("QLOUDPULSE_ENDPOINT")
@@ -75,7 +75,7 @@ fn a_run_uses_the_kept_token_of_its_qloudpulse() {
         r#"{"steps": []}"#,
     );
     assert!(
-        !ok && stderr.contains("qloudpulse login"),
+        !ok && stderr.contains("qloudpulse-stack login"),
         "another qloudpulse's token is not this one's: {stderr}"
     );
 }
@@ -87,7 +87,7 @@ fn an_expired_kept_token_counts_as_none() {
     let (ok, _, stderr) = dir.run(&["estimate"], r#"{"steps": []}"#);
     assert!(!ok);
     assert!(
-        stderr.contains("set QLOUDPULSE_TOKEN") && stderr.contains("qloudpulse login"),
+        stderr.contains("set QLOUDPULSE_TOKEN") && stderr.contains("qloudpulse-stack login"),
         "{stderr}"
     );
 }

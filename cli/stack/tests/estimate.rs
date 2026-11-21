@@ -3,10 +3,10 @@
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
-use qloudpulse_cli::catalogue::Catalogue;
-use qloudpulse_cli::pulumi::{self, Options, key};
-use qloudpulse_cli::render;
-use qloudpulse_cli::request::{ChangeKind, Response};
+use qloudpulse_stack::catalogue::Catalogue;
+use qloudpulse_stack::pulumi::{self, Options, key};
+use qloudpulse_stack::render;
+use qloudpulse_stack::request::{ChangeKind, Response};
 use serde_json::{Value, json};
 
 const CREATE: &str = include_str!("fixtures/preview-create.json");
@@ -14,7 +14,7 @@ const UPDATE: &str = include_str!("fixtures/preview-update.json");
 
 const CATALOGUE: &str = include_str!("fixtures/catalogue.json");
 const CATALOGUE_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/catalogue.json");
-/// A credentials file that does not exist, so a run finds no token kept by `qloudpulse login` and never reads this
+/// A credentials file that does not exist, so a run finds no token kept by `qloudpulse-stack login` and never reads this
 /// machine's keychain.
 const NO_CREDENTIALS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/no-such-credentials");
 
@@ -30,7 +30,7 @@ fn estimate_with(json: &str, catalogue: &str, options: &Options) -> pulumi::Esti
     )
 }
 
-fn resource<'a>(e: &'a pulumi::Estimate, urn: &str) -> &'a qloudpulse_cli::request::ResourceChange {
+fn resource<'a>(e: &'a pulumi::Estimate, urn: &str) -> &'a qloudpulse_stack::request::ResourceChange {
     let k = key(urn);
     e.request
         .resources
@@ -445,7 +445,7 @@ fn run(args: &[&str], stdin: &str, token: Option<&str>) -> (bool, String, String
 
 /// A run with these environment variables set besides.
 fn run_env(args: &[&str], stdin: &str, token: Option<&str>, env: &[(&str, &str)]) -> (bool, String, String) {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_qloudpulse"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_qloudpulse-stack"));
     cmd.args(args)
         .env_remove("QLOUDPULSE_TOKEN")
         .env_remove("QLOUDPULSE_ENDPOINT")
@@ -550,7 +550,7 @@ fn nothing_to_price_still_needs_a_token() {
     assert_eq!(
         stderr.trim(),
         "qloudpulse: set QLOUDPULSE_TOKEN to a token of your own (qpev_...). Make one at \
-         https://app.qloudpulse.com/ui/?profile#my-tokens (Your tokens, under your name), or run `qloudpulse login` at \
+         https://app.qloudpulse.com/ui/?profile#my-tokens (Your tokens, under your name), or run `qloudpulse-stack login` at \
          a terminal to sign in with your browser, or use --dry-run to see what would be sent.",
         "the default endpoint is hosted qloudpulse: the page is linked"
     );
@@ -564,7 +564,7 @@ fn nothing_to_price_still_needs_a_token() {
     assert_eq!(
         stderr.trim(),
         "qloudpulse: set QLOUDPULSE_TOKEN to a token of your own (qpev_...). Make one under Your tokens, under your \
-         name in your qloudpulse, or run `qloudpulse login` at a terminal to sign in with your browser, or use \
+         name in your qloudpulse, or run `qloudpulse-stack login` at a terminal to sign in with your browser, or use \
          --dry-run to see what would be sent.",
         "an install of its own: no address guessed"
     );
@@ -582,7 +582,7 @@ fn nothing_to_price_still_needs_a_token() {
 
 #[test]
 fn a_missing_token_is_said_before_the_preview_is_read_or_the_catalogue_asked() {
-    let out = Command::new(env!("CARGO_BIN_EXE_qloudpulse"))
+    let out = Command::new(env!("CARGO_BIN_EXE_qloudpulse-stack"))
         // A closed port and no catalogue file: reaching for the catalogue would fail with a connection error instead.
         .args([
             "estimate",
@@ -706,7 +706,7 @@ fn the_shipped_catalogue_sends_a_service_with_its_task_definition() {
 
 #[test]
 fn without_a_catalogue_file_it_is_read_from_the_endpoint() {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_qloudpulse"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_qloudpulse-stack"));
     let out = cmd
         .args([
             "estimate",
@@ -748,7 +748,7 @@ fn a_newer_client_is_said_and_one_below_the_minimum_stops() {
     let newer = catalogue_with_client("99.0.0", "0.0.1");
     let (ok, stdout, stderr) = run(&["estimate", "--dry-run", "--catalogue", &newer], UPDATE, None);
     assert!(ok, "{stderr}");
-    assert!(stderr.contains("qloudpulse CLI 99.0.0 is out (this is "), "{stderr}");
+    assert!(stderr.contains("qloudpulse-stack 99.0.0 is out (this is "), "{stderr}");
     assert!(
         serde_json::from_str::<Value>(&stdout).is_ok(),
         "the request is still printed"
@@ -763,7 +763,7 @@ fn a_newer_client_is_said_and_one_below_the_minimum_stops() {
         "{stderr}"
     );
 
-    let current = catalogue_with_client(qloudpulse_cli::version::VERSION, qloudpulse_cli::version::VERSION);
+    let current = catalogue_with_client(qloudpulse_stack::version::VERSION, qloudpulse_stack::version::VERSION);
     let (ok, _, stderr) = run(&["estimate", "--dry-run", "--catalogue", &current], UPDATE, None);
     assert!(ok && !stderr.contains("is out"), "{stderr}");
 }
@@ -976,7 +976,7 @@ fn noted_response() -> Response {
 
 #[test]
 fn the_stack_and_its_providers_alone_are_no_stack_listed() {
-    // What the user ran: `pulumi preview --json | qloudpulse estimate`, no --show-sames, nothing changed. Pulumi
+    // What the user ran: `pulumi preview --json | qloudpulse-stack estimate`, no --show-sames, nothing changed. Pulumi
     // still lists the stack and its provider as the same.
     let e = estimate(UNCHANGED, &Options::default());
     assert!(!e.stack_listed);
@@ -1165,7 +1165,7 @@ fn an_older_qloudpulse_s_link_carries_the_names_after_the_hash() {
     let mut response = noted_response();
     response.url = Some("https://app.qloudpulse.com/ui/?estimate=est_02".into());
     assert_eq!(response.stored, None, "an endpoint from before ADR 0140 does not say");
-    let link = qloudpulse_cli::link::page_link(response.url.as_deref(), response.stored, &e.locals).unwrap();
+    let link = qloudpulse_stack::link::page_link(response.url.as_deref(), response.stored, &e.locals).unwrap();
     assert!(
         link.starts_with("https://app.qloudpulse.com/ui/?estimate=est_02#names="),
         "{link}"
