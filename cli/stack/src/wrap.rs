@@ -1,4 +1,4 @@
-//! The arguments of `qloudpulse pulumi preview` and `qloudpulse pulumi up`, which run Pulumi with the user's own
+//! The arguments of `qloudpulse-stack pulumi preview` and `qloudpulse-stack pulumi up`, which run Pulumi with the user's own
 //! arguments and price the change in between.
 //!
 //! Pulumi prints its human diff or its JSON, never both, and its `--event-log` (a debug flag, only there with

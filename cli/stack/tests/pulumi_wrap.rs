@@ -1,4 +1,4 @@
-//! `qloudpulse pulumi preview` and `qloudpulse pulumi up` against a fake `pulumi` on PATH: a shell script that logs
+//! `qloudpulse-stack pulumi preview` and `qloudpulse-stack pulumi up` against a fake `pulumi` on PATH: a shell script that logs
 //! each run's arguments, prints a fixture preview for `--json`, and a line of its own for the human display and `up`.
 #![cfg(unix)]
 
@@ -58,7 +58,7 @@ impl Fake {
     }
 
     fn command(&self, args: &[&str], preview: &Path) -> Command {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_qloudpulse"));
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_qloudpulse-stack"));
         cmd.args(args)
             .env("PATH", format!("{}:/usr/bin:/bin", self.dir.join("bin").display()))
             .env("FAKE_PULUMI_LOG", self.dir.join("log"))
@@ -291,7 +291,7 @@ fn pulumis_json_is_refused_before_anything_runs() {
         let fake = Fake::new(&format!("json-{command}{json}"));
         let r = run(fake.command(&["pulumi", command, "--dry-run", "-s", "dev", json], Path::new(UPDATE)));
         assert_eq!(r.code, Some(1), "{command} {json}");
-        assert!(r.stderr.contains("qloudpulse estimate"), "{}", r.stderr);
+        assert!(r.stderr.contains("qloudpulse-stack estimate"), "{}", r.stderr);
         assert!(fake.runs().is_empty());
     }
 }

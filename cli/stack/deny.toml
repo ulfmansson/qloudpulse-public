@@ -1,4 +1,4 @@
-# cargo deny check advisories licenses sources, run on every pull request by .github/workflows/cli-checks.yml.
+# cargo deny check advisories licenses sources, run on every pull request by .github/workflows/cli-stack-checks.yml.
 # The configuration format is cargo-deny's: https://embarkstudios.github.io/cargo-deny/checks/cfg.html
 
 [graph]

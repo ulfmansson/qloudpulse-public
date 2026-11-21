@@ -1,4 +1,4 @@
-//! The token a run sends: from `QLOUDPULSE_TOKEN`; else the one `qloudpulse login` kept on this machine (see
+//! The token a run sends: from `QLOUDPULSE_TOKEN`; else the one `qloudpulse-stack login` kept on this machine (see
 //! [`crate::credentials`]); else, when someone is at a terminal, they are offered to sign in with the browser, which
 //! keeps the token it gets, or asked to paste a token, with the input hidden, for this run only. stdin is usually the
 //! preview, so every answer is read from the terminal itself (`/dev/tty`, or the console on Windows), never from
@@ -97,7 +97,7 @@ pub fn prompt(endpoint: &str) -> String {
 pub const OFFER: &str = "Sign in with your browser? [Y/n] ";
 
 /// The token for this run: `QLOUDPULSE_TOKEN`'s value, trimmed, when it is set and not blank; else the token `stored`
-/// finds, kept by `qloudpulse login`; else, at a terminal, [`OFFER`]: yes is `sign_in`, no is the answer to
+/// finds, kept by `qloudpulse-stack login`; else, at a terminal, [`OFFER`]: yes is `sign_in`, no is the answer to
 /// [`prompt`], in up to [`TRIES`] tries; else the error that says where a token is made.
 pub fn resolve<T: Terminal>(
     env: Option<String>,
@@ -164,7 +164,7 @@ pub fn resolve<T: Terminal>(
 
 /// What is said once a pasted token is taken.
 const FOR_THIS_RUN: &str = "qloudpulse: the token is used for this run only and saved nowhere. Next time, \
-                            `qloudpulse login` keeps one on this machine, or `export QLOUDPULSE_TOKEN=...` first, or \
+                            `qloudpulse-stack login` keeps one on this machine, or `export QLOUDPULSE_TOKEN=...` first, or \
                             keep it in the CI secret.";
 
 #[cfg(test)]
@@ -293,7 +293,7 @@ mod tests {
             let mut t = Script::new(false, vec![]);
             let err = resolve_here(env, DEFAULT_ENDPOINT, &mut t).unwrap_err().to_string();
             assert_eq!(err, missing_token(DEFAULT_ENDPOINT));
-            assert!(err.contains("qloudpulse login"), "{err}");
+            assert!(err.contains("qloudpulse-stack login"), "{err}");
             assert!(t.asked.is_empty() && t.confirmed.is_empty());
         }
     }
@@ -387,7 +387,7 @@ mod tests {
         assert!(
             last.contains("this run only")
                 && last.contains("export QLOUDPULSE_TOKEN")
-                && last.contains("qloudpulse login"),
+                && last.contains("qloudpulse-stack login"),
             "{:?}",
             t.said
         );

@@ -4,8 +4,8 @@ What you install to use qloudpulse from your own systems:
 
 - **The cluster agent** connects a Kubernetes cluster, as a Helm chart or as plain YAML. Both install the same thing.
   The rest of this page is about it.
-- **The CLI** (`qloudpulse estimate`) prices an infrastructure change in CI before it is applied. See
-  [`cli/README.md`](cli/README.md).
+- **The CLI** (`qloudpulse-stack estimate`) prices an infrastructure change in CI before it is applied. See
+  [`cli/stack/README.md`](cli/stack/README.md).
 
 ## The cluster agent
 
