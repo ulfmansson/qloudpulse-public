@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="headline">
+  <div class="grow">
+    <h1>Analyze</h1>
+    <p class="muted">What the client reads, which tag keys it found, and what the saved rules do with them. Sample values are shown here, on this machine; the UI never writes them to disk.</p>
+  </div>
+  <div class="panel side">
+    <form method="get" action="/analyze" class="toolbar">
+      <label class="small muted" for="source">Analyzing</label>
+      <select id="source" name="source" data-autosubmit>
+        {% for o in sources %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+      </select>
+      {% if !show_values %}<input type="hidden" name="values" value="0">{% endif %}
+      <noscript><button>Show</button></noscript>
+    </form>
+    <p class="small state-{{ sample_state }}">{{ sample_line }}</p>
+    <div class="toolbar">
+      <form method="post" action="/sample"><input type="hidden" name="csrf" value="{{ head.csrf }}"><button class="primary"{% if sample_state == "collecting" %} disabled{% endif %}>Collect sample now (held in memory only)</button></form>
+      <form method="post" action="/sample/forget"><input type="hidden" name="csrf" value="{{ head.csrf }}"><button{% if sample_state == "none" %} disabled{% endif %}>Forget sample</button></form>
+    </div>
+    {% if !snapshots.is_empty() %}
+    <form method="post" action="/sample/load" class="toolbar">
+      <input type="hidden" name="csrf" value="{{ head.csrf }}">
+      <span class="small muted">or use a raw snapshot on disk:</span>
+      <select name="snapshot">{% for l in snapshots %}<option value="{{ l }}">{{ l }}</option>{% endfor %}</select>
+      <button>Load into memory</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% if !note.is_empty() %}<div class="note ok">{{ note }}</div>{% endif %}
+
+{% if let Some(r) = report %}
+<div class="cards">
+  {% for c in r.cards %}<div class="card {{ c.class }}"><div class="n">{{ c.n }}</div><div class="l">{{ c.label }}</div></div>{% endfor %}
+</div>
+
+<div class="panel">
+  <div class="toolbar">
+    <h2>Tag keys</h2>
+    <span class="spacer"></span>
+    {% if show_values %}<a class="small" href="/analyze?source={{ source }}&amp;values=0">hide sample values</a>{% else %}<a class="small" href="/analyze?source={{ source }}">show sample values</a>{% endif %}
+    <a class="small" href="/rules">Edit rules →</a>
+  </div>
+  <div class="scroll"><table>
+    <tr><th>Key</th><th class="num">Tags</th><th class="num">Distinct values</th>{% if show_values %}<th>Sample values</th>{% endif %}<th>Action</th><th>qloudpulse feature it feeds</th><th>Seen in</th></tr>
+    {% for t in r.tags %}
+    <tr>
+      <td class="mono">{{ t.key }}</td><td class="num">{{ t.count }}</td><td class="num">{{ t.distinct }}</td>
+      {% if show_values %}<td class="mono small">{{ t.samples }}</td>{% endif %}
+      <td><span class="pill {{ t.action_class }}">{{ t.action }}</span></td>
+      <td class="small">{% if t.feature.is_empty() %}<span class="muted">—</span>{% else %}{{ t.feature }}{% endif %}</td>
+      <td class="small muted">{{ t.operations }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="muted">No tags in these records.</td></tr>
+    {% endfor %}
+  </table></div>
+  <p class="small muted">Action is what <code>[tags]</code> in the saved config does: <code>drop</code>, then <code>pseudonymize</code>, then <code>replace</code>, then <code>keep</code>, then the default.</p>
+</div>
+
+<div class="grid2">
+  <div>
+    <div class="panel">
+      <h2>What the rules cost in qloudpulse</h2>
+      {% if r.impact.is_empty() %}<div class="note ok">The saved rules keep every tag key qloudpulse features read.</div>{% else %}
+      <ul class="plain">{% for i in r.impact %}<li>{{ i.text }}{% if i.absent %} <span class="small muted">— no record here carries that tag, so nothing is lost today</span>{% endif %}</li>{% endfor %}</ul>
+      {% endif %}
+      <p class="small muted">Fields qloudpulse prices from (instance type, volume size, availability zone, …) can never be changed by a rule, so the cost figures stay exact whatever the rules.</p>
+    </div>
+    <div class="panel">
+      <h2>Secret and personal-data scan</h2>
+      <h3>{{ r.scan_label }}</h3>
+      {% if r.scan.is_empty() %}<p class="small ok">Nothing found.</p>{% else %}
+      <table class="tight"><tr><th>Kind</th><th class="num">Found</th><th>State</th><th>Where</th><th>Masked samples</th></tr>
+        {% for k in r.scan %}<tr><td class="mono small">{{ k.kind }}</td><td class="num">{{ k.count }}</td><td class="small {{ k.class }}">{{ k.state }}</td><td class="small muted">{{ k.operations }}</td><td class="mono small">{{ k.samples }}</td></tr>{% endfor %}
+      </table>{% endif %}
+      {% if let Some(after) = r.scan_after %}
+      <h3>After your rules: what would leave</h3>
+      {% if !after.is_empty() %}
+      <table class="tight"><tr><th>Kind</th><th class="num">Found</th><th>State</th><th>Where</th><th>Masked samples</th></tr>
+        {% for k in after %}<tr><td class="mono small">{{ k.kind }}</td><td class="num">{{ k.count }}</td><td class="small {{ k.class }}">{{ k.state }}</td><td class="small muted">{{ k.operations }}</td><td class="mono small">{{ k.samples }}</td></tr>{% endfor %}
+      </table>{% endif %}
+      {% endif %}
+      {% if !r.scan_after_note.is_empty() %}<p class="small">{{ r.scan_after_note }}</p>{% endif %}
+    </div>
+    <div class="panel">
+      <h2>Errors recorded</h2>
+      <p class="small muted">Replayed to qloudpulse as the same error, so its collectors degrade exactly as they would live.</p>
+      {% if r.errors.is_empty() %}<p class="small ok">None.</p>{% else %}
+      <table class="tight"><tr><th>Operation and code</th><th class="num">Records</th></tr>
+        {% for e in r.errors %}<tr><td class="mono small">{{ e.name }}</td><td class="num">{{ e.count }}</td></tr>{% endfor %}
+      </table>{% endif %}
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Calls by operation</h2>
+    <p class="small muted">Every one is on the read-only allow-list compiled into this binary (<code>qloudpulse-collect call-plan</code>).</p>
+    <table class="tight"><tr><th>Operation</th><th class="num">Records</th><th class="barcol"></th></tr>
+      {% for o in r.operations %}<tr><td class="mono small">{{ o.name }}</td><td class="num">{{ o.count }}</td><td><meter min="0" max="100" value="{{ o.width }}"></meter></td></tr>{% endfor %}
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="panel"><p>{% if source == "sample" %}Collect a sample, or pick a bundle above, to see what the client reads.{% else %}Nothing to show.{% endif %}</p></div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% if head.refresh %}<meta http-equiv="refresh" content="3">{% endif %}
+<title>{{ head.title }} · qloudpulse-collect</title>
+<link rel="icon" href="/assets/mark.svg">
+<link rel="stylesheet" href="/assets/app.css">
+<script src="/assets/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="row1">
+    <div class="brand">
+      <img src="/assets/mark.svg" alt="" width="34" height="34">
+      <span class="word"><span class="ink">qloud</span><span class="red">pulse</span></span>
+      <span class="badge"><b>collect</b> · local UI · {{ head.version }}</span>
+    </div>
+    <div class="chips">
+      <span class="chip lock" title="The UI answers only on this address, and only to requests that name it by address.">listening on <b class="mono">{{ head.bind }}</b></span>
+      <span class="chip" title="Printed when the UI started. Without it every page answers 401.">session token <b class="mono">…{{ head.token_tail }}</b></span>
+      <span class="chip" title="source_id in the config: names this client among several a company may run.">source_id <b class="mono">{{ head.source_id }}</b></span>
+      <span class="chip" title="Names the pseudonym key without revealing it. A new key changes every pseudonym.">key fingerprint <b class="mono">{{ head.fingerprint }}</b></span>
+    </div>
+  </div>
+  <div class="row2">
+    <nav>
+      <a href="/analyze"{% if head.active == "analyze" %} class="on" aria-current="page"{% endif %}>Analyze</a>
+      <a href="/rules"{% if head.active == "rules" %} class="on" aria-current="page"{% endif %}>Rules</a>
+      <a href="/bundles"{% if head.active == "bundles" %} class="on" aria-current="page"{% endif %}>Bundles</a>
+      <a href="/runs"{% if head.active == "runs" %} class="on" aria-current="page"{% endif %}>Run history</a>
+    </nav>
+    <div class="runstate">{{ head.run_line }} · config <code>{{ head.config_path }}</code></div>
+  </div>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer>qloudpulse-collect {{ head.version }}. This page talks to nothing but this address: every asset is part of the binary, and the raw sample lives in this process's memory only.</footer>
+</body>
+</html>

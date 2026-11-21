@@ -1,0 +1,2 @@
+{% for e in errors %}<div class="note bad">The config would be refused, so it cannot be saved: {{ e }}</div>{% endfor %}
+{% if !impact.is_empty() %}<div class="note warn"><b>What these rules cost in qloudpulse:</b><ul class="plain">{% for i in impact %}<li>{{ i }}</li>{% endfor %}</ul></div>{% endif %}

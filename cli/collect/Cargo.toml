@@ -1,0 +1,66 @@
+[package]
+name = "qloudpulse-collect"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Collects cloud cost data with your own credentials into a bundle you inspect, redact and deliver. Never contacts qloudpulse."
+publish = false
+license = "Apache-2.0"
+repository = "https://github.com/ulfmansson/qloudpulse-public"
+
+[[bin]]
+name = "qloudpulse-collect"
+path = "src/main.rs"
+
+[lib]
+name = "qloudpulse_collect"
+path = "src/lib.rs"
+
+[dependencies]
+aes-gcm = "0.10"
+aes-kw = { version = "0.2", features = ["alloc"] }
+anyhow = "1"
+# No default features: its default HTTPS client is rustls on aws-lc (a C build). The client below uses ring, the
+# same TLS crypto as ureq, so the whole binary has one TLS stack.
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "credentials-process", "sso"] }
+aws-smithy-http-client = { version = "1", features = ["rustls-ring"] }
+aws-credential-types = "1"
+aws-sigv4 = "1"
+jiff = { version = "0.2", features = ["serde"] }
+base64 = "0.22"
+clap = { version = "4.6", features = ["derive", "env"] }
+flate2 = "1"
+hex = "0.4"
+hmac = "0.12"
+http = "1"
+p256 = { version = "0.14", features = ["ecdh"] }
+qloudpulse-stack = { path = "../stack", optional = true }
+quick-xml = "0.42"
+rand = "0.9"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+tar = "0.4"
+tokio = { version = "1", features = ["rt", "time", "net"] }
+toml = "0.9"
+ureq = "3.5"
+url = "2"
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "form", "query"] }
+askama = "0.16.1"
+toml_edit = "0.25.20"
+
+[features]
+# The qloudpulse upload. `--no-default-features` builds a client with no qloudpulse code in it at all.
+default = ["upload"]
+# The qloudpulse upload, signed in the same way as the qloudpulse CLI (its library: token lookup, keychain, login).
+upload = ["dep:qloudpulse-stack"]
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5.3", default-features = false, features = ["util"] }
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1

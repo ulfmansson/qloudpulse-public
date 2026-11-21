@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="headline">
+  <div class="grow">
+    <h1>Bundles</h1>
+    <p class="muted">Every <code>.tgz</code> in <code>{{ output_dir }}</code>, newest first, and which delivery target has it. A bundle stays until every configured target has it; retention ({{ keep }} bundles) never deletes one a target still lacks.</p>
+  </div>
+  <div class="panel side small">
+    <b>Delivery targets</b>
+    {% if targets.is_empty() %}<p class="muted">None configured: bundles stay in the output directory. See <code>[deliver]</code> in the config.</p>{% else %}
+    <ul class="plain">{% for t in targets %}<li><code>{{ t.name }}</code> → {{ t.detail }}{% if !t.state.is_empty() %}<br><span class="{{ t.state_class }}">{{ t.state }}</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
+  </div>
+</div>
+<div class="panel">
+  {% if rows.is_empty() %}<p class="muted">No bundles yet. <code>pack</code> or <code>run</code> writes them here.</p>{% else %}
+  <div class="scroll"><table>
+    <tr><th>Bundle</th><th>Window</th><th class="num">Records</th><th class="num">Accounts</th><th class="num">Size</th><th>Delivered to</th><th>Notes</th></tr>
+    {% for b in rows %}
+    <tr>
+      <td class="mono small"><a href="/bundles/{{ b.name }}">{{ b.name }}</a>{% if b.encrypted %} <span class="pill p-default" title="A .tgz.jwe sits next to it: that is what is delivered.">encrypted copy</span>{% endif %}</td>
+      <td class="small nowrap">{{ b.window }}</td>
+      <td class="num">{{ b.records }}</td>
+      <td class="num">{{ b.accounts }}</td>
+      <td class="num small">{{ b.size }}</td>
+      <td><span class="deliv">{% for d in b.deliveries %}<span class="dv {% if d.done %}ok{% else %}bad{% endif %}">{{ d.target }} {% if d.done %}✓{% else %}✗ pending{% endif %}</span>{% else %}<span class="muted small">—</span>{% endfor %}</span></td>
+      <td class="small {{ b.note_class }}">{{ b.note }}</td>
+    </tr>
+    {% endfor %}
+  </table></div>{% endif %}
+</div>
+{% endblock %}

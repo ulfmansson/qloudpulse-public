@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="headline">
+  <div class="grow">
+    <h1>Bundle</h1>
+    <p class="mono">{{ name }}</p>
+  </div>
+  <div class="toolbar"><a class="btn" href="/bundles">← All bundles</a><a class="btn" href="/analyze?source={{ name }}">Analyze it</a></div>
+</div>
+{% if !error.is_empty() %}
+<div class="note bad"><b>This bundle does not check out, so it is not what pack wrote. Do not deliver it.</b><pre class="plain">{{ error }}</pre></div>
+{% else %}
+<div class="note ok">Every file matches its SHA-256 in the manifest.</div>
+<div class="grid2">
+  <div class="panel">
+    <h2>Manifest</h2>
+    <dl class="kv">
+      {% for f in facts %}<dt>{{ f.0 }}</dt><dd class="mono small">{{ f.1 }}</dd>{% endfor %}
+    </dl>
+    <p class="small">{% if config_same %}<span class="ok">Packed with the config as it is now.</span>{% else %}<span class="warn">Packed with an earlier config: its rules are below, not the current ones.</span>{% endif %}
+    {% if key_same %}<span class="ok">Same pseudonym key as now.</span>{% else %}<span class="warn">A different pseudonym key from the one configured now: its pseudonyms will not match newer bundles.</span>{% endif %}</p>
+    <h3>Failures</h3>
+    {% if failures.is_empty() %}<p class="small ok">None: every collector finished.</p>{% else %}<ul class="plain small warn">{% for f in failures %}<li>{{ f }}</li>{% endfor %}</ul>{% endif %}
+    <h3>Files</h3>
+    <table class="tight"><tr><th>Path</th><th>SHA-256</th><th class="num">Bytes</th><th class="num">Records</th><th></th></tr>
+      {% for f in files %}<tr><td class="mono small">{{ f.path }}</td><td class="mono small hash">{{ f.sha256 }}</td><td class="num small">{{ f.bytes }}</td><td class="num">{{ f.records }}</td><td class="ok">✓</td></tr>{% endfor %}
+    </table>
+    <h3>Delivered to</h3>
+    <span class="deliv">{% for d in deliveries %}<span class="dv {% if d.done %}ok{% else %}bad{% endif %}">{{ d.target }} {% if d.done %}✓{% else %}✗ pending{% endif %}</span>{% else %}<span class="muted small">no target configured</span>{% endfor %}</span>
+  </div>
+  <div class="panel">
+    <h2>Rules applied</h2>
+    <dl class="kv small">{% for r in rules_ %}<dt>{{ r.0 }}</dt><dd class="mono">{{ r.1 }}</dd>{% endfor %}</dl>
+    <h3>Redaction</h3>
+    <table class="tight"><tr><th>Tag key</th><th>Action</th><th class="num">Tags</th></tr>
+      {% for k in redaction %}<tr><td class="mono small">{{ k.key }}</td><td><span class="pill {{ k.action_class }}">{{ k.action }}</span></td><td class="num small">{{ k.count }}</td></tr>{% endfor %}
+      {% for k in fields %}<tr><td class="mono small">field {{ k.key }}</td><td></td><td class="num small">{{ k.count }} values</td></tr>{% endfor %}
+    </table>
+    <p class="small">{{ ids }}.</p>
+    <h3>Feature impact</h3>
+    {% if impact.is_empty() %}<p class="small ok">None.</p>{% else %}<ul class="plain small">{% for i in impact %}<li>{{ i }}</li>{% endfor %}</ul>{% endif %}
+    <h3>Scan of what left</h3>
+    {% if scan.is_empty() %}<p class="small ok">Nothing found.</p>{% else %}
+    <table class="tight"><tr><th>Kind</th><th class="num">Found</th><th>State</th><th>Masked samples</th></tr>
+      {% for k in scan %}<tr><td class="mono small">{{ k.kind }}</td><td class="num">{{ k.count }}</td><td class="small {{ k.class }}">{{ k.state }}</td><td class="mono small">{{ k.samples }}</td></tr>{% endfor %}
+    </table>{% endif %}
+  </div>
+</div>
+
+<div class="panel">
+  <form method="get" action="/bundles/{{ name }}" class="toolbar">
+    <h2>Records <span class="muted thin">({{ total }} in the bundle)</span></h2>
+    <span class="spacer"></span>
+    <select name="op" data-autosubmit><option value="">all operations</option>{% for o in operations %}<option value="{{ o.0 }}"{% if o.1 %} selected{% endif %}>{{ o.0 }}</option>{% endfor %}</select>
+    <noscript><button>Filter</button></noscript>
+  </form>
+  <div class="grid2">
+    <div>
+      <p class="small muted">{{ page_line }}{% if !prev.is_empty() %} · <a href="{{ prev }}">← previous</a>{% endif %}{% if !next.is_empty() %} · <a href="{{ next }}">next →</a>{% endif %}</p>
+      <div class="scroll"><table class="tight">
+        <tr><th>#</th><th>Account</th><th>Region</th><th>Operation</th><th class="num">Page</th><th>Status</th></tr>
+        {% for r in records %}<tr{% if r.selected %} class="sel"{% endif %}><td class="small"><a href="{{ r.href }}">{{ r.n }}</a></td><td class="mono small">{{ r.account }}</td><td class="small">{{ r.region }}</td><td class="mono small"><a href="{{ r.href }}">{{ r.operation }}</a></td><td class="num small">{{ r.page }}</td><td class="small {% if r.error %}warn{% else %}ok{% endif %}">{{ r.status }}</td></tr>{% endfor %}
+      </table></div>
+    </div>
+    <div>
+      {% if !record.is_empty() %}
+      <h3>The record, as one line of its NDJSON file (pretty-printed)</h3>
+      <pre class="code short">{{ record }}</pre>
+      <h3>response.body, exactly as it leaves</h3>
+      <pre class="code">{{ body }}</pre>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
