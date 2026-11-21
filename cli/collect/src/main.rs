@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 /// Nothing is read from qloudpulse. The only time the client contacts qloudpulse is `upload`, or `run` with
 /// [deliver.qloudpulse] configured, and then it sends a finished bundle and nothing else.
 #[derive(Parser)]
-#[command(version, name = "qloudpulse-collect")]
+#[command(version = env!("QLOUDPULSE_LONG_VERSION"), name = "qloudpulse-collect")]
 struct Cli {
     /// The config file.
     #[arg(

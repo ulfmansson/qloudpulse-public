@@ -7,6 +7,40 @@ qloudpulse ingests it. Nothing is read from qloudpulse, and you decide whether a
 The design and its reasons are in [`docs/offline-collection.md`](../../docs/offline-collection.md). This first version
 covers qloudpulse's hourly AWS cost collector.
 
+## Install
+
+Each release has a static binary for Linux (x86_64 and arm64), binaries for macOS, and binaries for Windows (x86_64
+and arm64), with their SHA-256 sums, and an install script that picks the one for your machine:
+
+```bash
+curl -fsSL https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-collect-0.1.0/install.sh | sh
+```
+
+```powershell
+irm https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-collect-0.1.0/install.ps1 | iex
+```
+
+Each script installs the release it came from: the version is in the URL, so a machine gets the same client every
+run until you change it. The copies in this repository, `cli/collect/install.sh` and `cli/collect/install.ps1`,
+install the newest release instead, or the one `--version` names. It downloads the archive and the release's
+`SHA256SUMS`, stops unless the sum matches, and puts the binary in `~/.local/bin`, or on Windows in
+`%LOCALAPPDATA%\Programs\qloudpulse`, which it adds to your PATH.
+
+| `install.sh` | `install.ps1` (or its variable, as `iex` takes no options) | |
+|---|---|---|
+| `--version <version>` | `-Version`, `$env:QLOUDPULSE_COLLECT_VERSION` | the release to install |
+| `--dir <dir>` | `-Dir`, `$env:QLOUDPULSE_INSTALL_DIR` | where the binary goes |
+| `--attest` | `-Attest` | also check its signed build provenance with `gh`, as below |
+| `--base <url or dir>` | `-Base`, `$env:QLOUDPULSE_COLLECT_DOWNLOAD_BASE` | a mirror of the release's files |
+| | `-NoModifyPath`, `$env:QLOUDPULSE_NO_MODIFY_PATH` | leave PATH alone |
+
+Pass `install.sh` options after `sh -s --`, e.g. `curl -fsSL <url> | sh -s -- --dir /usr/local/bin --attest`. The
+scripts are in `SHA256SUMS` too, and attested with the archives, so you can check one before running it.
+
+Or build it from this directory with Rust 1.88 or later: `cargo build --release --locked`. The binary is
+`target/release/qloudpulse-collect`. The checksum shows the download is whole; that it was built from this
+repository's source, by its public workflow, is checked as in [Verify what you run](#verify-what-you-run).
+
 ## Get started
 
 ```bash
@@ -177,3 +211,159 @@ cargo build --release --no-default-features
 
 This build leaves out the `upload` feature, so there is no qloudpulse code and no qloudpulse host in the binary.
 CI checks that with `strings`.
+
+## Verify what you run
+
+The client reads your AWS accounts and holds the key behind your pseudonyms, so check what you run instead of
+trusting it. Each step below
+needs only public things: this repository, the release, and Sigstore's public log.
+
+**1. The archive was built from this repository, by its release workflow, at the release's tag.** Every archive of a
+release has signed [SLSA build provenance](https://slsa.dev/spec/v1.0/provenance), made by
+[`.github/workflows/cli-collect-release.yml`](../../.github/workflows/cli-collect-release.yml) on GitHub's runners and recorded in
+Sigstore's public transparency log. Nothing built on a laptop can carry it. With the [GitHub CLI](https://cli.github.com)
+(signed in to any GitHub account):
+
+```bash
+VERSION=0.1.0
+TARGET=x86_64-unknown-linux-musl
+gh attestation verify "qloudpulse-collect-$VERSION-$TARGET.tar.gz" --repo ulfmansson/qloudpulse-public \
+  --signer-workflow ulfmansson/qloudpulse-public/.github/workflows/cli-collect-release.yml \
+  --source-ref "refs/tags/qloudpulse-collect-$VERSION"
+```
+
+`--repo` alone checks that the archive was attested by a workflow of this repository. `--signer-workflow` and
+`--source-ref` also check that it was the release workflow, run on the release's tag and not on a branch. The commit
+it was built from is in the signing certificate, which the workflow cannot write; add
+`--format json --jq '.[].verificationResult.signature.certificate.sourceRepositoryDigest'` to print it, and compare it
+with `git rev-parse "qloudpulse-collect-$VERSION^{commit}"` in a clone whose source you have read.
+
+The binary inside each archive is attested too, so the same check works on a client
+you have already installed, wherever it came from:
+
+```bash
+gh attestation verify "$(command -v qloudpulse-collect)" --repo ulfmansson/qloudpulse-public \
+  --signer-workflow ulfmansson/qloudpulse-public/.github/workflows/cli-collect-release.yml
+```
+
+`qloudpulse-collect --version` names the commit a release was built from and that commit's date, as `rustc --version` does:
+`qloudpulse-collect <version> (1ab39062b 2026-11-21)`. That line is a label, written in at build time; the provenance is what
+proves it. A build of your own with plain `cargo build` prints the version alone, and `release.sh` marks one built
+from a changed tree, as `(1ab39062b-modified 2026-11-21)`.
+
+Without the GitHub CLI, or offline, use Sigstore's own [cosign](https://docs.sigstore.dev/cosign/) (3.0 or later)
+with the bundle each release carries:
+
+```bash
+cosign verify-blob-attestation \
+  --bundle "qloudpulse-collect-$VERSION.provenance.sigstore.json" \
+  --type slsaprovenance1 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity "https://github.com/ulfmansson/qloudpulse-public/.github/workflows/cli-collect-release.yml@refs/tags/qloudpulse-collect-$VERSION" \
+  "qloudpulse-collect-$VERSION-$TARGET.tar.gz"
+```
+
+The release's SBOM, `qloudpulse-collect-$VERSION.cdx.json` (CycloneDX), lists every crate the client is built from, and it is
+signed for the same archives: `gh attestation verify … --predicate-type https://cyclonedx.org/bom`. Each binary also
+carries that list itself, written in by [cargo auditable](https://github.com/rust-secure-code/cargo-auditable), so an
+installed client can be checked for crates with known vulnerabilities without the SBOM: `cargo audit bin
+"$(command -v qloudpulse-collect)"`, or Trivy or Grype, which read the same list.
+
+**2. The download is whole.** `SHA256SUMS` has the SHA-256 of every archive, as in [Install](#install), and of the
+binary in each, named `<archive>/qloudpulse-collect` (or `qloudpulse-collect.exe`), so an installed binary can be checked by its sum
+too: `shasum -a 256 "$(command -v qloudpulse-collect)"`.
+
+```bash
+sha256sum -c --ignore-missing SHA256SUMS   # on macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
+```
+
+The sums prove the file is the one uploaded, not who built it: whoever can upload an archive can upload its sum. The
+provenance above proves who built it. In a pipeline, verify a version once when you adopt it, then pin its SHA-256
+there, so every run checks the same bytes:
+
+```bash
+echo "<sha256 from SHA256SUMS>  qloudpulse-collect-$VERSION-$TARGET.tar.gz" | sha256sum -c -
+```
+
+**3. Or build it yourself from the tag, and get the same bytes.** The builds are
+[reproducible](https://reproducible-builds.org): built again from the release's tag, with the images and the Rust that
+`release.sh` pins, a binary comes out byte for byte the one the release holds. Nothing in it depends on when or where
+it was built: no timestamps (the PE header has none, and archives carry the commit's time), and no paths of the
+machine. The release workflow itself builds every target twice, on two runners, and signs and publishes nothing unless
+the two agree. To check a release yourself, from a clone, with Docker for the Linux and Windows targets:
+
+```bash
+git switch --detach "qloudpulse-collect-$VERSION"
+cli/collect/release.sh --reproduce --targets x86_64-unknown-linux-musl
+```
+
+It builds the target as the release workflow does and compares the binary with the release's `SHA256SUMS`. Two inputs are not pinned by digest. The Linux builds install Alpine's
+`musl-dev` when they run, as Alpine keeps only the newest build of a package; the version a build used is printed
+beside it. And a macOS binary is linked by the Mac's own Xcode tools, so it matches only on a Mac with the Xcode of
+GitHub's `macos-15` image.
+
+To build one for yourself instead, with Rust 1.88 or later (`--locked` builds exactly the crate versions, with their
+checksums, in the tag's `Cargo.lock`; its `--version` names no commit):
+
+```bash
+cargo install --git https://github.com/ulfmansson/qloudpulse-public --tag "qloudpulse-collect-$VERSION" --locked qloudpulse-collect
+```
+
+Every pull request to this repository runs `cargo test`, `cargo clippy`, `cargo deny` (RustSec advisories, the
+licences in [`deny.toml`](deny.toml), crates.io as the only source) and `cargo audit`, in
+[`.github/workflows/cli-collect-checks.yml`](../../.github/workflows/cli-collect-checks.yml); the same checks run weekly on `main`.
+
+**4. Run it where it can do no harm.** The client only reads: every AWS operation it may call is in the compiled-in
+call plan (`qloudpulse-collect call-plan`), it refuses any other before building the request, and `qloudpulse-collect
+policy` prints the read-only IAM policy for exactly those. Its only write is the optional `PutObject` to your own S3
+bucket. Give the role nothing more, and limit the machine's egress to AWS's endpoints, plus `api.qloudpulse.com:443`
+only if it uploads.
+
+To be sure it cannot reach qloudpulse at all, build it without the upload:
+
+```bash
+cargo install --git https://github.com/ulfmansson/qloudpulse-public --tag "qloudpulse-collect-$VERSION" --locked \
+  --no-default-features qloudpulse-collect
+```
+
+That binary holds no qloudpulse code and no qloudpulse host; CI checks it on every pull request with `strings`.
+
+**5. Read what leaves.** A bundle is plain text: `qloudpulse-collect verify <bundle>` checks every file against its
+manifest, `qloudpulse-collect analyze <bundle>` shows every tag and what the rules did, and `tar -xzf` with `jq` shows
+the rest. `pack` refuses to write a bundle that still holds keys, tokens, passwords or email addresses (see
+[Privacy extras](#privacy-extras)).
+
+## Releasing
+
+Releases are built on GitHub's runners by [`.github/workflows/cli-collect-release.yml`](../../.github/workflows/cli-collect-release.yml),
+never on a laptop, so that each archive's provenance names a public workflow and commit. To release, raise `version`
+in `Cargo.toml`, and in [CHANGELOG.md](CHANGELOG.md) move the lines under Unreleased into that version's section and
+date it (`## [<version>] - YYYY-MM-DD`). That section becomes the release's notes on GitHub. Merge, and from an
+up-to-date `main`:
+
+```bash
+cli/collect/release.sh --publish
+```
+
+That builds nothing. It checks that `HEAD` is `origin/main`, that the changelog has the version's section, dated,
+and nothing left under Unreleased, and that the version is not released yet. Then it
+pushes the tag `qloudpulse-collect-<version>`. The tag starts the workflow, which checks the same again, runs
+`cargo test --locked`, builds every target with `release.sh`, runs the two Windows `.exe` files on Windows x86_64 and
+Windows on ARM, builds every target a second time on another runner and checks that the binaries are the same, writes
+the SBOM and `SHA256SUMS`, signs provenance for every archive and binary, and publishes the release. Watch
+it with `gh run list -R ulfmansson/qloudpulse-public --workflow cli-collect-release.yml`.
+
+The workflow also builds every target, without signing or publishing, on each pull request that changes `cli/collect/` or `cli/stack/`.
+Every action in it is pinned by commit, and every build image (in `release.sh`) by digest.
+
+`release.sh` without `--publish` builds every target here and packs the same files, for trying a build; nothing leaves
+your machine, and nothing it builds is released:
+
+```bash
+cli/collect/release.sh
+```
+
+It needs Docker (the Linux and Windows builds) and rustup (the macOS builds). The Windows `.exe` files are cross-built,
+the x86_64 one with mingw-w64 and the arm64 one with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (Rust's
+`aarch64-pc-windows-gnullvm` target), and cannot run on the Mac that builds them: the script checks that each is a
+Windows program for its architecture that needs only DLLs every Windows has, and that it names its version.

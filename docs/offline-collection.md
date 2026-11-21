@@ -19,7 +19,8 @@ finished bundle (`upload`, or `deliver.qloudpulse` in config), and then it sends
 - **Separate binary, `qloudpulse-collect`**, next to `cli/`. The only qloudpulse code in it is the bundle upload, and
   that sits behind the Cargo feature `upload` (on by default). A build with `--no-default-features` has no qloudpulse
   host and no qloudpulse HTTP client compiled in, so "never phones home" can be checked with `grep`, `cargo tree`, or
-  an egress policy that allows only the cloud APIs; releases ship that build too, as `qloudpulse-collect-offline`.
+  an egress policy that allows only the cloud APIs. Releases ship the default build; the offline one is a
+  `cargo install --no-default-features` of the release's tag (`cli/collect/README.md`, Verify what you run).
 - **Rust.** To keep the client in step with the TypeScript collectors, both build against a generated
   **call-plan manifest** (operations and IAM actions per collector) and a **bundle JSON Schema** (see Ownership).
 - **Unattended is the primary mode**: no prompts, structured logs, non-zero exit on partial failure. `analyze` and
