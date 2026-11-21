@@ -1,6 +1,5 @@
 //! The estimate command against Pulumi previews written to Pulumi's `display.PreviewDigest` format.
 
-use std::io::Write as _;
 use std::process::{Command, Stdio};
 
 use qloudpulse_stack::catalogue::Catalogue;
@@ -439,6 +438,15 @@ fn a_change_that_saves_says_so() {
     assert!(comment.contains("`orders` RDS instance: no answer for it"), "{comment}");
 }
 
+/// Writes a run's stdin. A run can stop before it reads any, as one refused on its arguments does, and then the write
+/// meets a closed pipe: that is no failure, as the test judges the run by its exit and its output.
+fn feed(stdin: &mut impl std::io::Write, input: &str) {
+    match stdin.write_all(input.as_bytes()) {
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+        written => written.unwrap(),
+    }
+}
+
 fn run(args: &[&str], stdin: &str, token: Option<&str>) -> (bool, String, String) {
     run_env(args, stdin, token, &[])
 }
@@ -466,7 +474,7 @@ fn run_env(args: &[&str], stdin: &str, token: Option<&str>, env: &[(&str, &str)]
     }
     cmd.envs(env.iter().copied());
     let mut child = cmd.spawn().unwrap();
-    child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+    feed(&mut child.stdin.take().unwrap(), stdin);
     let out = child.wait_with_output().unwrap();
     (
         out.status.success(),
@@ -722,7 +730,7 @@ fn without_a_catalogue_file_it_is_read_from_the_endpoint() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    out.stdin.as_ref().unwrap().write_all(UPDATE.as_bytes()).unwrap();
+    feed(&mut out.stdin.as_ref().unwrap(), UPDATE);
     let out = out.wait_with_output().unwrap();
     assert!(!out.status.success());
     let err = String::from_utf8(out.stderr).unwrap();

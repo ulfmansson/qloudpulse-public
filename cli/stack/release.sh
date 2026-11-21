@@ -71,7 +71,7 @@ MACOS_TOOLCHAIN=${RUSTUP_TOOLCHAIN:-1.88.0}
 CARGO_AUDITABLE_VERSION=0.7.7
 RUST_AUDIT_INFO_VERSION=0.5.4
 REPO=${REPO:-ulfmansson/qloudpulse-public}
-WORKFLOW=cli-release.yml
+WORKFLOW=cli-stack-release.yml
 
 while [ $# -gt 0 ]; do
   case "$1" in
