@@ -1,0 +1,176 @@
+//! One cycle (collect, pack, deliver, prune) and the clock-aligned loop around it.
+
+use crate::aws::caller::Account;
+use crate::aws::credentials::CredentialSource;
+use crate::aws::{Caller, Transport};
+use crate::bundle;
+use crate::callplan::CallPlan;
+use crate::collect::{self, Run};
+use crate::config::Config;
+use crate::deliver::Deliverer;
+use crate::log;
+use crate::pseudonym::Pseudonymizer;
+use crate::snapshot::{Snapshot, SnapshotMeta};
+use crate::window::Window;
+use anyhow::{Context, Result};
+use chrono::{DateTime, Duration, DurationRound, Timelike, Utc};
+use std::path::PathBuf;
+
+pub struct Client {
+    pub config: Config,
+    pub config_bytes: Vec<u8>,
+    pub credentials: CredentialSource,
+    pub transport: Box<dyn Transport>,
+}
+
+impl Client {
+    /// Reads every configured account and region into a raw snapshot.
+    pub fn collect(&self, now: DateTime<Utc>) -> Result<Snapshot> {
+        let window = Window::last_full_hour(now);
+        let caller = Caller::new(CallPlan::embedded(), self.transport.as_ref(), self.config.options());
+        let home = &self.config.home_region;
+        let mut failures = Vec::new();
+        let mut accounts = Vec::new();
+        if self.config.accounts.is_empty() {
+            let credentials = self.credentials.ambient()?;
+            let id =
+                collect::caller_account(&caller, &credentials, home).context("finding the credentials' account")?;
+            accounts.push(Account { id, credentials });
+        } else {
+            for a in &self.config.accounts {
+                match self.credentials.assume(&a.role_arn, a.external_id.as_deref()) {
+                    Ok(credentials) => accounts.push(Account {
+                        id: a.id.clone(),
+                        credentials,
+                    }),
+                    Err(e) => {
+                        log::warn(
+                            "account skipped",
+                            &[("account", a.id.clone()), ("error", format!("{e:#}"))],
+                        );
+                        failures.push(format!("{}: could not assume {}: {e:#}", a.id, a.role_arn));
+                    }
+                }
+            }
+        }
+        anyhow::ensure!(!accounts.is_empty(), "no account could be read");
+        let regions = match &self.config.regions {
+            Some(r) => r.clone(),
+            None => collect::enabled_regions(&caller, &accounts[0], home).context("listing enabled regions")?,
+        };
+        let run = Run {
+            caller: &caller,
+            window,
+            spot_history: now.hour() == self.config.run.daily_hour,
+        };
+        log::info(
+            "collecting",
+            &[
+                ("window", window.label()),
+                ("accounts", accounts.len().to_string()),
+                ("regions", regions.len().to_string()),
+            ],
+        );
+        let mut outcome = run.collect(&accounts, &regions);
+        outcome.failures.splice(0..0, failures);
+        let records = caller.into_records();
+        let meta = SnapshotMeta {
+            tool_version: env!("CARGO_PKG_VERSION").into(),
+            call_plan_version: CallPlan::embedded().version.clone(),
+            window,
+            collected_at: now,
+            outcome,
+        };
+        let snapshot = Snapshot::write(Snapshot::dir_for(&self.config.work_dir, &window), meta, records)?;
+        log::info(
+            "collected",
+            &[
+                ("records", snapshot.records.len().to_string()),
+                ("snapshot", snapshot.dir.display().to_string()),
+            ],
+        );
+        Ok(snapshot)
+    }
+
+    pub fn pseudonyms(&self) -> Result<Pseudonymizer> {
+        Pseudonymizer::load(&self.config.key_file, self.config.keep_pseudonym_map)
+    }
+
+    pub fn pack(&self, snapshot: &Snapshot) -> Result<PathBuf> {
+        let pseudonyms = self.pseudonyms()?;
+        let path = bundle::pack(&self.config, &self.config_bytes, &pseudonyms, snapshot)?;
+        log::info("packed", &[("bundle", path.display().to_string())]);
+        for line in self.config.feature_impact() {
+            log::warn("rule cost", &[("impact", line)]);
+        }
+        Ok(path)
+    }
+
+    pub fn deliverer(&self) -> Deliverer<'_> {
+        Deliverer {
+            config: &self.config,
+            transport: self.transport.as_ref(),
+            credentials: Some(&self.credentials),
+        }
+    }
+
+    /// Collect, pack, drop the raw snapshot (unless kept), deliver everything pending, prune.
+    pub fn cycle(&self, now: DateTime<Utc>) -> Result<PathBuf> {
+        let snapshot = self.collect(now)?;
+        let bundle = self.pack(&snapshot)?;
+        if !self.config.run.keep_raw {
+            std::fs::remove_dir_all(&snapshot.dir).with_context(|| format!("removing {}", snapshot.dir.display()))?;
+        }
+        let deliverer = self.deliverer();
+        for pending in deliverer.pending()? {
+            // Each failure is logged and retried next cycle.
+            let _ = deliverer.deliver(&pending, None);
+        }
+        let removed = deliverer.prune()?;
+        if removed > 0 {
+            log::info("pruned", &[("bundles", removed.to_string())]);
+        }
+        Ok(bundle)
+    }
+
+    /// Runs a cycle at each aligned time, forever. A failed cycle is logged and the loop goes on.
+    pub fn run_forever(&self) -> ! {
+        loop {
+            let now = Utc::now();
+            let next = next_run(now, self.config.run.every_hours, self.config.run.minute);
+            log::info("waiting", &[("next", next.to_rfc3339())]);
+            std::thread::sleep((next - now).to_std().unwrap_or_default());
+            if let Err(e) = self.cycle(Utc::now()) {
+                log::warn("cycle failed", &[("error", format!("{e:#}"))]);
+            }
+        }
+    }
+}
+
+/// The next time after `now` at `minute` past an hour divisible by `every_hours`, in UTC.
+pub fn next_run(now: DateTime<Utc>, every_hours: u32, minute: u32) -> DateTime<Utc> {
+    let mut t = now
+        .duration_trunc(Duration::hours(1))
+        .expect("an hour divides a timestamp")
+        + Duration::minutes(minute as i64);
+    while t <= now || !t.hour().is_multiple_of(every_hours) {
+        t += Duration::hours(1);
+    }
+    t
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    #[test]
+    fn aligns_to_the_clock() {
+        assert_eq!(next_run(at("2026-11-21T07:03:00Z"), 1, 5), at("2026-11-21T07:05:00Z"));
+        assert_eq!(next_run(at("2026-11-21T07:05:00Z"), 1, 5), at("2026-11-21T08:05:00Z"));
+        assert_eq!(next_run(at("2026-11-21T07:30:00Z"), 6, 5), at("2026-11-21T12:05:00Z"));
+    }
+}

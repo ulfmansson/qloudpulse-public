@@ -1,0 +1,42 @@
+# cargo deny check advisories licenses sources, run on every pull request by .github/workflows/cli-checks.yml.
+# The configuration format is cargo-deny's: https://embarkstudios.github.io/cargo-deny/checks/cfg.html
+
+[graph]
+# The crates of the targets a release is built for, and no others: a crate only another platform pulls in is never in
+# a binary anyone downloads.
+targets = [
+  "x86_64-unknown-linux-musl",
+  "aarch64-unknown-linux-musl",
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  "x86_64-pc-windows-gnu",
+  "aarch64-pc-windows-gnullvm",
+]
+
+[advisories]
+# Every RustSec advisory fails the check: a vulnerability, an unmaintained or unsound crate, or a yanked version. One
+# that does not apply is listed here with the reason, never silently.
+ignore = []
+
+[licenses]
+# The licences of the crates the client is built from today, all permissive and compatible with its Apache-2.0. A
+# dependency under any other licence fails the check until someone has read it and added it here.
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MIT",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+confidence-threshold = 0.93
+
+[sources]
+# Crates come from crates.io only: no other registry and no git repository.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

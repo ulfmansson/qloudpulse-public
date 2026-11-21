@@ -1,0 +1,53 @@
+[package]
+name = "qloudpulse-collect"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Collects cloud cost data with your own credentials into a bundle you inspect, redact and deliver. Never contacts qloudpulse."
+publish = false
+license = "Apache-2.0"
+repository = "https://github.com/ulfmansson/qloudpulse-public"
+
+[[bin]]
+name = "qloudpulse-collect"
+path = "src/main.rs"
+
+[lib]
+name = "qloudpulse_collect"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-credential-types = "1"
+aws-sigv4 = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+clap = { version = "4.6", features = ["derive", "env"] }
+flate2 = "1"
+hex = "0.4"
+hmac = "0.12"
+http = "1"
+quick-xml = "0.38"
+rand = "0.9"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+tar = "0.4"
+tokio = { version = "1", features = ["rt", "time", "net"] }
+toml = "0.9"
+ureq = "3.5"
+url = "2"
+
+[features]
+# The qloudpulse upload. `--no-default-features` builds a client with no qloudpulse code in it at all.
+default = ["upload"]
+upload = []
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1

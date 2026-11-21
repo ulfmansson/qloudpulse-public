@@ -9,15 +9,17 @@ their accounts. `qloudpulse-collect` is a client they run themselves. It reads t
 credentials, lets them inspect, filter and redact what it found, and writes a `.tgz` bundle. They deliver the bundle;
 qloudpulse ingests it through the same collectors that read live accounts today.
 
-The client never talks to qloudpulse. It needs nothing from our servers and holds no qloudpulse token.
+The client needs nothing from our servers. It contacts qloudpulse only when the customer tells it to upload a
+finished bundle (`upload`, or `deliver.qloudpulse` in config), and then it sends that bundle and nothing else.
 
 ## Decisions
 
 ### The binary
 
-- **Separate binary, `qloudpulse-collect`**, in a Cargo workspace next to `cli/`. No qloudpulse host and no
-  qloudpulse HTTP client is compiled in, so "never phones home" can be checked with `grep`, `cargo tree`, or an
-  egress policy that allows only the cloud APIs. Shared crates (redaction, bundle format) are fine.
+- **Separate binary, `qloudpulse-collect`**, next to `cli/`. The only qloudpulse code in it is the bundle upload, and
+  that sits behind the Cargo feature `upload` (on by default). A build with `--no-default-features` has no qloudpulse
+  host and no qloudpulse HTTP client compiled in, so "never phones home" can be checked with `grep`, `cargo tree`, or
+  an egress policy that allows only the cloud APIs; releases ship that build too, as `qloudpulse-collect-offline`.
 - **Rust.** To keep the client in step with the TypeScript collectors, both build against a generated
   **call-plan manifest** (operations and IAM actions per collector) and a **bundle JSON Schema** (see Ownership).
 - **Unattended is the primary mode**: no prompts, structured logs, non-zero exit on partial failure. `analyze` and
@@ -67,10 +69,18 @@ Without our database the client plans its own calls:
 
 ### Bundle format
 
-- A `.tgz` of **recorded calls**: one record per `(account, region, service, operation, input) -> output`, the output
-  in the AWS SDK v3 output shape, as NDJSON, one file per data kind. Athena results are recorded the same way.
+- A `.tgz` of **recorded calls**, as NDJSON, one file per data kind. Each record is one HTTP exchange with an AWS
+  API: account, region, service, operation, the request parameters, the page number, and the **raw response** (status,
+  the headers that matter, and the XML or JSON body exactly as AWS sent it, after redaction). Athena results are
+  recorded the same way.
+- Raw responses, not parsed objects, because qloudpulse's collectors replay them through their own AWS SDK: the SDK
+  parses a recorded response exactly as it parses a live one, so nothing is lost or reshaped in between. A call
+  matches its recording on account, region, service, operation, its parameters other than paging ones (`NextToken`,
+  `Marker`, `MaxResults`, …) and the page number.
 - **Errors are recorded too.** `AccessDenied`, or a throttle that never cleared, is replayed as the same error, so
   collectors degrade exactly as they do live.
+- Redaction works on the parsed body and writes it back in the same format. Checksum headers such as DynamoDB's
+  `x-amz-crc32` are not recorded, since a redacted body would fail them.
 - `manifest.json`: tool version, `schema_version` (semver), `call_plan_version`, `source_id`, collection window, the
   accounts covered, a SHA-256 for every file, a hash and summary of the applied config, the HMAC key fingerprint, and
   scan results.
@@ -132,13 +142,26 @@ Without our database the client plans its own calls:
 
 ### Delivery
 
-The binary writes files. How they reach qloudpulse is the customer's choice:
+The binary writes bundles to its output directory. Each delivery target below is opt-in, and any combination can be
+on; `run` delivers every new bundle to each, and `deliver <bundle>…` does it by hand. Only finished bundles are ever
+delivered, never raw snapshots.
 
+- **S3** (`[deliver.s3]`: bucket, prefix, region, optional KMS key): a `PutObject` to the customer's **own** bucket
+  with their own credentials, the only write the binary makes to AWS. This is kept apart from the read-only
+  collection allow-list, and the IAM policy for it is a separate statement on that one bucket.
+- **qloudpulse** (`qloudpulse-collect upload <bundle>…` or `[deliver.qloudpulse]`): an HTTPS `POST` of the bundle to
+  `https://api.qloudpulse.com/v1/collection-bundles` (`--endpoint` to change it), with a **bundle-upload token**: one
+  company, upload only, created in the qloudpulse UI. The token comes from `QLOUDPULSE_UPLOAD_TOKEN` or a file named in
+  config, never from the config file itself. The answer is only a status and a reference; the client reads nothing
+  else from qloudpulse.
+- **A command** (`[deliver.command]`), run once per bundle with its path, for anything else.
 - **Manual upload** in the qloudpulse web UI.
-- **Their own tooling**, e.g. cron plus `curl`.
-- **`--deliver <command>`**, run once per bundle. The reference command is a `curl` with a **bundle-upload token**: one
-  company, upload only, created in the qloudpulse UI. Only the configured command sees the token; the binary never
-  reads it.
+
+A delivery that fails is retried at the next `run` cycle; the bundle stays in the output directory until every
+configured target has it, and retention never deletes an undelivered bundle.
+
+qloudpulse **deletes an uploaded bundle once it has been ingested**. One that fails ingest is kept at most 7 days for
+a retry and then deleted. What stays is the data in the reports, not the file.
 
 ### What qloudpulse does with a bundle
 
@@ -157,7 +180,11 @@ The binary writes files. How they reach qloudpulse is the customer's choice:
 ### Contract and distribution
 
 - The call-plan manifest and the bundle JSON Schema are generated from qloudpulse's collectors and published in this
-  repo. The client builds against that copy, so what it may call is visible here.
+  repo. The client builds against that copy, so what it may call is visible here. Until the generator exists, the
+  call plan in `collect/call-plan.json` is a hand-made seed, marked as such.
+- The client signs its own requests (SigV4) and speaks each API's wire protocol from the call plan, so it needs no
+  per-service AWS SDK crates. Credentials come from the standard AWS chain (environment, profiles, SSO, instance and
+  container roles, web identity).
 - Releases use the CLI's pipeline: static musl/macOS/Windows binaries, `SHA256SUMS`, GitHub attestations, a
   version-pinned `install.sh`, plus a distroless container image on ghcr, also attested. Tags are
   `qloudpulse-collect-X.Y.Z`.

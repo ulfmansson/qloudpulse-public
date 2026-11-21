@@ -1,0 +1,573 @@
+{
+  "version": "0.1.0-seed",
+  "seed": true,
+  "note": "Hand-made from collect-swamp's aws-cost-collect (aws_clients.ts COST_COLLECTOR_ACTIONS, @aws-sdk 3.1021.0 protocols). Replaced by the generated plan.",
+  "services": {
+    "sts": {
+      "protocol": "query",
+      "endpoint_prefix": "sts",
+      "api_version": "2011-06-15"
+    },
+    "ec2": {
+      "protocol": "ec2",
+      "endpoint_prefix": "ec2",
+      "api_version": "2016-11-15"
+    },
+    "dynamodb": {
+      "protocol": "awsJson1_0",
+      "endpoint_prefix": "dynamodb",
+      "target_prefix": "DynamoDB_20120810"
+    },
+    "cloudwatch": {
+      "protocol": "awsJson1_0",
+      "endpoint_prefix": "monitoring",
+      "signing_name": "monitoring",
+      "target_prefix": "GraniteServiceVersion20100801",
+      "query_compatible": true
+    },
+    "eks": {
+      "protocol": "restJson",
+      "endpoint_prefix": "eks"
+    },
+    "elasticache": {
+      "protocol": "query",
+      "endpoint_prefix": "elasticache",
+      "api_version": "2015-02-02"
+    },
+    "rds": {
+      "protocol": "query",
+      "endpoint_prefix": "rds",
+      "api_version": "2014-10-31"
+    },
+    "elbv2": {
+      "protocol": "query",
+      "endpoint_prefix": "elasticloadbalancing",
+      "api_version": "2015-12-01"
+    },
+    "elb": {
+      "protocol": "query",
+      "endpoint_prefix": "elasticloadbalancing",
+      "api_version": "2012-06-01"
+    },
+    "route53resolver": {
+      "protocol": "awsJson1_1",
+      "endpoint_prefix": "route53resolver",
+      "target_prefix": "Route53Resolver"
+    },
+    "kinesis": {
+      "protocol": "awsJson1_1",
+      "endpoint_prefix": "kinesis",
+      "target_prefix": "Kinesis_20131202"
+    },
+    "secretsmanager": {
+      "protocol": "awsJson1_1",
+      "endpoint_prefix": "secretsmanager",
+      "target_prefix": "secretsmanager"
+    },
+    "kms": {
+      "protocol": "awsJson1_1",
+      "endpoint_prefix": "kms",
+      "target_prefix": "TrentService"
+    },
+    "logs": {
+      "protocol": "awsJson1_1",
+      "endpoint_prefix": "logs",
+      "target_prefix": "Logs_20140328"
+    },
+    "ds": {
+      "protocol": "awsJson1_1",
+      "endpoint_prefix": "ds",
+      "target_prefix": "DirectoryService_20150416"
+    },
+    "s3": {
+      "protocol": "restXml",
+      "endpoint_prefix": "s3"
+    },
+    "opensearch": {
+      "protocol": "restJson",
+      "endpoint_prefix": "es",
+      "signing_name": "es"
+    },
+    "kafka": {
+      "protocol": "restJson",
+      "endpoint_prefix": "kafka"
+    },
+    "mq": {
+      "protocol": "restJson",
+      "endpoint_prefix": "mq"
+    },
+    "ecs": {
+      "protocol": "awsJson1_1",
+      "endpoint_prefix": "ecs",
+      "target_prefix": "AmazonEC2ContainerServiceV20141113"
+    },
+    "autoscaling": {
+      "protocol": "query",
+      "endpoint_prefix": "autoscaling",
+      "api_version": "2011-01-01"
+    }
+  },
+  "operations": [
+    {
+      "collector": "client",
+      "service": "sts",
+      "name": "GetCallerIdentity",
+      "iam_action": "sts:GetCallerIdentity"
+    },
+    {
+      "collector": "client",
+      "service": "ec2",
+      "name": "DescribeRegions",
+      "iam_action": "ec2:DescribeRegions"
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "dynamodb",
+      "name": "ListTables",
+      "iam_action": "dynamodb:ListTables",
+      "paging": {
+        "input_token": "ExclusiveStartTableName",
+        "output_token": "LastEvaluatedTableName"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "dynamodb",
+      "name": "DescribeTable",
+      "iam_action": "dynamodb:DescribeTable"
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "dynamodb",
+      "name": "ListBackups",
+      "iam_action": "dynamodb:ListBackups",
+      "paging": {
+        "input_token": "ExclusiveStartBackupArn",
+        "output_token": "LastEvaluatedBackupArn"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "dynamodb",
+      "name": "DescribeContinuousBackups",
+      "iam_action": "dynamodb:DescribeContinuousBackups"
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "cloudwatch",
+      "name": "DescribeAlarms",
+      "iam_action": "cloudwatch:DescribeAlarms",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "NextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "cloudwatch",
+      "name": "GetMetricStatistics",
+      "iam_action": "cloudwatch:GetMetricStatistics",
+      "option": "usageMetrics"
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "eks",
+      "name": "ListClusters",
+      "iam_action": "eks:ListClusters",
+      "paging": {
+        "input_token": "nextToken",
+        "output_token": "nextToken"
+      },
+      "http": {
+        "method": "GET",
+        "path": "/clusters"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "eks",
+      "name": "DescribeCluster",
+      "iam_action": "eks:DescribeCluster",
+      "http": {
+        "method": "GET",
+        "path": "/clusters/{name}"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "eks",
+      "name": "DescribeClusterVersions",
+      "iam_action": "eks:DescribeClusterVersions",
+      "paging": {
+        "input_token": "nextToken",
+        "output_token": "nextToken"
+      },
+      "http": {
+        "method": "GET",
+        "path": "/cluster-versions"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ec2",
+      "name": "DescribeInstances",
+      "iam_action": "ec2:DescribeInstances",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ec2",
+      "name": "DescribeSpotPriceHistory",
+      "iam_action": "ec2:DescribeSpotPriceHistory",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ec2",
+      "name": "DescribeVolumes",
+      "iam_action": "ec2:DescribeVolumes",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ec2",
+      "name": "DescribeNatGateways",
+      "iam_action": "ec2:DescribeNatGateways",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ec2",
+      "name": "DescribeNetworkInterfaces",
+      "iam_action": "ec2:DescribeNetworkInterfaces",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ec2",
+      "name": "DescribeAddresses",
+      "iam_action": "ec2:DescribeAddresses"
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ec2",
+      "name": "DescribeVpnConnections",
+      "iam_action": "ec2:DescribeVpnConnections"
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ec2",
+      "name": "DescribeTransitGatewayAttachments",
+      "iam_action": "ec2:DescribeTransitGatewayAttachments",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ec2",
+      "name": "DescribeVpcEndpoints",
+      "iam_action": "ec2:DescribeVpcEndpoints",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ec2",
+      "name": "DescribeClientVpnEndpoints",
+      "iam_action": "ec2:DescribeClientVpnEndpoints",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ec2",
+      "name": "DescribeClientVpnTargetNetworks",
+      "iam_action": "ec2:DescribeClientVpnTargetNetworks",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "elasticache",
+      "name": "DescribeCacheClusters",
+      "iam_action": "elasticache:DescribeCacheClusters",
+      "paging": {
+        "input_token": "Marker",
+        "output_token": "Marker"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "rds",
+      "name": "DescribeDBInstances",
+      "iam_action": "rds:DescribeDBInstances",
+      "paging": {
+        "input_token": "Marker",
+        "output_token": "Marker"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "elbv2",
+      "name": "DescribeLoadBalancers",
+      "iam_action": "elasticloadbalancing:DescribeLoadBalancers",
+      "paging": {
+        "input_token": "Marker",
+        "output_token": "NextMarker"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "elb",
+      "name": "DescribeLoadBalancers",
+      "iam_action": "elasticloadbalancing:DescribeLoadBalancers",
+      "paging": {
+        "input_token": "Marker",
+        "output_token": "NextMarker"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "route53resolver",
+      "name": "ListResolverEndpoints",
+      "iam_action": "route53resolver:ListResolverEndpoints",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "NextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "kinesis",
+      "name": "ListStreams",
+      "iam_action": "kinesis:ListStreams",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "NextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "kinesis",
+      "name": "DescribeStreamSummary",
+      "iam_action": "kinesis:DescribeStreamSummary"
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "secretsmanager",
+      "name": "ListSecrets",
+      "iam_action": "secretsmanager:ListSecrets",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "NextToken"
+      },
+      "option": "usageMetrics"
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "kms",
+      "name": "ListKeys",
+      "iam_action": "kms:ListKeys",
+      "paging": {
+        "input_token": "Marker",
+        "output_token": "NextMarker"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "kms",
+      "name": "DescribeKey",
+      "iam_action": "kms:DescribeKey"
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "logs",
+      "name": "DescribeLogGroups",
+      "iam_action": "logs:DescribeLogGroups",
+      "paging": {
+        "input_token": "nextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ds",
+      "name": "DescribeDirectories",
+      "iam_action": "ds:DescribeDirectories",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "NextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "s3",
+      "name": "ListBuckets",
+      "iam_action": "s3:ListAllMyBuckets",
+      "paging": {
+        "input_token": "continuation-token",
+        "output_token": "ContinuationToken"
+      },
+      "http": {
+        "method": "GET",
+        "path": "/?x-id=ListBuckets"
+      },
+      "option": "usageMetrics"
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "opensearch",
+      "name": "ListDomainNames",
+      "iam_action": "es:ListDomainNames",
+      "http": {
+        "method": "GET",
+        "path": "/2021-01-01/domain"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "opensearch",
+      "name": "DescribeDomains",
+      "iam_action": "es:DescribeDomains",
+      "http": {
+        "method": "POST",
+        "path": "/2021-01-01/opensearch/domain-info"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "kafka",
+      "name": "ListClustersV2",
+      "iam_action": "kafka:ListClustersV2",
+      "paging": {
+        "input_token": "nextToken",
+        "output_token": "nextToken"
+      },
+      "http": {
+        "method": "GET",
+        "path": "/api/v2/clusters"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "kafka",
+      "name": "DescribeClusterV2",
+      "iam_action": "kafka:DescribeClusterV2",
+      "http": {
+        "method": "GET",
+        "path": "/api/v2/clusters/{ClusterArn}"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "mq",
+      "name": "ListBrokers",
+      "iam_action": "mq:ListBrokers",
+      "paging": {
+        "input_token": "nextToken",
+        "output_token": "nextToken"
+      },
+      "http": {
+        "method": "GET",
+        "path": "/v1/brokers"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "mq",
+      "name": "DescribeBroker",
+      "iam_action": "mq:DescribeBroker",
+      "http": {
+        "method": "GET",
+        "path": "/v1/brokers/{BrokerId}"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ecs",
+      "name": "ListClusters",
+      "iam_action": "ecs:ListClusters",
+      "paging": {
+        "input_token": "nextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ecs",
+      "name": "DescribeClusters",
+      "iam_action": "ecs:DescribeClusters"
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ecs",
+      "name": "ListContainerInstances",
+      "iam_action": "ecs:ListContainerInstances",
+      "paging": {
+        "input_token": "nextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ecs",
+      "name": "DescribeContainerInstances",
+      "iam_action": "ecs:DescribeContainerInstances"
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ecs",
+      "name": "ListServices",
+      "iam_action": "ecs:ListServices",
+      "paging": {
+        "input_token": "nextToken",
+        "output_token": "nextToken"
+      }
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ecs",
+      "name": "DescribeServices",
+      "iam_action": "ecs:DescribeServices"
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "ecs",
+      "name": "DescribeCapacityProviders",
+      "iam_action": "ecs:DescribeCapacityProviders"
+    },
+    {
+      "collector": "aws-cost-collect",
+      "service": "autoscaling",
+      "name": "DescribeAutoScalingGroups",
+      "iam_action": "autoscaling:DescribeAutoScalingGroups",
+      "paging": {
+        "input_token": "NextToken",
+        "output_token": "NextToken"
+      }
+    }
+  ]
+}

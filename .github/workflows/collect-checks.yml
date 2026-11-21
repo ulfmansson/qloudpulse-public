@@ -1,0 +1,94 @@
+# qloudpulse-collect's checks, on every pull request and on main: its tests, clippy, its changelog, and its dependencies
+# against RustSec's advisories, the licences collect/deny.toml allows, and crates.io as the only source. Weekly too, since an advisory can be
+# published for a crate after it was merged. Every action is pinned by commit; the tools are pinned by version and
+# built from crates.io with their own Cargo.lock.
+name: Collect client checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: collect-checks-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  RUSTUP_TOOLCHAIN: "1.88.0" # the client's rust-version, which the release builds use
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    shell: bash
+    working-directory: collect
+
+jobs:
+  test:
+    name: cargo test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+      - run: cargo test --locked
+
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component clippy --no-self-update
+      - run: cargo clippy --locked --all-targets -- -D warnings
+
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+      - run: cargo install --locked cargo-deny@0.20.2
+      - run: cargo deny --locked check advisories licenses sources
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+      - run: cargo install --locked cargo-audit@0.22.2
+      # Every crate of Cargo.lock, optional ones too: cargo deny above looks only at what the release targets build.
+      - run: cargo audit
+
+  offline:
+    name: offline build has no qloudpulse host
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component clippy --no-self-update
+      - run: cargo clippy --locked --all-targets --no-default-features -- -D warnings
+      - run: cargo build --locked --no-default-features
+      # The promise in docs/offline-collection.md: a build without `upload` cannot contact qloudpulse.
+      - run: |
+          if strings target/debug/qloudpulse-collect | grep -i 'qloudpulse\.com'; then
+            echo "::error::the offline build holds a qloudpulse host"; exit 1
+          fi
