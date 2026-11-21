@@ -479,7 +479,7 @@ pushes the tag `qloudpulse-stack-<version>`. The tag starts the workflow, which 
 `cargo test --locked`, builds every target with `release.sh`, runs the two Windows `.exe` files on Windows x86_64 and
 Windows on ARM, builds every target a second time on another runner and checks that the binaries are the same, writes
 the SBOM and `SHA256SUMS`, signs provenance for every archive and binary, and publishes the release. Watch
-it with `gh run list -R ulfmansson/qloudpulse-public --workflow cli-release.yml`.
+it with `gh run list -R ulfmansson/qloudpulse-public --workflow cli-stack-release.yml`.
 
 The workflow also builds every target, without signing or publishing, on each pull request that changes `cli/stack/`.
 Every action in it is pinned by commit, and every build image (in `release.sh`) by digest.
