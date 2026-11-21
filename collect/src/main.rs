@@ -90,6 +90,12 @@ enum Command {
         #[arg(long)]
         every: Option<u32>,
     },
+    /// Replace the pseudonym key. Writes an old-to-new pseudonym file (no real values) to relink history in
+    /// qloudpulse, from the local map (keep_pseudonym_map); without one it refuses unless --force.
+    RotateKey {
+        #[arg(long)]
+        force: bool,
+    },
     /// Print the read-only IAM policy the call plan needs (plus S3 delivery, if configured).
     Policy,
     /// Print the compiled-in call plan: every operation the client may call.
@@ -281,6 +287,26 @@ fn run(cli: Cli) -> Result<()> {
                 println!("{}", path.display());
             } else {
                 client.run_forever();
+            }
+        }
+        Command::RotateKey { force } => {
+            let (config, _) = load(&cli.config)?;
+            let rotated = qloudpulse_collect::pseudonym::rotate(
+                &config.key_file,
+                &config.work_dir.join("pseudonyms.tsv"),
+                force,
+            )?;
+            println!(
+                "key {} replaced by {}",
+                rotated.old_fingerprint, rotated.new_fingerprint
+            );
+            println!("the old key is at {}; back up the new one", rotated.retired.display());
+            match rotated.relink {
+                Some((path, n)) => println!(
+                    "{n} pseudonyms relinked in {}: upload it to qloudpulse to join history",
+                    path.display()
+                ),
+                None => println!("no relink file: history before today will not join what comes after"),
             }
         }
         Command::Policy => {

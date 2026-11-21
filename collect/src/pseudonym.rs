@@ -116,6 +116,74 @@ impl Pseudonymizer {
     }
 }
 
+/// What `rotate-key` did.
+#[derive(Debug)]
+pub struct Rotated {
+    pub old_fingerprint: String,
+    pub new_fingerprint: String,
+    /// Where the old key now is.
+    pub retired: std::path::PathBuf,
+    /// The old-to-new pseudonym file and how many it relinks, when a local map existed.
+    pub relink: Option<(std::path::PathBuf, usize)>,
+}
+
+/// Replaces the key at `key_file` with a new one. With the local map (`map_file`), writes `old<TAB>new` for every
+/// pseudonym it knows, which qloudpulse can take to relink history (it holds no real values), and rewrites the map
+/// under the new key. Without the map no relinking is possible, so it refuses unless `force`.
+pub fn rotate(key_file: &Path, map_file: &Path, force: bool) -> Result<Rotated> {
+    let old = Pseudonymizer::load(key_file, false)?;
+    let known: Vec<(String, String)> = match std::fs::read_to_string(map_file) {
+        Ok(text) => text
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .map(|(p, v)| (p.to_string(), v.to_string()))
+            .collect(),
+        Err(_) if force => Vec::new(),
+        Err(_) => bail!(
+            "no pseudonym map at {}: history could not be relinked after the rotation. Set keep_pseudonym_map = true \
+             and pack once to build it, or rotate with --force to accept the break",
+            map_file.display()
+        ),
+    };
+    let retired = key_file.with_extension(format!("key.retired-{}", old.fingerprint()));
+    std::fs::rename(key_file, &retired).with_context(|| format!("retiring {}", key_file.display()))?;
+    Pseudonymizer::create_key(key_file)?;
+    let new = Pseudonymizer::load(key_file, true)?;
+    let mut relink = String::new();
+    for (old_p, real) in &known {
+        let new_p = if old_p.starts_with("p_") {
+            new.pseudonym(real)
+        } else if old_p.len() == 12 && old_p.bytes().all(|b| b.is_ascii_digit()) {
+            new.account_id(real)
+        } else if let Some((prefix, hex)) = real.rsplit_once('-') {
+            new.resource_id(prefix, hex)
+        } else {
+            continue;
+        };
+        relink.push_str(&format!("{old_p}\t{new_p}\n"));
+    }
+    let relink = if known.is_empty() {
+        None
+    } else {
+        let dir = map_file.parent().unwrap_or(Path::new("."));
+        let path = dir.join(format!(
+            "pseudonym-relink-{}-to-{}.tsv",
+            old.fingerprint(),
+            new.fingerprint()
+        ));
+        write_private(&path, relink.as_bytes())?;
+        std::fs::remove_file(map_file)?;
+        new.save_map(map_file)?;
+        Some((path, known.len()))
+    };
+    Ok(Rotated {
+        old_fingerprint: old.fingerprint(),
+        new_fingerprint: new.fingerprint(),
+        retired,
+        relink,
+    })
+}
+
 pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -145,6 +213,42 @@ mod tests {
         assert!(a.pseudonym("x").starts_with("p_"));
         assert_eq!(a.pseudonym("x").len(), 18);
         assert_ne!(a.fingerprint(), b.fingerprint());
+    }
+
+    #[test]
+    fn rotation_relinks_every_known_pseudonym_without_real_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let (key, map) = (dir.path().join("k"), dir.path().join("pseudonyms.tsv"));
+        Pseudonymizer::create_key(&key).unwrap();
+        let old = Pseudonymizer::load(&key, true).unwrap();
+        let (v, a, r) = (
+            old.pseudonym("alice@corp"),
+            old.account_id("111122223333"),
+            old.resource_id("i", "0123456789abcdef0"),
+        );
+        old.save_map(&map).unwrap();
+        assert!(rotate(&dir.path().join("missing"), &map, false).is_err());
+
+        let rotated = rotate(&key, &map, false).unwrap();
+        let new = Pseudonymizer::load(&key, false).unwrap();
+        assert_ne!(rotated.old_fingerprint, rotated.new_fingerprint);
+        assert!(rotated.retired.exists());
+        let (path, n) = rotated.relink.unwrap();
+        assert_eq!(n, 3);
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains(&format!("{v}\t{}", new.pseudonym("alice@corp"))));
+        assert!(text.contains(&format!("{a}\t{}", new.account_id("111122223333"))));
+        assert!(text.contains(&format!("{r}\t{}", new.resource_id("i", "0123456789abcdef0"))));
+        assert!(
+            !text.contains("alice") && !text.contains("111122223333"),
+            "no real values"
+        );
+        assert!(
+            std::fs::read_to_string(&map)
+                .unwrap()
+                .contains(&new.pseudonym("alice@corp")),
+            "the map follows the new key"
+        );
     }
 
     #[test]
