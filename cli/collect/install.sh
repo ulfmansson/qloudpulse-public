@@ -142,7 +142,7 @@ if [ $ATTEST -eq 1 ]; then
     || fail "$ARCHIVE has no provenance from $REPO's release workflow at $TAG; nothing was installed"
 fi
 
-tar -xzf "$TMP/$ARCHIVE" -C "$TMP" qloudpulse
+tar -xzf "$TMP/$ARCHIVE" -C "$TMP" qloudpulse-collect
 "$TMP/qloudpulse-collect" --version >/dev/null 2>&1 \
   || fail "the downloaded qloudpulse does not run here (if ${TMPDIR:-/tmp} is mounted noexec, set TMPDIR to another directory)"
 
