@@ -1012,7 +1012,7 @@ pub struct TargetView {
 /// the token `login` kept. Says where the token comes from and for which company, never the token.
 #[cfg(feature = "upload")]
 fn sign_in_state(endpoint: &str) -> (String, &'static str) {
-    use qloudpulse_cli::{credentials, login};
+    use qloudpulse_stack::{credentials, login};
     if std::env::var(crate::deliver::qloudpulse::TOKEN_ENV).is_ok_and(|t| !t.trim().is_empty()) {
         return ("signed in via QLOUDPULSE_TOKEN".into(), "ok");
     }

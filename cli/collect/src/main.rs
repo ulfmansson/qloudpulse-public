@@ -313,7 +313,7 @@ fn run(cli: Cli) -> Result<()> {
         }
         #[cfg(feature = "upload")]
         Command::Login { endpoint } => {
-            deliver::qloudpulse::sign_in(&endpoint, &mut qloudpulse_cli::token::Tty)?;
+            deliver::qloudpulse::sign_in(&endpoint, &mut qloudpulse_stack::token::Tty)?;
             if std::env::var(deliver::qloudpulse::TOKEN_ENV).is_ok_and(|t| !t.trim().is_empty()) {
                 eprintln!(
                     "qloudpulse-collect: QLOUDPULSE_TOKEN is set in this shell, and wins over the kept token while it is."

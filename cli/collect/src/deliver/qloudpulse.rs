@@ -11,7 +11,7 @@ use crate::aws::{HttpRequest, Transport};
 use crate::bundle::SCHEMA_VERSION;
 use crate::config::QloudpulseTarget;
 use anyhow::{Context, Result};
-use qloudpulse_cli::{credentials, login, send, token};
+use qloudpulse_stack::{credentials, login, send, token};
 use sha2::{Digest, Sha256};
 
 pub const TOKEN_ENV: &str = "QLOUDPULSE_TOKEN";

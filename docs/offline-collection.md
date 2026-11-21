@@ -185,7 +185,7 @@ retry and then deleted. What stays is the data in the reports, not the files.
 
 - The call-plan manifest and the bundle JSON Schema are generated from qloudpulse's collectors and published in this
   repo. The client builds against that copy, so what it may call is visible here. Until the generator exists, the
-  call plan in `collect/call-plan.json` is a hand-made seed, marked as such.
+  call plan in `cli/collect/call-plan.json` is a hand-made seed, marked as such.
 - The client signs its own requests (SigV4) and speaks each API's wire protocol from the call plan, so it needs no
   per-service AWS SDK crates. Credentials come from the standard AWS chain (environment, profiles, SSO, instance and
   container roles, web identity).

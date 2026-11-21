@@ -1,5 +1,5 @@
 # qloudpulse-collect's checks, on every pull request and on main: its tests, clippy, its changelog, and its dependencies
-# against RustSec's advisories, the licences collect/deny.toml allows, and crates.io as the only source. Weekly too, since an advisory can be
+# against RustSec's advisories, the licences cli/collect/deny.toml allows, and crates.io as the only source. Weekly too, since an advisory can be
 # published for a crate after it was merged. Every action is pinned by commit; the tools are pinned by version and
 # built from crates.io with their own Cargo.lock.
 name: Collect client checks
@@ -26,7 +26,7 @@ env:
 defaults:
   run:
     shell: bash
-    working-directory: collect
+    working-directory: cli/collect
 
 jobs:
   test:

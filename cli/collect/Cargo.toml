@@ -34,7 +34,7 @@ hex = "0.4"
 hmac = "0.12"
 http = "1"
 p256 = { version = "0.14", features = ["ecdh"] }
-qloudpulse-cli = { path = "../cli", optional = true }
+qloudpulse-stack = { path = "../stack", optional = true }
 quick-xml = "0.42"
 rand = "0.9"
 regex = "1"
@@ -54,7 +54,7 @@ toml_edit = "0.25.20"
 # The qloudpulse upload. `--no-default-features` builds a client with no qloudpulse code in it at all.
 default = ["upload"]
 # The qloudpulse upload, signed in the same way as the qloudpulse CLI (its library: token lookup, keychain, login).
-upload = ["dep:qloudpulse-cli"]
+upload = ["dep:qloudpulse-stack"]
 
 [dev-dependencies]
 tempfile = "3"

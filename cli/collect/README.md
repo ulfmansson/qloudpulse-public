@@ -4,7 +4,7 @@
 read, applies your redaction rules, and writes a `.tgz` bundle. You can open the bundle and check it before
 qloudpulse ingests it. Nothing is read from qloudpulse, and you decide whether and how bundles reach it.
 
-The design and its reasons are in [`docs/offline-collection.md`](../docs/offline-collection.md). This first version
+The design and its reasons are in [`docs/offline-collection.md`](../../docs/offline-collection.md). This first version
 covers qloudpulse's hourly AWS cost collector.
 
 ## Get started
