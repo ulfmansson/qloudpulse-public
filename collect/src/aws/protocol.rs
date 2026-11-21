@@ -56,6 +56,19 @@ pub fn build(
     params: &Value,
     token: Option<&str>,
 ) -> Result<WireRequest> {
+    build_with(service, op, region, params, token, false)
+}
+
+/// [`build`], with `path_style` for a custom endpoint (`AWS_ENDPOINT_URL`): a bucket goes in the path, and an account
+/// host label is left out (S3 Control also sends it as a header), as the SDKs do for an endpoint of your own.
+pub fn build_with(
+    service: &Service,
+    op: &Operation,
+    region: &str,
+    params: &Value,
+    token: Option<&str>,
+    path_style: bool,
+) -> Result<WireRequest> {
     let params = params.as_object().cloned().unwrap_or_default();
     let host = host(service, region);
     let token_param = op.paging.as_ref().map(|p| p.input_token.as_str());
@@ -137,7 +150,10 @@ pub fn build(
             if let Some(prefix) = &binding.host_prefix {
                 let label = fill_path(prefix, &mut rest)?;
                 let label = label.trim_end_matches('.');
-                if label.contains("%2E") || label.contains('.') {
+                let bucket = prefix.starts_with("{Bucket}");
+                if path_style && !bucket {
+                    // An account label: the header names it.
+                } else if path_style || label.contains("%2E") || label.contains('.') {
                     // A bucket name with dots is not a host label: the SDKs use path style for it.
                     path = format!(
                         "/{}{}",

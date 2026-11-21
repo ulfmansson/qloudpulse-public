@@ -44,7 +44,9 @@ impl Client {
     /// The same reading as [`Client::collect`], kept in memory: the local UI's sample never touches the disk.
     pub fn collect_in_memory(&self, now: Timestamp) -> Result<(SnapshotMeta, Vec<crate::record::Record>)> {
         let window = Window::last_full_hour(now);
-        let caller = Caller::new(CallPlan::embedded(), self.transport.as_ref(), self.config.options());
+        let mut caller = Caller::new(CallPlan::embedded(), self.transport.as_ref(), self.config.options());
+        // As the AWS SDKs (and aws-config, for STS) honour it: everything goes to that endpoint instead of AWS.
+        caller.endpoint = std::env::var("AWS_ENDPOINT_URL").ok().filter(|e| !e.trim().is_empty());
         let home = &self.config.home_region;
         let mut failures = Vec::new();
         let mut accounts = Vec::new();

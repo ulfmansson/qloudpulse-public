@@ -126,6 +126,11 @@ impl Identifiers<'_> {
             for (_, v) in r.request.query.iter_mut() {
                 *v = rewrite(v, &mut resources);
             }
+            // S3 Control names the account in its host and in x-amz-account-id.
+            r.request.host = rewrite(&r.request.host, &mut resources);
+            for (_, v) in r.request.headers.iter_mut() {
+                *v = rewrite(v, &mut resources);
+            }
             r.request.path = r
                 .request
                 .path
@@ -238,6 +243,35 @@ mod tests {
         assert!(!r.response.body.contains("111122223333"));
         assert!(r.request.body.contains(&i));
         assert!(r.request.path.contains(&a), "{}", r.request.path);
+        let mut control = vec![record(
+            "111122223333",
+            "",
+            "/v20180820/configuration/publicAccessBlock",
+            "<R/>",
+        )];
+        control[0].request.host = "111122223333.s3-control.eu-west-1.amazonaws.com".into();
+        control[0]
+            .request
+            .headers
+            .push(("x-amz-account-id".into(), "111122223333".into()));
+        ids.apply(
+            &mut control,
+            &mut Outcome {
+                accounts: vec!["111122223333".into()],
+                ..Outcome::default()
+            },
+        );
+        assert_eq!(
+            control[0].request.host,
+            format!("{a}.s3-control.eu-west-1.amazonaws.com")
+        );
+        assert!(
+            control[0]
+                .request
+                .headers
+                .contains(&("x-amz-account-id".into(), a.clone())),
+            "the real account never leaves"
+        );
         assert_eq!(outcome.accounts, vec![a.clone()]);
         assert!(outcome.failures[0].starts_with(&a));
         assert_eq!(

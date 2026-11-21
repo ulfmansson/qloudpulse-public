@@ -647,12 +647,22 @@ fn application_load_balancers(run: &Run, account: &Account, region: &str, arns: 
             )
         };
         let path = ["DescribeLoadBalancersResult", "LoadBalancers", "member"];
+        // Application load balancers only: network and gateway ones are read through Cloud Control.
+        let application = |pages: &[Body]| -> Vec<String> {
+            pages
+                .iter()
+                .filter_map(Body::xml)
+                .flat_map(|r| r.find_all(&path))
+                .filter(|lb| lb.text_of("Type").is_none_or(|t| t == "application"))
+                .filter_map(|lb| lb.text_of("LoadBalancerArn").map(str::to_string))
+                .collect()
+        };
         match read(batch) {
-            Ok(pages) => live.extend(xml_texts(&pages, &path, "LoadBalancerArn")),
+            Ok(pages) => live.extend(application(&pages)),
             Err(e) if is_code(&e, &["LoadBalancerNotFound"]) => {
                 for one in batch {
                     if let Ok(pages) = read(std::slice::from_ref(one)) {
-                        live.extend(xml_texts(&pages, &path, "LoadBalancerArn"));
+                        live.extend(application(&pages));
                     }
                 }
             }

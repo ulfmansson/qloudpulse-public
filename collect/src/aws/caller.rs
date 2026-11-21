@@ -61,6 +61,9 @@ pub struct Caller<'a> {
     pub backoff: Duration,
     /// The signing clock; tests fix it.
     pub now: fn() -> SystemTime,
+    /// `AWS_ENDPOINT_URL`: send every request there instead of AWS (aws-sim, a proxy), path-style. What is recorded
+    /// still names the AWS host the request is for.
+    pub endpoint: Option<String>,
 }
 
 impl<'a> Caller<'a> {
@@ -73,6 +76,7 @@ impl<'a> Caller<'a> {
             memo: Mutex::new(HashMap::new()),
             backoff: Duration::from_millis(500),
             now: SystemTime::now,
+            endpoint: None,
         }
     }
 
@@ -128,7 +132,8 @@ impl<'a> Caller<'a> {
             bail!("{service}:{operation} needs the option {option}, which is off");
         }
         let region = svc.global_region.as_deref().unwrap_or(region);
-        let first = protocol::build(svc, op, region, &params, None)?;
+        let path_style = self.endpoint.is_some();
+        let first = protocol::build_with(svc, op, region, &params, None, path_style)?;
         let key = serde_json::to_string(&(&account.id, region, service, operation, &first))?;
         if memo && let Some(answer) = self.memo.lock().expect("memo").get(&key) {
             return answer.clone().map_err(Into::into);
@@ -174,7 +179,7 @@ impl<'a> Caller<'a> {
             pages.push(body);
             match token {
                 Some(token) if page < 10_000 => {
-                    request = protocol::build(svc, op, region, &params, Some(&token))?;
+                    request = protocol::build_with(svc, op, region, &params, Some(&token), path_style)?;
                     page += 1;
                 }
                 _ => break Ok(pages),
@@ -196,13 +201,26 @@ impl<'a> Caller<'a> {
         let mut attempt = 0;
         loop {
             attempt += 1;
+            let (url, host) = match &self.endpoint {
+                Some(base) => {
+                    let base = base.trim_end_matches('/');
+                    let aws = wire.url();
+                    let rest = aws.split_once(&wire.host).map(|(_, r)| r).unwrap_or("/");
+                    let authority = base.split_once("://").map(|(_, a)| a).unwrap_or(base);
+                    (
+                        format!("{base}{rest}"),
+                        authority.split('/').next().unwrap_or(authority).to_string(),
+                    )
+                }
+                None => (wire.url(), wire.host.clone()),
+            };
             let mut request = HttpRequest {
                 method: wire.method.clone(),
-                url: wire.url(),
+                url,
                 headers: wire.headers.clone(),
                 body: wire.body.clone().into_bytes(),
             };
-            request.headers.push(("host".into(), wire.host.clone()));
+            request.headers.push(("host".into(), host));
             sign_request(&mut request, credentials, region, signing_name, (self.now)())?;
             let outcome = self.transport.send(&request);
             let retry = match &outcome {
@@ -363,6 +381,64 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("usageMetrics"));
         assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+    }
+
+    /// Records the URL and host of what it is sent.
+    struct Seen(std::sync::Mutex<Vec<(String, String)>>);
+    impl Transport for Seen {
+        fn send(&self, request: &HttpRequest) -> Result<HttpResponse> {
+            let host = request.headers.iter().find(|(k, _)| k == "host").unwrap().1.clone();
+            self.0.lock().unwrap().push((request.url.clone(), host));
+            Ok(HttpResponse {
+                status: 200,
+                headers: vec![],
+                body: b"<R/>".to_vec(),
+            })
+        }
+    }
+
+    #[test]
+    fn a_custom_endpoint_gets_every_request_path_style() {
+        let seen = Seen(std::sync::Mutex::new(vec![]));
+        let mut caller = Caller::new(CallPlan::embedded(), &seen, vec![]);
+        caller.endpoint = Some("http://127.0.0.1:4599".into());
+        caller
+            .call(
+                "x",
+                &account(),
+                "eu-north-1",
+                "s3",
+                "GetBucketAcl",
+                json!({"Bucket": "logs"}),
+            )
+            .unwrap();
+        caller
+            .call(
+                "x",
+                &account(),
+                "eu-west-1",
+                "s3control",
+                "GetPublicAccessBlock",
+                json!({"AccountId": "111122223333"}),
+            )
+            .unwrap();
+        let seen = seen.0.lock().unwrap().clone();
+        assert_eq!(
+            seen[0],
+            (
+                "http://127.0.0.1:4599/logs?acl=".to_string(),
+                "127.0.0.1:4599".to_string()
+            )
+        );
+        assert_eq!(
+            seen[1].0,
+            "http://127.0.0.1:4599/v20180820/configuration/publicAccessBlock"
+        );
+        let records = caller.into_records();
+        assert_eq!(
+            records[0].request.host, "s3.eu-north-1.amazonaws.com",
+            "the record names the AWS host"
+        );
     }
 
     #[test]
