@@ -5,10 +5,12 @@ PATH.
 
   irm https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-cli-<version>/install.ps1 | iex
 
-The copy attached to a release installs that release; this copy in the repository needs -Version (or
-$env:QLOUDPULSE_VERSION). Through irm | iex options cannot be passed, so each has an environment variable too:
+The copy attached to a release installs that release; this copy in the repository installs the newest release, or
+-Version (or $env:QLOUDPULSE_VERSION). Through irm | iex options cannot be passed, so each has an environment variable
+too:
 
-  -Version <version>   $env:QLOUDPULSE_VERSION      the client version (default: the release this script came with)
+  -Version <version>   $env:QLOUDPULSE_VERSION      the client version (default: the release this script came with;
+                                                    for the copy in the repository, the newest release)
   -Dir <dir>           $env:QLOUDPULSE_INSTALL_DIR  where qloudpulse.exe goes
   -Target <target>     the build to install, x86_64-pc-windows-gnu or aarch64-pc-windows-gnullvm (default: this
                        machine's; an ARM64 machine gets the ARM64 build even from an x64 PowerShell)
@@ -38,7 +40,19 @@ function Install-Qloudpulse {
   $Repo = 'ulfmansson/qloudpulse-public'
 
   if (-not $Version) { $Version = $QloudpulseDefaultVersion }
-  if (-not $Version) { throw 'qloudpulse install: no version: pass -Version or set $env:QLOUDPULSE_VERSION (this copy is not from a release)' }
+  if (-not $Version) {
+    if ($Base) { throw 'qloudpulse install: no version: pass -Version or set $env:QLOUDPULSE_VERSION with -Base' }
+    # The newest qloudpulse-cli-<version> release. Not GitHub's "latest": that is the cluster agent's release, in the
+    # same repository.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    try {
+      $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=100" -UseBasicParsing `
+        -Headers @{ Accept = 'application/vnd.github+json' }
+    } catch { $releases = @() }
+    $Version = $releases | ForEach-Object { $_.tag_name } | Where-Object { $_ -match '^qloudpulse-cli-[0-9]+(\.[0-9]+)+$' } |
+      ForEach-Object { $_ -replace '^qloudpulse-cli-', '' } | Sort-Object { [version]$_ } -Descending | Select-Object -First 1
+    if (-not $Version) { throw "qloudpulse install: could not find the newest release on github.com/$Repo; pass -Version" }
+  }
   $Version = $Version -replace '^(v|qloudpulse-cli-)', ''
   if ($Version -notmatch '^[0-9]+(\.[0-9]+)*$') { throw "qloudpulse install: not a version: $Version (for example 0.2.0)" }
   $Tag = "qloudpulse-cli-$Version"

@@ -29,7 +29,8 @@ irm https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse
 ```
 
 Each script installs the release it came from: the version is in the URL, so a pipeline gets the same client every
-run until you change it. It downloads the archive and the release's `SHA256SUMS`, stops unless the sum matches, and
+run until you change it. The copies in this repository, `cli/install.sh` and `cli/install.ps1`, install the newest
+release instead, or the one `--version` names. It downloads the archive and the release's `SHA256SUMS`, stops unless the sum matches, and
 puts the binary in `~/.local/bin`, or on Windows in `%LOCALAPPDATA%\Programs\qloudpulse`, which it adds to your
 PATH. On a GitHub Actions runner it adds the directory to `$GITHUB_PATH` instead, so the next steps find
 `qloudpulse`. A Windows on ARM machine gets the ARM64 build, even from an x64 PowerShell.
