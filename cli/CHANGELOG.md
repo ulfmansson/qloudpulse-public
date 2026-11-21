@@ -22,6 +22,29 @@ has lines.
   unless the binaries are the same, and `cli/release.sh --reproduce` at a release's tag builds it again and compares
   with the release's `SHA256SUMS`.
 
+### Changed
+
+- `--region` now wins over the stack's `aws:region`: it is the region of every resource for which neither the preview
+  nor its provider names one. Before, the stack's `aws:region` came first.
+
+### Fixed
+
+- A resource's region is found the way the AWS provider finds it, so a stack whose region comes from somewhere other
+  than its provider's `region` or the stack's `aws:region` is no longer sent with `"region": null` and left
+  unpriced. First found: the resource's own `region` (AWS provider v7), from its inputs or outputs; its provider's
+  `region`, from the new state, else the old one, so a provider whose region is known only after apply keeps the one
+  it had; `--region`; the stack's `aws:region`; `AWS_REGION`; `AWS_DEFAULT_REGION`; and the region of the AWS profile
+  in use (the provider's `profile`, else the stack's `aws:profile`, else `AWS_PROFILE`, else `default`) in
+  `AWS_CONFIG_FILE` or `~/.aws/config`. Only the region is read from that file, never credentials, and every value
+  must still be a region name.
+- A resource that still has no region is said on stderr and in the comment, with how to give it one
+  (`pulumi config set aws:region <region>` or `--region`), instead of leaving the totals empty without a word.
+- A priced attribute the inputs leave out, such as a default the provider filled in (an EBS volume's `type`, an
+  instance's root volume type), is sent from the outputs: for a resource left the same, and for the side before an
+  update, a replacement or a delete. On the side after an update or a replacement it is taken from the old outputs
+  only when neither side's inputs set it, so the two sides do not differ by a default only one of them names. A
+  value hidden in the inputs is never filled, and an unknown or secret output is named under `unknown`, not sent.
+
 ## [0.3.1] - 2026-11-21
 
 The first release since 0.1.0. 0.2.0 was merged on 2026-11-18 but never released, and 0.3.0 was tagged on 2026-11-21

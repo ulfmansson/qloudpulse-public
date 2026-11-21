@@ -68,15 +68,15 @@
         "region": {
           "type": ["string", "null"],
           "pattern": "^[a-z]{2}(-[a-z]+)+-[0-9]+$",
-          "description": "The AWS region, or null when neither the preview nor --region names one."
+          "description": "The AWS region, the first of: the resource's own region, its provider's, --region, the stack's aws:region, AWS_REGION, AWS_DEFAULT_REGION, and the region of the AWS profile in use on the machine the client runs on. Null when none of them names one; such a resource cannot be priced."
         },
         "before": {
           "type": ["object", "null"],
-          "description": "The priced attributes before the change; null for a create."
+          "description": "The priced attributes before the change, from the old state's inputs, and its outputs where the inputs leave one out; null for a create."
         },
         "after": {
           "type": ["object", "null"],
-          "description": "The priced attributes after the change; null for a delete."
+          "description": "The priced attributes after the change; null for a delete. One neither side's inputs set comes from the old state's outputs; for a resource left the same, from its outputs where its inputs leave one out."
         },
         "unknown": {
           "type": "array",

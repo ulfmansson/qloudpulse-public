@@ -121,7 +121,7 @@ fn values_known_only_after_apply_are_named_not_sent() {
 }
 
 #[test]
-fn the_region_comes_from_the_provider_then_the_stack() {
+fn the_region_comes_from_the_provider_then_region_flag_then_the_stack() {
     let e = estimate(
         CREATE,
         &Options {
@@ -140,8 +140,17 @@ fn the_region_comes_from_the_provider_then_the_stack() {
     );
     assert_eq!(
         region("urn:pulumi:dev::shop::aws:lambda/function:Function::resize").as_deref(),
+        Some("ap-south-1"),
+        "no provider named: --region, before the stack's aws:region"
+    );
+
+    let e = estimate(CREATE, &Options::default());
+    assert_eq!(
+        resource(&e, "urn:pulumi:dev::shop::aws:lambda/function:Function::resize")
+            .region
+            .as_deref(),
         Some("eu-west-1"),
-        "no provider named: the stack's aws:region, before --region"
+        "without --region: the stack's aws:region"
     );
 }
 
@@ -161,6 +170,94 @@ fn region_flag_is_used_when_the_preview_names_none() {
     let e = estimate(&without_config, &Options::default());
     let lambda = resource(&e, "urn:pulumi:dev::shop::aws:lambda/function:Function::resize");
     assert_eq!(lambda.region, None);
+}
+
+/// The region a dry run sends for the Lambda function of the new stack, whose provider names none.
+fn lambda_region(stdout: &str) -> Value {
+    let request: Value = serde_json::from_str(stdout).unwrap();
+    let k = key("urn:pulumi:dev::shop::aws:lambda/function:Function::resize");
+    request["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["key"] == k)
+        .unwrap()["region"]
+        .clone()
+}
+
+#[test]
+fn the_machines_aws_region_and_profile_are_read_when_the_preview_names_none() {
+    let without_config = CREATE.replace("\"aws:region\": \"eu-west-1\",", "");
+
+    let (ok, stdout, stderr) = run_env(
+        &["estimate", "--dry-run"],
+        &without_config,
+        None,
+        &[("AWS_REGION", "eu-central-1"), ("AWS_DEFAULT_REGION", "us-west-2")],
+    );
+    assert!(ok, "{stderr}");
+    assert_eq!(lambda_region(&stdout), "eu-central-1");
+    assert!(!stderr.contains("no AWS region"), "{stderr}");
+
+    let config = std::env::temp_dir().join(format!("qloudpulse-aws-config-{}", std::process::id()));
+    std::fs::write(
+        &config,
+        "[default]\nregion = us-east-1\n[profile ci]\nregion = sa-east-1\naws_secret_access_key = never-sent\n",
+    )
+    .unwrap();
+    let config_path = config.to_str().unwrap();
+    let (ok, stdout, stderr) = run_env(
+        &["estimate", "--dry-run"],
+        &without_config,
+        None,
+        &[("AWS_CONFIG_FILE", config_path), ("AWS_PROFILE", "ci")],
+    );
+    assert!(ok, "{stderr}");
+    assert_eq!(lambda_region(&stdout), "sa-east-1");
+    assert!(!stdout.contains("never-sent"));
+
+    let (ok, stdout, _) = run_env(
+        &["estimate", "--dry-run", "--region", "ap-south-1"],
+        &without_config,
+        None,
+        &[("AWS_CONFIG_FILE", config_path), ("AWS_REGION", "eu-central-1")],
+    );
+    assert!(ok);
+    assert_eq!(lambda_region(&stdout), "ap-south-1", "--region wins over this machine");
+    std::fs::remove_file(&config).unwrap();
+}
+
+#[test]
+fn a_resource_left_without_a_region_is_said_on_stderr_and_in_the_comment() {
+    let without_config = CREATE.replace("\"aws:region\": \"eu-west-1\",", "");
+    let (ok, stdout, stderr) = run(&["estimate", "--dry-run"], &without_config, None);
+    assert!(ok, "{stderr}");
+    assert_eq!(lambda_region(&stdout), Value::Null);
+    assert!(
+        stderr.contains(
+            "qloudpulse: 1 resource has no AWS region, so qloudpulse cannot price it: neither the preview, its \
+             provider, the stack's config nor this machine's AWS settings name one. Set one with pulumi config set \
+             aws:region <region>, or run with --region <region>."
+        ),
+        "{stderr}"
+    );
+
+    let e = estimate(&without_config, &Options::default());
+    assert_eq!(e.no_region, 1);
+    let response: Response =
+        serde_json::from_value(json!({"formatVersion": 1, "currency": "USD", "resources": []})).unwrap();
+    let comment = render::comment(&response, &e);
+    assert!(
+        comment.contains("**No region:** 1 resource has no AWS region"),
+        "{comment}"
+    );
+    assert!(
+        comment.contains("`pulumi config set aws:region <region>`, or run with `--region <region>`."),
+        "{comment}"
+    );
+
+    let e = estimate(CREATE, &Options::default());
+    assert!(!render::comment(&response, &e).contains("No region"));
 }
 
 #[test]
@@ -323,6 +420,11 @@ fn a_change_that_saves_says_so() {
 }
 
 fn run(args: &[&str], stdin: &str, token: Option<&str>) -> (bool, String, String) {
+    run_env(args, stdin, token, &[])
+}
+
+/// A run with these environment variables set besides.
+fn run_env(args: &[&str], stdin: &str, token: Option<&str>, env: &[(&str, &str)]) -> (bool, String, String) {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_qloudpulse"));
     cmd.args(args)
         .env_remove("QLOUDPULSE_TOKEN")
@@ -331,12 +433,18 @@ fn run(args: &[&str], stdin: &str, token: Option<&str>) -> (bool, String, String
         .env("QLOUDPULSE_CREDENTIALS_FILE", NO_CREDENTIALS)
         // The shipped list, so the tests reach no network; a test can still name another with --catalogue.
         .env("QLOUDPULSE_CATALOGUE", CATALOGUE_PATH)
+        // Never this machine's AWS settings, so a region comes from the preview and the options only.
+        .env_remove("AWS_REGION")
+        .env_remove("AWS_DEFAULT_REGION")
+        .env_remove("AWS_PROFILE")
+        .env("AWS_CONFIG_FILE", NO_CREDENTIALS)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(t) = token {
         cmd.env("QLOUDPULSE_TOKEN", t);
     }
+    cmd.envs(env.iter().copied());
     let mut child = cmd.spawn().unwrap();
     child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
     let out = child.wait_with_output().unwrap();
