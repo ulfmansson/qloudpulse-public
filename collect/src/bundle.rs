@@ -202,6 +202,10 @@ pub fn pack(
     let partial = path.with_extension("tgz.partial");
     write_tgz(&partial, &contents, snapshot.meta.window.end.as_second() as u64)?;
     std::fs::rename(&partial, &path)?;
+    if let Some(e) = &config.encrypt {
+        let recipient = crate::encrypt::Recipient::load(&e.public_key_file)?;
+        crate::encrypt::encrypt_file(&path, &recipient)?;
+    }
     if config.keep_pseudonym_map {
         pseudonyms.save_map(&config.work_dir.join("pseudonyms.tsv"))?;
     }
@@ -290,6 +294,49 @@ mod tests {
             },
             error_code: None,
         }
+    }
+
+    #[test]
+    fn encrypts_next_to_the_plaintext_when_asked() {
+        let dir = tempfile::tempdir().unwrap();
+        let secret = p256::SecretKey::from_slice(&[7u8; 32]).unwrap();
+        let point = {
+            use p256::elliptic_curve::sec1::ToSec1Point;
+            secret.public_key().to_sec1_point(false)
+        };
+        let b64 = |b: &[u8]| {
+            use base64::Engine;
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b)
+        };
+        let jwk = serde_json::json!({"kty": "EC", "crv": "P-256", "x": b64(point.x().unwrap()), "y": b64(point.y().unwrap())})
+            .to_string();
+        std::fs::write(dir.path().join("qp.jwk"), jwk).unwrap();
+        let text = format!(
+            "source_id = \"main\"\noutput_dir = \"{}\"\n[encrypt]\npublic_key_file = \"{}\"\n",
+            dir.path().join("out").display(),
+            dir.path().join("qp.jwk").display()
+        );
+        let config: Config = toml::from_str(&text).unwrap();
+        let now: jiff::Timestamp = "2026-11-21T07:05:00Z".parse().unwrap();
+        let meta = SnapshotMeta {
+            tool_version: "t".into(),
+            call_plan_version: "p".into(),
+            window: Window::last_full_hour(now),
+            collected_at: now,
+            outcome: Outcome::default(),
+        };
+        let snapshot = Snapshot::write(dir.path().join("raw"), meta, vec![record("aws-cost-collect", "<R/>")]).unwrap();
+        let path = pack(
+            &config,
+            text.as_bytes(),
+            &Pseudonymizer::new(vec![9; 32], false),
+            &snapshot,
+            false,
+        )
+        .unwrap();
+        let jwe = std::fs::read_to_string(crate::encrypt::jwe_path(&path)).unwrap();
+        assert_eq!(jwe.split('.').count(), 5);
+        assert!(open(&path).is_ok(), "the plaintext stays for you to inspect");
     }
 
     #[test]

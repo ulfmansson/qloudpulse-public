@@ -12,6 +12,7 @@ pub mod collect;
 pub mod config;
 pub mod deliver;
 pub mod derive;
+pub mod encrypt;
 pub mod identifiers;
 pub mod log;
 pub mod pseudonym;

@@ -18,7 +18,15 @@ pub fn request(target: &S3Target, name: &str, bytes: &[u8]) -> HttpRequest {
     let key: Vec<String> = object_key(target, name).split('/').map(encode_label).collect();
     let mut headers = vec![
         ("host".to_string(), host.clone()),
-        ("content-type".to_string(), "application/gzip".to_string()),
+        (
+            "content-type".to_string(),
+            if name.ends_with(".jwe") {
+                "application/jose"
+            } else {
+                "application/gzip"
+            }
+            .to_string(),
+        ),
     ];
     if let Some(kms) = &target.kms_key_id {
         headers.push(("x-amz-server-side-encryption".into(), "aws:kms".into()));

@@ -106,6 +106,20 @@ impl Deliverer<'_> {
     }
 
     fn send(&self, target: &str, bundle: &Path, name: &str) -> Result<String> {
+        // With [encrypt], what leaves is the JWE written next to the bundle, never the plaintext.
+        let (bundle, name) = if self.config.encrypt.is_some() {
+            let jwe = crate::encrypt::jwe_path(bundle);
+            if !jwe.exists() {
+                bail!(
+                    "{} is not encrypted yet; pack it again with [encrypt] set",
+                    bundle.display()
+                );
+            }
+            (jwe, format!("{name}.jwe"))
+        } else {
+            (bundle.to_path_buf(), name.to_string())
+        };
+        let (bundle, name) = (bundle.as_path(), name.as_str());
         let bytes = std::fs::read(bundle).with_context(|| format!("reading {}", bundle.display()))?;
         match target {
             "s3" => {
@@ -173,6 +187,7 @@ impl Deliverer<'_> {
         let mut removed = 0;
         for old in all.iter().take(excess).filter(|p| !pending.contains(*p)) {
             std::fs::remove_file(old)?;
+            let _ = std::fs::remove_file(crate::encrypt::jwe_path(old));
             if let Some(name) = old.file_name() {
                 state.remove(&*name.to_string_lossy());
             }

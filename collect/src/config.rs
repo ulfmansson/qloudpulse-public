@@ -39,6 +39,9 @@ pub struct Config {
     /// Derive `qloudpulse:environment` from raw tags before redaction, so names can be redacted.
     #[serde(default)]
     pub environment: Option<crate::derive::EnvironmentConfig>,
+    /// Encrypt each bundle to this public key; the `.tgz.jwe` is what is delivered.
+    #[serde(default)]
+    pub encrypt: Option<EncryptConfig>,
     /// The last look before packing: what to allow among the secrets and personal data it finds.
     #[serde(default)]
     pub scan: crate::scan::ScanConfig,
@@ -164,6 +167,13 @@ pub struct CurConfig {
     /// The forecast's prediction interval, as set in qloudpulse (51-99): it is part of the request.
     #[serde(default = "eighty")]
     pub prediction_interval: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EncryptConfig {
+    /// The recipient's public key as a JWK (EC P-256), as qloudpulse publishes it for bundles.
+    pub public_key_file: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
@@ -356,6 +366,11 @@ impl Config {
 
     /// Relative paths are relative to the config file, so a run from any directory finds the same files.
     fn resolve_paths(&mut self, base: &Path) {
+        if let Some(e) = &mut self.encrypt
+            && e.public_key_file.is_relative()
+        {
+            e.public_key_file = base.join(&e.public_key_file);
+        }
         for p in [&mut self.key_file, &mut self.work_dir, &mut self.output_dir] {
             if p.is_relative() {
                 *p = base.join(&*p);
@@ -574,6 +589,11 @@ minute = 5          # start 5 minutes past the hour, so the hour just ended is c
 daily_hour = 0      # this UTC hour's run also reads the 90-day spot price history
 keep_raw = false
 keep_bundles = 168
+
+# Encrypt each bundle (JWE, ECDH-ES+A256KW / A256GCM) to qloudpulse's public key for bundles. The plaintext .tgz
+# stays here for you to inspect; the .tgz.jwe next to it is what is delivered.
+# [encrypt]
+# public_key_file = "qloudpulse-bundles.jwk"
 
 # Where bundles go after `run` packs them. Any combination; all are off until you set them.
 # [deliver.s3]

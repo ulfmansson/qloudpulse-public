@@ -12,6 +12,15 @@ use sha2::{Digest, Sha256};
 
 pub const TOKEN_ENV: &str = "QLOUDPULSE_UPLOAD_TOKEN";
 
+/// An encrypted bundle is a JWE; a plain one a gzip.
+pub fn content_type(name: &str) -> &'static str {
+    if name.ends_with(".jwe") {
+        "application/jose"
+    } else {
+        "application/gzip"
+    }
+}
+
 pub fn token(target: &QloudpulseTarget) -> Result<String> {
     if let Ok(t) = std::env::var(TOKEN_ENV)
         && !t.trim().is_empty()
@@ -26,7 +35,7 @@ pub fn token(target: &QloudpulseTarget) -> Result<String> {
     Ok(t.trim().to_string())
 }
 
-pub fn request(target: &QloudpulseTarget, token: &str, bytes: &[u8]) -> Result<HttpRequest> {
+pub fn request(target: &QloudpulseTarget, token: &str, name: &str, bytes: &[u8]) -> Result<HttpRequest> {
     let endpoint = target.endpoint.trim_end_matches('/');
     if !endpoint.starts_with("https://")
         && !endpoint.starts_with("http://127.0.0.1")
@@ -39,7 +48,7 @@ pub fn request(target: &QloudpulseTarget, token: &str, bytes: &[u8]) -> Result<H
         url: format!("{endpoint}/v1/collection-bundles"),
         headers: vec![
             ("authorization".into(), format!("Bearer {token}")),
-            ("content-type".into(), "application/gzip".into()),
+            ("content-type".into(), content_type(name).into()),
             ("x-qloudpulse-bundle-schema".into(), SCHEMA_VERSION.into()),
             ("x-qloudpulse-bundle-sha256".into(), hex::encode(Sha256::digest(bytes))),
         ],
@@ -49,7 +58,7 @@ pub fn request(target: &QloudpulseTarget, token: &str, bytes: &[u8]) -> Result<H
 
 pub fn upload(transport: &dyn Transport, target: &QloudpulseTarget, name: &str, bytes: &[u8]) -> Result<String> {
     let token = token(target)?;
-    let response = transport.send(&request(target, &token, bytes)?)?;
+    let response = transport.send(&request(target, &token, name, bytes)?)?;
     let text: String = String::from_utf8_lossy(&response.body).chars().take(300).collect();
     match response.status {
         200 | 201 => {
@@ -122,6 +131,6 @@ mod tests {
             endpoint: "http://api.example.test".into(),
             token_file: None,
         };
-        assert!(request(&t, "x", b"").is_err());
+        assert!(request(&t, "x", "b.tgz", b"").is_err());
     }
 }

@@ -107,6 +107,22 @@ for fields qloudpulse prices from, such as instance type, size or engine. When a
 table name, the change carries into the later requests that name it. Nothing leaks through a request, and
 qloudpulse's replay still matches.
 
+## Privacy extras
+
+- **Scan before packing.** What would leave is scanned, after your rules, for AWS keys, private keys, tokens,
+  passwords and email addresses. `pack` stops while any is left, naming the kind, the count and a masked sample,
+  until a rule redacts it, `[scan] allow` lets it through, or you pass `--allow-findings`. Public IP addresses are
+  reported but never block. In `run`, a stopped pack keeps its raw snapshot so you can look.
+- **Environment before redaction** (`[environment]`): adds the tag `qloudpulse:environment` from a tag you name, or
+  from rules on the `Name` tag, before any rule runs. It is always kept, so `Name` can be pseudonymized and costs
+  still group by environment.
+- **`rotate-key`** replaces the pseudonym key. With `keep_pseudonym_map = true` it writes a file pairing each old
+  pseudonym with its new one, without real values, which qloudpulse can use to relink history. Without the map
+  it refuses unless `--force`.
+- **Encryption** (`[encrypt] public_key_file`): each bundle is also written as `.tgz.jwe` (ECDH-ES+A256KW, A256GCM)
+  to qloudpulse's public key for bundles, and that is what is delivered. The plaintext stays here for you to
+  inspect; the JWE's header carries its SHA-256.
+
 ## Every hour
 
 ```bash

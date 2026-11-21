@@ -17,6 +17,8 @@ What changed in each version of `qloudpulse-collect`.
   images, volumes, Elastic IPs, RDS, DynamoDB, EKS, ElastiCache, bucket settings, application load balancers, API
   Gateway, ECR). Not yet: Cloud Control and ECR scan findings.
 - Forecast (opt-in, Cost Explorer) and carbon (Sustainability API), once a day.
+- A scan before packing that stops on keys, tokens, passwords and email addresses; `[environment]` derived before
+  redaction; `rotate-key` with a relink file; `[encrypt]` writes a JWE to deliver.
 - `[identifiers]`: account and resource IDs pseudonymized with their format kept, consistently everywhere.
 - One TLS stack (rustls on ring); no C crypto build.
 - Delivery to your own S3 bucket, to qloudpulse (feature `upload`), or to a command; retries and retention.

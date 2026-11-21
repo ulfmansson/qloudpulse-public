@@ -255,7 +255,9 @@ fn run(cli: Cli) -> Result<()> {
         }
         #[cfg(feature = "upload")]
         Command::Upload { bundles, endpoint } => {
-            let configured = load(&cli.config).ok().and_then(|(c, _)| c.deliver.qloudpulse);
+            let loaded = load(&cli.config).ok().map(|(c, _)| c);
+            let encrypted = loaded.as_ref().is_some_and(|c| c.encrypt.is_some());
+            let configured = loaded.and_then(|c| c.deliver.qloudpulse);
             let mut target = configured.unwrap_or(qloudpulse_collect::config::QloudpulseTarget {
                 endpoint: qloudpulse_collect::config::QLOUDPULSE_ENDPOINT.into(),
                 token_file: None,
@@ -266,12 +268,19 @@ fn run(cli: Cli) -> Result<()> {
             let transport = UreqTransport::new();
             for b in &bundles {
                 bundle::open(b).with_context(|| format!("{} is not a valid bundle; nothing was sent", b.display()))?;
-                let name = b
+                // With [encrypt], the JWE next to the bundle is sent, never the plaintext.
+                let file = if encrypted {
+                    qloudpulse_collect::encrypt::jwe_path(b)
+                } else {
+                    b.clone()
+                };
+                let name = file
                     .file_name()
                     .context("a bundle path ends in a file name")?
                     .to_string_lossy()
                     .into_owned();
-                let detail = deliver::qloudpulse::upload(&transport, &target, &name, &std::fs::read(b)?)?;
+                let bytes = std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
+                let detail = deliver::qloudpulse::upload(&transport, &target, &name, &bytes)?;
                 println!("{detail}");
             }
         }
