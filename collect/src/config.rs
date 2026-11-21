@@ -252,11 +252,9 @@ pub struct S3Target {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct QloudpulseTarget {
+    /// The token is found as the qloudpulse CLI finds it: `QLOUDPULSE_TOKEN`, else the one `login` kept.
     #[serde(default = "default_endpoint")]
     pub endpoint: String,
-    /// A file holding the bundle-upload token. `QLOUDPULSE_UPLOAD_TOKEN` wins when set.
-    #[serde(default)]
-    pub token_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -375,12 +373,6 @@ impl Config {
             if p.is_relative() {
                 *p = base.join(&*p);
             }
-        }
-        if let Some(q) = &mut self.deliver.qloudpulse
-            && let Some(t) = &mut q.token_file
-            && t.is_relative()
-        {
-            *t = base.join(&*t);
         }
     }
 
@@ -609,7 +601,8 @@ keep_bundles = 168
 #[cfg(feature = "upload")]
 const STARTER_UPLOAD: &str = r#"# [deliver.qloudpulse]
 # endpoint = "https://api.qloudpulse.com"
-# token_file = "upload-token"   # or set QLOUDPULSE_UPLOAD_TOKEN
+# Signed in as the qloudpulse CLI is: QLOUDPULSE_TOKEN (a token from Your tokens, for unattended runs), else the
+# token `qloudpulse login` or `qloudpulse-collect login` kept on this machine.
 
 "#;
 

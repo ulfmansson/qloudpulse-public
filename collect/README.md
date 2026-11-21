@@ -140,7 +140,7 @@ Each delivery target is opt-in under `[deliver]`:
 | Target | What it does |
 |---|---|
 | `[deliver.s3]` | `PutObject` into **your own** bucket, with optional SSE-KMS. This is the only write the client makes to AWS. `policy` adds a statement for that one bucket. |
-| `[deliver.qloudpulse]`, or `qloudpulse-collect upload <bundle>` | HTTPS `POST` of the bundle with a bundle-upload token. The token is limited to one company and to uploads, and is read from `QLOUDPULSE_UPLOAD_TOKEN` or a file. qloudpulse deletes the file once it has ingested the data. |
+| `[deliver.qloudpulse]`, or `qloudpulse-collect upload <bundle>` | HTTPS `POST` of the bundle, signed in exactly as the qloudpulse CLI is: `QLOUDPULSE_TOKEN` (a token from Your tokens, for unattended runs), else the token `qloudpulse login` or `qloudpulse-collect login` kept on this machine (the two share it), else, at a terminal, a sign-in with the browser. qloudpulse keeps only the newest bundle per source. |
 | `[deliver.command]` | Runs your command with `{bundle}` replaced by the bundle's path. |
 
 ## A build that cannot contact qloudpulse

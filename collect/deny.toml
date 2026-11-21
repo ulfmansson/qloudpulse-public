@@ -20,6 +20,12 @@ ignore = [
   # pin-utils is unmaintained, not vulnerable. It comes in only through AWS's own aws-smithy-http (via aws-config,
   # for credentials), which has no release without it yet. Remove this when aws-smithy-http drops it.
   { id = "RUSTSEC-2026-0441", reason = "unmaintained, not vulnerable; transitive via aws-smithy-http with no upgrade" },
+  # zbus_names, zvariant and zvariant_derive are unmaintained, not vulnerable. They come only through keyring's Linux
+  # Secret Service store (the `upload` feature reuses the qloudpulse CLI's sign-in), and keyring has no release
+  # without them. The CLI's own deny.toml needs the same three until keyring moves off zbus.
+  { id = "RUSTSEC-2026-0370", reason = "unmaintained, not vulnerable; via keyring's Secret Service store (upload only)" },
+  { id = "RUSTSEC-2026-0371", reason = "unmaintained, not vulnerable; via keyring's Secret Service store (upload only)" },
+  { id = "RUSTSEC-2026-0372", reason = "unmaintained, not vulnerable; via keyring's Secret Service store (upload only)" },
 ]
 
 [licenses]

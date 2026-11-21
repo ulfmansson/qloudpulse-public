@@ -72,7 +72,7 @@ enum Command {
         #[arg(long = "to")]
         to: Vec<String>,
     },
-    /// Upload bundles to qloudpulse. Needs a bundle-upload token in QLOUDPULSE_UPLOAD_TOKEN or [deliver.qloudpulse].
+    /// Upload bundles to qloudpulse, signed in as the qloudpulse CLI is: QLOUDPULSE_TOKEN, else the token `login` kept.
     #[cfg(feature = "upload")]
     Upload {
         #[arg(required = true)]
@@ -80,6 +80,18 @@ enum Command {
         /// The qloudpulse API; [deliver.qloudpulse] endpoint, or qloudpulse's own.
         #[arg(long)]
         endpoint: Option<String>,
+    },
+    /// Sign in with the browser and keep a token on this machine, as `qloudpulse login` does (they share it).
+    #[cfg(feature = "upload")]
+    Login {
+        #[arg(long, default_value = qloudpulse_collect::config::QLOUDPULSE_ENDPOINT)]
+        endpoint: String,
+    },
+    /// Remove the token kept on this machine. It still works until it expires or you remove it under Your tokens.
+    #[cfg(feature = "upload")]
+    Logout {
+        #[arg(long, default_value = qloudpulse_collect::config::QLOUDPULSE_ENDPOINT)]
+        endpoint: String,
     },
     /// Collect, pack and deliver every N hours, on the clock.
     Run {
@@ -260,12 +272,12 @@ fn run(cli: Cli) -> Result<()> {
             let configured = loaded.and_then(|c| c.deliver.qloudpulse);
             let mut target = configured.unwrap_or(qloudpulse_collect::config::QloudpulseTarget {
                 endpoint: qloudpulse_collect::config::QLOUDPULSE_ENDPOINT.into(),
-                token_file: None,
             });
             if let Some(e) = endpoint {
                 target.endpoint = e;
             }
             let transport = UreqTransport::new();
+            let token = deliver::qloudpulse::token(&target.endpoint)?;
             for b in &bundles {
                 bundle::open(b).with_context(|| format!("{} is not a valid bundle; nothing was sent", b.display()))?;
                 // With [encrypt], the JWE next to the bundle is sent, never the plaintext.
@@ -280,8 +292,27 @@ fn run(cli: Cli) -> Result<()> {
                     .to_string_lossy()
                     .into_owned();
                 let bytes = std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
-                let detail = deliver::qloudpulse::upload(&transport, &target, &name, &bytes)?;
+                let detail = deliver::qloudpulse::upload_with(&transport, &target, &token, &name, &bytes)?;
                 println!("{detail}");
+            }
+        }
+        #[cfg(feature = "upload")]
+        Command::Login { endpoint } => {
+            deliver::qloudpulse::sign_in(&endpoint, &mut qloudpulse_cli::token::Tty)?;
+            if std::env::var(deliver::qloudpulse::TOKEN_ENV).is_ok_and(|t| !t.trim().is_empty()) {
+                eprintln!(
+                    "qloudpulse-collect: QLOUDPULSE_TOKEN is set in this shell, and wins over the kept token while it is."
+                );
+            }
+        }
+        #[cfg(feature = "upload")]
+        Command::Logout { endpoint } => {
+            if deliver::qloudpulse::sign_out(&endpoint)? {
+                eprintln!(
+                    "qloudpulse-collect: signed out on this machine; the token still works until it expires or you remove it."
+                );
+            } else {
+                eprintln!("qloudpulse-collect: no token was kept for {endpoint} on this machine.");
             }
         }
         Command::Run { once, every } => {

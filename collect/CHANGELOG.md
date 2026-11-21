@@ -21,4 +21,6 @@ What changed in each version of `qloudpulse-collect`.
   redaction; `rotate-key` with a relink file; `[encrypt]` writes a JWE to deliver.
 - `[identifiers]`: account and resource IDs pseudonymized with their format kept, consistently everywhere.
 - One TLS stack (rustls on ring); no C crypto build.
+- Signs in to qloudpulse as the qloudpulse CLI does, with its code: `QLOUDPULSE_TOKEN`, else the token `login` kept
+  (shared with `qloudpulse login`); `login` and `logout` commands.
 - Delivery to your own S3 bucket, to qloudpulse (feature `upload`), or to a command; retries and retention.

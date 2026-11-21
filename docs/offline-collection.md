@@ -150,10 +150,11 @@ delivered, never raw snapshots.
   with their own credentials, the only write the binary makes to AWS. This is kept apart from the read-only
   collection allow-list, and the IAM policy for it is a separate statement on that one bucket.
 - **qloudpulse** (`qloudpulse-collect upload <bundle>…` or `[deliver.qloudpulse]`): an HTTPS `POST` of the bundle to
-  `https://api.qloudpulse.com/v1/collection-bundles` (`--endpoint` to change it), with a **bundle-upload token**: one
-  company, upload only, created in the qloudpulse UI. The token comes from `QLOUDPULSE_UPLOAD_TOKEN` or a file named in
-  config, never from the config file itself. The answer is only a status and a reference; the client reads nothing
-  else from qloudpulse.
+  `https://api.qloudpulse.com/v1/collection-bundles` (`--endpoint` to change it). It signs in exactly as the
+  qloudpulse CLI does, with the CLI's own code: `QLOUDPULSE_TOKEN` when set (a token from Your tokens, for unattended
+  runs); else the token `qloudpulse login` or `qloudpulse-collect login` kept on this machine (in the system keychain,
+  or a credentials file only its owner can read); else, at a terminal, a sign-in with the browser. The answer is only
+  a status and a reference; the client reads nothing else from qloudpulse.
 - **A command** (`[deliver.command]`), run once per bundle with its path, for anything else.
 - **Manual upload** in the qloudpulse web UI.
 
