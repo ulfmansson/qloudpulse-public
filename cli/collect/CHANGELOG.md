@@ -10,19 +10,7 @@ has lines.
 
 ## [Unreleased]
 
-### Added
-
-- `update` installs the newest release over the running one, with the release's own install script, checked against
-  the release's `SHA256SUMS` first. `--check` only says whether one is out; `--version` installs a given release;
-  `--attest` also checks its signed provenance. Not in the build without the upload.
-- The commands a person runs at a terminal (`init`, `analyze`, `verify`, `policy`, `call-plan`, `rotate-key`,
-  `login`, `logout`), and `ui` on every page, say when a newer release is out, asking GitHub at most once a day.
-  `collect`, `pack`, `deliver`, `upload` and `run` never ask, nor does `--log-json`, and
-  `QLOUDPULSE_NO_UPDATE_CHECK=1` turns it off. Not in the build without the upload.
-- The local UI works in Kubernetes: through `kubectl port-forward` on any local port, `--ui-allow-host` for an
-  Ingress or a Service name, and a Download of the config where it is a read-only ConfigMap.
-
-## [0.1.0] - 2026-11-21
+## [0.1.0] - 2026-11-22
 
 The first version. It collects what qloudpulse's AWS collectors read, with your own credentials, into a bundle you
 inspect, redact and deliver. qloudpulse never gets access to your accounts.
@@ -42,7 +30,9 @@ inspect, redact and deliver. qloudpulse never gets access to your accounts.
   - `qloudpulse:environment`, derived from your tags or names before anything is redacted.
 - **Checks before anything leaves:** `pack` stops while the bundle holds keys, tokens, passwords or email addresses.
   `analyze` shows every tag and what each rule costs in qloudpulse, `verify` checks a bundle against its manifest,
-  and the local UI (`ui`, `run --ui`) shows all of it in a browser on this machine.
+  and the local UI (`ui`, `run --ui`) shows all of it in a browser on this machine. In Kubernetes too:
+  through `kubectl port-forward` on any local port, `--ui-allow-host` for an Ingress or a Service name, and a
+  Download of the config where it is a read-only ConfigMap.
 - **Delivers** every hour (`run`) to your own S3 bucket, to qloudpulse, or to your own command. The upload signs in
   as `qloudpulse-stack` does (`QLOUDPULSE_TOKEN`, or the token `login` kept). `[encrypt]` sends a JWE to
   qloudpulse's key instead of the plaintext, and `rotate-key` replaces your pseudonym key with a file to relink
@@ -53,3 +43,10 @@ inspect, redact and deliver. qloudpulse never gets access to your accounts.
   provenance, an SBOM, reproducible builds, and `install.sh` and `install.ps1`. `--version` names the commit. The
   install scripts say which version is installed (in the install directory, or on PATH when none is given) and which
   they would install, and ask before replacing it; `--yes` (`-Yes`, `QLOUDPULSE_ASSUME_YES=1`) skips the question.
+- **Keeps itself current:** `update` installs the newest release over the running one, with the release's own
+  install script, checked against the release's `SHA256SUMS` first. `--check` only says whether one is out;
+  `--version` installs a given release; `--attest` also checks its signed provenance. The commands a person runs at a
+  terminal (`init`, `analyze`, `verify`, `policy`, `call-plan`, `rotate-key`, `login`, `logout`), and `ui` on every
+  page, say when a newer release is out, asking GitHub at most once a day. `collect`, `pack`, `deliver`, `upload` and
+  `run` never ask, nor does `--log-json`, and `QLOUDPULSE_NO_UPDATE_CHECK=1` turns it off. Neither is in the build
+  without the upload.
