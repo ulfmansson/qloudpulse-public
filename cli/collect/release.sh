@@ -129,8 +129,16 @@ case "$(uname -s)-$(uname -m)" in
   Linux-aarch64 | Linux-arm64) NATIVE=aarch64-unknown-linux-musl ;;
   *) NATIVE="" ;;
 esac
+# A loop, not grep -v: with the native target alone (each CI build job) grep finds nothing to print, exits 1, and
+# set -e with pipefail ended the script here without a word.
 case " $TARGETS " in
-  *" $NATIVE "*) [ -z "$NATIVE" ] || TARGETS="$NATIVE $(printf '%s\n' $TARGETS | grep -vx "$NATIVE" | tr '\n' ' ')" ;;
+  *" $NATIVE "*)
+    if [ -n "$NATIVE" ]; then
+      rest=""
+      for t in $TARGETS; do [ "$t" = "$NATIVE" ] || rest="$rest $t"; done
+      TARGETS="$NATIVE$rest"
+    fi
+    ;;
 esac
 TARGETS=$(echo $TARGETS)
 
