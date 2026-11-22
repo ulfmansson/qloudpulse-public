@@ -699,6 +699,128 @@ fn a_referenced_resource_that_changes_is_sent_once() {
     assert_eq!(e.locals.len(), 2);
 }
 
+/// An Auto Scaling group priced from its launch template, and the ECS capacity provider that names the group.
+const ASG_CATALOGUE: &str = r#"{"formatVersion": 1, "providers": ["aws"], "types": [
+    {"type": "aws:autoscaling/group:Group", "label": "Auto Scaling group",
+     "attributes": ["desiredCapacity", "minSize", "maxSize"], "references": ["launchTemplate"]},
+    {"type": "aws:ec2/launchTemplate:LaunchTemplate", "label": "launch template",
+     "attributes": ["instanceType"]},
+    {"type": "aws:ecs/capacityProvider:CapacityProvider", "label": "ECS capacity provider",
+     "attributes": [], "references": ["autoScalingGroupProvider"]}]}"#;
+
+const ASG: &str = "urn:pulumi:prod::shop::aws:autoscaling/group:Group::workers";
+const TEMPLATE: &str = "urn:pulumi:prod::shop::aws:ec2/launchTemplate:LaunchTemplate::workers";
+const PROVIDER: &str = "urn:pulumi:prod::shop::aws:ecs/capacityProvider:CapacityProvider::workers";
+
+fn asg_state() -> Value {
+    json!({"type": "aws:autoscaling/group:Group", "custom": true, "id": "workers",
+           "inputs": {"desiredCapacity": 2, "minSize": 1, "maxSize": 4,
+                      "launchTemplate": {"id": "lt-0123", "version": "$Latest"}},
+           "propertyDependencies": {"launchTemplate": [TEMPLATE], "vpcZoneIdentifiers": ["urn:pulumi:prod::shop::aws:ec2/subnet:Subnet::a"]}})
+}
+
+fn template_state(instance_type: &str) -> Value {
+    json!({"type": "aws:ec2/launchTemplate:LaunchTemplate", "custom": true, "id": "lt-0123",
+           "inputs": {"instanceType": instance_type, "userData": "c2VjcmV0"}})
+}
+
+#[test]
+fn an_unchanged_auto_scaling_group_names_its_changed_launch_template() {
+    // What goffy's aws-ecs-base-prod showed on 2026-11-22: the launch template changes, the group it serves does not.
+    let preview = json!({"config": {"aws:region": "eu-west-1"}, "steps": [
+        {"op": "update", "urn": TEMPLATE, "oldState": template_state("t3.large"), "newState": template_state("t3.xlarge")},
+        {"op": "same", "urn": ASG, "oldState": asg_state(), "newState": asg_state()}
+    ]});
+    let e = estimate_with(&preview.to_string(), ASG_CATALOGUE, &Options::default());
+
+    let group = resource(&e, ASG);
+    assert_eq!(group.change, ChangeKind::Same);
+    assert_eq!(
+        group.references.as_ref().map(|r| Value::from_iter(r.clone())),
+        Some(json!({"launchTemplate": key(TEMPLATE)})),
+        "only the catalogue's references"
+    );
+    assert_eq!(resource(&e, TEMPLATE).change, ChangeKind::Update);
+    assert_eq!(e.request.resources.len(), 2);
+    let sent = serde_json::to_string(&e.request).unwrap();
+    assert!(!sent.contains("lt-0123") && !sent.contains("c2VjcmV0"), "{sent}");
+}
+
+#[test]
+fn an_unchanged_service_names_its_changed_task_definition() {
+    let mut preview: Value = serde_json::from_str(&ecs_preview("update")).unwrap();
+    preview["steps"][0]["op"] = json!("same");
+    preview["steps"][0]["newState"] = preview["steps"][0]["oldState"].clone();
+    let e = estimate_with(&preview.to_string(), ECS_CATALOGUE, &Options::default());
+
+    let service = resource(&e, "urn:pulumi:prod::shop::aws:ecs/service:Service::api");
+    assert_eq!(service.change, ChangeKind::Same);
+    assert_eq!(
+        service.references.as_ref().map(|r| Value::from_iter(r.clone())),
+        Some(json!({"taskDefinition": key("urn:pulumi:prod::shop::aws:ecs/taskDefinition:TaskDefinition::api")}))
+    );
+}
+
+#[test]
+fn an_unchanged_resource_with_only_its_old_state_names_its_references() {
+    // A resource Pulumi lists as the same has both sides; one with only the old still names what it referred to.
+    let preview = json!({"config": {"aws:region": "eu-west-1"}, "steps": [
+        {"op": "update", "urn": TEMPLATE, "oldState": template_state("t3.large"), "newState": template_state("t3.xlarge")},
+        {"op": "same", "urn": ASG, "oldState": asg_state()}
+    ]});
+    let e = estimate_with(&preview.to_string(), ASG_CATALOGUE, &Options::default());
+    assert_eq!(
+        resource(&e, ASG)
+            .references
+            .as_ref()
+            .and_then(|r| r.get("launchTemplate")),
+        Some(&key(TEMPLATE))
+    );
+}
+
+#[test]
+fn past_the_request_limit_what_a_referred_resource_refers_to_goes_too() {
+    // A changed capacity provider names its group, and the group its launch template: both go, though the stack's
+    // other unchanged resources do not fit.
+    let provider = |weight: u32| {
+        json!({"type": "aws:ecs/capacityProvider:CapacityProvider", "custom": true,
+               "inputs": {"autoScalingGroupProvider": {"autoScalingGroupArn": "arn:aws:autoscaling:x", "weight": weight}},
+               "propertyDependencies": {"autoScalingGroupProvider": [ASG]}})
+    };
+    let mut steps = vec![
+        json!({"op": "update", "urn": PROVIDER, "oldState": provider(1), "newState": provider(2)}),
+        json!({"op": "same", "urn": ASG, "oldState": asg_state(), "newState": asg_state()}),
+        json!({"op": "same", "urn": TEMPLATE, "oldState": template_state("t3.large"), "newState": template_state("t3.large")}),
+    ];
+    for i in 0..5000 {
+        let urn = format!("urn:pulumi:prod::shop::aws:autoscaling/group:Group::g{i}");
+        let state = json!({"type": "aws:autoscaling/group:Group", "custom": true, "inputs": {"desiredCapacity": 1}});
+        steps.push(json!({"op": "same", "urn": urn, "oldState": state, "newState": state}));
+    }
+    let preview = json!({"config": {"aws:region": "eu-west-1"}, "steps": steps});
+    let e = estimate_with(&preview.to_string(), ASG_CATALOGUE, &Options::default());
+
+    assert_eq!(e.stack_too_large, Some(5003));
+    let sent: Vec<(&str, ChangeKind)> = e.request.resources.iter().map(|r| (r.key.as_str(), r.change)).collect();
+    let (p, g, t) = (key(PROVIDER), key(ASG), key(TEMPLATE));
+    assert_eq!(
+        sent,
+        [
+            (p.as_str(), ChangeKind::Update),
+            (g.as_str(), ChangeKind::Same),
+            (t.as_str(), ChangeKind::Same)
+        ]
+    );
+    assert_eq!(
+        resource(&e, ASG)
+            .references
+            .as_ref()
+            .and_then(|r| r.get("launchTemplate")),
+        Some(&t)
+    );
+    assert_eq!(e.locals.len(), 3);
+}
+
 #[test]
 fn the_shipped_catalogue_sends_a_service_with_its_task_definition() {
     let e = estimate(&ecs_preview("same"), &Options::default());

@@ -76,7 +76,7 @@
         },
         "change": {
           "enum": ["create", "update", "replace", "delete", "same"],
-          "description": "same: left as it is. Answered too, with the same figure before and after and no notes, so that the client can add up what the stack costs; a changed resource that refers to it is priced with it."
+          "description": "same: left as it is. Answered too, with the same figure before and after and no notes, so that the client can add up what the stack costs; a resource that refers to it, changed or not, is priced with it."
         },
         "type": {
           "type": "string",
@@ -113,7 +113,7 @@
           "type": "object",
           "maxProperties": 20,
           "additionalProperties": { "type": "string", "pattern": "^r[0-9a-f]{16}$" },
-          "description": "For each of the catalogue's references of this type, the key of the resource it names, such as an ECS service's task definition."
+          "description": "For each of the catalogue's references of this type, the key of the resource it names, such as an ECS service's task definition: from the new state's propertyDependencies, else the old one's, a resource left the same included (a client from before 2026-11-22 sent them for changed resources only). The resource named goes in the request too when the preview lists it and the request has room."
         }
       }
     },

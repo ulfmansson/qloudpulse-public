@@ -80,7 +80,8 @@ pub struct ResourceChange {
     pub unknown: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_id: Option<String>,
-    /// For each of the catalogue's references of this type, the key of the resource it names.
+    /// For each of the catalogue's references of this type, the key of the resource it names, from the new state, else
+    /// the old one: for a resource left the same as for a changed one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub references: Option<BTreeMap<String, String>>,
 }
