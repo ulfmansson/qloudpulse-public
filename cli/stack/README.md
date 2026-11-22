@@ -26,11 +26,11 @@ and arm64), with their SHA-256 sums, and an install script that picks the one fo
 > `login` kept stay the same.
 
 ```bash
-curl -fsSL https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-stack-0.5.0/install.sh | sh
+curl -fsSL https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-stack-0.6.0/install.sh | sh
 ```
 
 ```powershell
-irm https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-stack-0.5.0/install.ps1 | iex
+irm https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-stack-0.6.0/install.ps1 | iex
 ```
 
 Each script installs the release it came from: the version is in the URL, so a pipeline gets the same client every
@@ -58,7 +58,7 @@ and run `gh attestation verify install.sh` as in [Verify what you run](#verify-w
 Or by hand:
 
 ```bash
-VERSION=0.5.0
+VERSION=0.6.0
 TARGET=x86_64-unknown-linux-musl   # aarch64-unknown-linux-musl, aarch64-apple-darwin, x86_64-apple-darwin
 BASE=https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-stack-$VERSION
 curl -fsSLO "$BASE/qloudpulse-stack-$VERSION-$TARGET.tar.gz"
@@ -71,7 +71,7 @@ tar -xzf "qloudpulse-stack-$VERSION-$TARGET.tar.gz"
 On Windows, in PowerShell:
 
 ```powershell
-$Version = "0.5.0"
+$Version = "0.6.0"
 $Base = "https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-stack-$Version"
 $Zip = "qloudpulse-stack-$Version-x86_64-pc-windows-gnu.zip"   # on Windows on ARM: aarch64-pc-windows-gnullvm
 Invoke-WebRequest "$Base/$Zip" -OutFile $Zip
@@ -289,7 +289,7 @@ Sigstore's public transparency log. Nothing built on a laptop can carry it. With
 (signed in to any GitHub account):
 
 ```bash
-VERSION=0.5.0
+VERSION=0.6.0
 TARGET=x86_64-unknown-linux-musl
 gh attestation verify "qloudpulse-stack-$VERSION-$TARGET.tar.gz" --repo ulfmansson/qloudpulse-public \
   --signer-workflow ulfmansson/qloudpulse-public/.github/workflows/cli-stack-release.yml \
@@ -409,7 +409,7 @@ jobs:
         with:
           name: preview
       - env:
-          VERSION: "0.5.0"
+          VERSION: "0.6.0"
           TARGET: x86_64-unknown-linux-musl
           SHA256: "<sha256 from SHA256SUMS, checked once with gh attestation verify>"
           QLOUDPULSE_TOKEN: ${{ secrets.QLOUDPULSE_TOKEN }}
