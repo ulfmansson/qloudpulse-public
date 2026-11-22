@@ -31,7 +31,8 @@ pub fn check(mine: &str, client: Option<&ClientVersions>) -> Result<Option<Strin
     let Some(c) = client else { return Ok(None) };
     if compare(mine, &c.minimum) == Some(Ordering::Less) {
         bail!(
-            "this client is {mine}, and qloudpulse takes {} or later. Download {} from {}",
+            "this client is {mine}, and qloudpulse takes {} or later. Run `qloudpulse-stack update`, or download {} \
+             from {}",
             c.minimum,
             c.latest,
             c.download
@@ -39,7 +40,7 @@ pub fn check(mine: &str, client: Option<&ClientVersions>) -> Result<Option<Strin
     }
     if compare(mine, &c.latest) == Some(Ordering::Less) {
         return Ok(Some(format!(
-            "qloudpulse-stack {} is out (this is {mine}): {}",
+            "qloudpulse-stack {} is out (this is {mine}): `qloudpulse-stack update` installs it, or download it from {}",
             c.latest, c.download
         )));
     }
@@ -73,11 +74,15 @@ mod tests {
             .to_string();
         assert_eq!(
             err,
-            "this client is 0.1.0, and qloudpulse takes 0.2.0 or later. Download 0.3.0 from https://example.com/get"
+            "this client is 0.1.0, and qloudpulse takes 0.2.0 or later. Run `qloudpulse-stack update`, or download 0.3.0 \
+             from https://example.com/get"
         );
         assert_eq!(
             check("0.2.5", Some(&versions("0.3.0", "0.2.0"))).unwrap().as_deref(),
-            Some("qloudpulse-stack 0.3.0 is out (this is 0.2.5): https://example.com/get")
+            Some(
+                "qloudpulse-stack 0.3.0 is out (this is 0.2.5): `qloudpulse-stack update` installs it, or download it \
+                 from https://example.com/get"
+            )
         );
         assert_eq!(check("0.3.0", Some(&versions("0.3.0", "0.2.0"))).unwrap(), None);
         assert_eq!(check("0.4.0", Some(&versions("0.3.0", "0.2.0"))).unwrap(), None);

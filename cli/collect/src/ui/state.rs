@@ -65,6 +65,8 @@ pub struct Shared {
     /// Held while the client reads AWS, by a sample or a cycle, so the two never call the APIs at once.
     pub collector: Mutex<()>,
     pub run: Option<Mutex<RunLog>>,
+    /// A newer release of the client, when `ui` found one: shown on every page.
+    pub newer: Mutex<Option<String>>,
 }
 
 impl Shared {
@@ -77,6 +79,7 @@ impl Shared {
             sample: Mutex::new(Sample::None),
             collector: Mutex::new(()),
             run: run.map(Mutex::new),
+            newer: Mutex::new(None),
         }
     }
 

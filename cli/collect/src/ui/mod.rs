@@ -49,9 +49,21 @@ pub fn start(config_path: PathBuf, bind: SocketAddr, run: Option<RunLog>) -> Res
     Ok(shared)
 }
 
-/// `qloudpulse-collect ui`: the UI alone, until the process is stopped.
-pub fn serve(config_path: PathBuf, bind: SocketAddr) -> Result<()> {
-    start(config_path, bind, None)?;
+/// `qloudpulse-collect ui`: the UI alone, until the process is stopped. `newer`, when given, says whether a newer
+/// release is out; it runs beside the server, and what it says goes to stderr and to a line on every page.
+pub fn serve<F>(config_path: PathBuf, bind: SocketAddr, newer: Option<F>) -> Result<()>
+where
+    F: FnOnce() -> Option<String> + Send + 'static,
+{
+    let shared = start(config_path, bind, None)?;
+    if let Some(check) = newer {
+        std::thread::spawn(move || {
+            if let Some(line) = check() {
+                eprintln!("qloudpulse-collect: {line}");
+                *lock(&shared.newer) = Some(line);
+            }
+        });
+    }
     loop {
         std::thread::park();
     }

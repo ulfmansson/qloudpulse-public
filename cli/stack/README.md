@@ -98,6 +98,18 @@ client says so on stderr and under the pull request comment, and carries on. Bel
 anything and says which version to download; qloudpulse refuses such a client's request too, by its `User-Agent`. With
 `--catalogue`, a saved answer, the client goes by the versions in it; qloudpulse's refusal still holds.
 
+To install the newest release over the one you run:
+
+```bash
+qloudpulse-stack update
+```
+
+`update` asks GitHub for the newest `qloudpulse-stack` release, downloads that release's `install.sh` (`install.ps1`
+on Windows), checks the script against the release's `SHA256SUMS`, and runs it for the directory the running binary is
+in. The script then checks the archive as it does on a first install. `--check` only says whether a newer release is
+out, `--version <version>` installs that release instead, newer or older, and `--attest` also checks the archive's
+signed provenance with `gh`. In a pipeline, pin the version in the install URL rather than run `update`.
+
 ## Use
 
 ```bash
@@ -120,6 +132,7 @@ qloudpulse-stack pulumi up -s payments-prod
 | `qloudpulse-stack pulumi preview [PULUMI_ARGS...]` | Runs `pulumi preview` with your arguments, its usual diff on your terminal, then `pulumi preview --json --show-sames` with the same arguments, and prints the estimate after the diff. Pulumi prints its diff or its JSON, never both, so the stack is previewed twice. A preview that fails ends with Pulumi's exit code; an estimate that fails exits 1, after the diff |
 | `qloudpulse-stack login` | Signs in with your browser and keeps a token on this machine, in the system keychain. See [Signing in on your own machine](#signing-in-on-your-own-machine) |
 | `qloudpulse-stack logout` | Removes the token `login` kept on this machine. It still works until it expires or you remove it under Your tokens |
+| `qloudpulse-stack update` | Installs the newest release over this one, with the release's own install script. See [Updates](#updates) |
 | `qloudpulse-stack pulumi up [PULUMI_ARGS...]` | Runs `pulumi preview --json --show-sames` with your arguments, less those only `up` takes (`-y`/`--yes`, `-f`/`--skip-preview`, `--continue-on-error`, `--strict`, `--plan`, `--secrets-provider`, `--expect-no-changes`), prints the estimate, then runs `pulumi up` with your arguments as they are, on your terminal: its own preview, diff and "Do you want to perform this update?" as usual, so the stack is previewed twice. Ends with Pulumi's exit code. With `--yes` the estimate is printed and the update goes ahead without a pause; with `--skip-preview` nothing is priced. An estimate that fails (no token, the network, a refused version) is one line on stderr, and the update goes on |
 
 | Option | |

@@ -182,7 +182,8 @@ jobs:
       - name: Install it with install.ps1 (Windows PowerShell, through iex)
         shell: powershell
         run: |
-          $env:QLOUDPULSE_DOWNLOAD_BASE = (Resolve-Path dist).Path
+          # The collect installer's own name; QLOUDPULSE_DOWNLOAD_BASE is the stack client's, which this one ignores.
+          $env:QLOUDPULSE_COLLECT_DOWNLOAD_BASE = (Resolve-Path dist).Path
           $env:QLOUDPULSE_INSTALL_DIR = "$env:RUNNER_TEMP\ps-bin"
           Get-Content dist/install.ps1 -Raw | Invoke-Expression
           $Version = (Get-ChildItem dist/qloudpulse-collect-*.zip | Select-Object -First 1).Name -replace '^qloudpulse-collect-([0-9.]+)-.*$', '$1'

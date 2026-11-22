@@ -10,6 +10,16 @@ has lines.
 
 ## [Unreleased]
 
+### Added
+
+- `update` installs the newest release over the running one, with the release's own install script, checked against
+  the release's `SHA256SUMS` first. `--check` only says whether one is out; `--version` installs a given release;
+  `--attest` also checks its signed provenance. Not in the build without the upload.
+- The commands a person runs at a terminal (`init`, `analyze`, `verify`, `policy`, `call-plan`, `rotate-key`,
+  `login`, `logout`), and `ui` on every page, say when a newer release is out, asking GitHub at most once a day.
+  `collect`, `pack`, `deliver`, `upload` and `run` never ask, nor does `--log-json`, and
+  `QLOUDPULSE_NO_UPDATE_CHECK=1` turns it off. Not in the build without the upload.
+
 ## [0.1.0] - 2026-11-21
 
 The first version. It collects what qloudpulse's AWS collectors read, with your own credentials, into a bundle you

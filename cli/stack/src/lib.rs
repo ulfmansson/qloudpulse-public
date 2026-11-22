@@ -10,5 +10,6 @@ pub mod render;
 pub mod request;
 pub mod send;
 pub mod token;
+pub mod update;
 pub mod version;
 pub mod wrap;

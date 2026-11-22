@@ -37,6 +37,8 @@ pub struct Head {
     pub csrf: String,
     /// Reload the page every few seconds, while a sample is being collected.
     pub refresh: bool,
+    /// A newer release of the client, when one is out.
+    pub newer: Option<String>,
 }
 
 fn head(s: &Shared, title: &'static str, active: &'static str, config: Option<&Config>) -> Head {
@@ -75,6 +77,7 @@ fn head(s: &Shared, title: &'static str, active: &'static str, config: Option<&C
         run_line,
         csrf: s.csrf.clone(),
         refresh: false,
+        newer: lock(&s.newer).clone(),
     }
 }
 

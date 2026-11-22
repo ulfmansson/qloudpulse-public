@@ -13,6 +13,17 @@ has lines.
 Needs a qloudpulse with ADR 0140 (report service with migration V35) before it is released: an older endpoint ignores
 `--no-store`, which the client then refuses.
 
+### Added
+
+- `qloudpulse-stack update` installs the newest release over the running one, with the release's own install script,
+  checked against the release's `SHA256SUMS` first. `--check` only says whether one is out; `--version` installs a
+  given release; `--attest` also checks its signed provenance.
+
+### Changed
+
+- The line saying a newer release is out, and the error below the oldest qloudpulse takes, name
+  `qloudpulse-stack update`.
+
 ## [0.5.0] - 2026-11-21
 
 The first release since 0.3.1, and the first as `qloudpulse-stack`. 0.4.0 was tagged on 2026-11-21 but its release
