@@ -107,8 +107,15 @@ if [ "$(uname -s)" = Darwin ]; then
   # cc-rs (ring's C) and rustc's linker take cc from PATH unless told; tell both to use Apple's.
   export CC=/usr/bin/cc CXX=/usr/bin/c++ AR=/usr/bin/ar LD=/usr/bin/ld
   export CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER=/usr/bin/cc CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=/usr/bin/cc
-  xcrun --show-sdk-path >/dev/null 2>&1 \
-    || fail "Apple's toolchain does not answer (xcrun --show-sdk-path); install Xcode or its tools: xcode-select --install"
+  # Apple's xcrun by its path, as cc above: a Nix shell's PATH can put xcbuild's xcrun first, which knows only the Nix
+  # SDK and fails once DEVELOPER_DIR is gone. rustc and cc-rs ask whatever xcrun is on PATH for the SDK unless SDKROOT
+  # names it, so it is named here, with what Apple's xcrun answers.
+  if [ -z "${SDKROOT:-}" ]; then
+    SDKROOT=$(/usr/bin/xcrun --sdk macosx --show-sdk-path 2>&1) \
+      || fail "Apple's toolchain does not answer (/usr/bin/xcrun --sdk macosx --show-sdk-path): $SDKROOT
+  Xcode or its Command Line Tools are needed (xcode-select --install); xcode-select -p says which one is used."
+    export SDKROOT
+  fi
 fi
 
 CLI=$(cd "$(dirname "$0")" && pwd)
