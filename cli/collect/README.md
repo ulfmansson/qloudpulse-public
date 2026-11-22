@@ -22,7 +22,10 @@ irm https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse
 
 Each script installs the release it came from: the version is in the URL, so a machine gets the same client every
 run until you change it. The copies in this repository, `cli/collect/install.sh` and `cli/collect/install.ps1`,
-install the newest release instead, or the one `--version` names. It downloads the archive and the release's
+install the newest release instead, or the one `--version` names. When `qloudpulse-collect` is already installed, in
+that directory (or, without `--dir`, anywhere on PATH), it says which version that is and which it would install, and asks before replacing it;
+one already at that version is left alone. `--version`, `--yes`, or no terminal to ask on goes ahead without asking.
+It downloads the archive and the release's
 `SHA256SUMS`, stops unless the sum matches, and puts the binary in `~/.local/bin`, or on Windows in
 `%LOCALAPPDATA%\Programs\qloudpulse`, which it adds to your PATH.
 
@@ -30,6 +33,7 @@ install the newest release instead, or the one `--version` names. It downloads t
 |---|---|---|
 | `--version <version>` | `-Version`, `$env:QLOUDPULSE_COLLECT_VERSION` | the release to install |
 | `--dir <dir>` | `-Dir`, `$env:QLOUDPULSE_INSTALL_DIR` | where the binary goes |
+| `--yes` | `-Yes`, `$env:QLOUDPULSE_ASSUME_YES=1` | replace an installed version without asking |
 | `--attest` | `-Attest` | also check its signed build provenance with `gh`, as below |
 | `--base <url or dir>` | `-Base`, `$env:QLOUDPULSE_COLLECT_DOWNLOAD_BASE` | a mirror of the release's files |
 | | `-NoModifyPath`, `$env:QLOUDPULSE_NO_MODIFY_PATH` | leave PATH alone |

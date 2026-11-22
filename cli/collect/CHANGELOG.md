@@ -1,35 +1,53 @@
 # Changelog
 
-What changed in each version of `qloudpulse-collect`.
+What changed in `qloudpulse-collect`, newest first. The format is
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). A release's notes on GitHub are its section here.
 
-## [0.1.0] - Unreleased
+A pull request that changes what the client does adds a line under Unreleased. A release moves those lines into its
+version's section and dates it: `release.sh` refuses a version whose section has no date, or while Unreleased still
+has lines.
 
-- First version: `collect`, `analyze`, `pack`, `verify`, `deliver`, `upload`, `run`, `policy`, `call-plan`.
-- Reads what qloudpulse's hourly AWS cost collector reads (without the `usageMetrics` reads), from a hand-made seed
-  call plan.
-- Tag rules (keep, drop, replace, pseudonymize; unlisted tags denied) and field rules; changed values carried into the
-  requests that name them.
-- The bill (`[cur]`): qloudpulse's CUR 2.0 queries in your Athena, once a day, results only; its tag columns follow
-  the tag rules.
-- Infra, first part (with the bill, once a day): regions and billed resources derived from the bill as qloudpulse
-  does; network, tags of billed ARNs, internet-facing load balancers, public snapshots and images, bucket access,
-  CloudFront, the describers that list everything, and those the billed resources drive (instances and their
-  images, volumes, Elastic IPs, RDS, DynamoDB, EKS, ElastiCache, bucket settings, application load balancers, API
-  Gateway, ECR), and Cloud Control's settings of queues, topics, file systems, ECS, streams, keys, network load
-  balancers, NAT gateways, VPC endpoints, transit gateways and hosted zones. Not yet: ECR scan findings.
-- Forecast (opt-in, Cost Explorer) and carbon (Sustainability API), once a day.
+## [Unreleased]
+
+### Added
+
 - `update` installs the newest release over the running one, with the release's own install script, checked against
-  the release's `SHA256SUMS` first. The commands a person runs at a terminal, and `ui`, say when a newer release is
-  out, asking GitHub at most once a day; `collect`, `pack`, `deliver`, `upload` and `run` never ask, and
+  the release's `SHA256SUMS` first. `--check` only says whether one is out; `--version` installs a given release;
+  `--attest` also checks its signed provenance. Not in the build without the upload.
+- The commands a person runs at a terminal (`init`, `analyze`, `verify`, `policy`, `call-plan`, `rotate-key`,
+  `login`, `logout`), and `ui` on every page, say when a newer release is out, asking GitHub at most once a day.
+  `collect`, `pack`, `deliver`, `upload` and `run` never ask, nor does `--log-json`, and
   `QLOUDPULSE_NO_UPDATE_CHECK=1` turns it off. Not in the build without the upload.
-- A scan before packing that stops on keys, tokens, passwords and email addresses; `[environment]` derived before
-  redaction; `rotate-key` with a relink file; `[encrypt]` writes a JWE to deliver.
-- `[identifiers]`: account and resource IDs pseudonymized with their format kept, consistently everywhere.
-- One TLS stack (rustls on ring); no C crypto build.
-- Signs in to qloudpulse as the qloudpulse CLI does, with its code: `QLOUDPULSE_TOKEN`, else the token `login` kept
-  (shared with `qloudpulse login`); `login` and `logout` commands.
-- Releases as the stack client's are: static binaries for Linux, macOS and Windows, `SHA256SUMS`, signed build
-  provenance, an SBOM, reproducible builds, `install.sh` and `install.ps1`; `--version` names the commit.
-- Delivery to your own S3 bucket, to qloudpulse (feature `upload`), or to a command; retries and retention.
-- The local UI (`ui`, `run --ui`): Analyze with an in-memory sample, a rules editor with a raw/redacted preview that
-  saves through `toml_edit`, the bundle browser and run history. Localhost, token, Host check and a strict CSP.
+
+## [0.1.0] - 2026-11-21
+
+The first version. It collects what qloudpulse's AWS collectors read, with your own credentials, into a bundle you
+inspect, redact and deliver. qloudpulse never gets access to your accounts.
+
+- **Collects** what `aws-cost-collect` reads every hour, and once a day what `aws-cur-collect`,
+  `aws-infra-collect`, `aws-forecast-collect` (opt-in: AWS bills Cost Explorer per request) and
+  `aws-carbon-collect` read. That covers the bill (qloudpulse's CUR 2.0 queries in your Athena, results only), the
+  inventory, network, exposure and settings (Cloud Control included), the forecast, and carbon. Not yet: the
+  `usageMetrics` reads and ECR scan findings.
+- **Only reads.** Every AWS operation it may call is in the compiled-in call plan (`call-plan`), it refuses any
+  other, and `policy` prints the read-only IAM policy for exactly those. The answers are recorded as AWS sent them,
+  so qloudpulse replays them through its unchanged collectors.
+- **Redacts** by `qloudpulse-collect.toml`:
+  - tags: unlisted ones are denied; others are kept, dropped, replaced or pseudonymized under your own key;
+  - any field, by its path;
+  - account and resource IDs, pseudonymized with their format kept, the same everywhere they appear;
+  - `qloudpulse:environment`, derived from your tags or names before anything is redacted.
+- **Checks before anything leaves:** `pack` stops while the bundle holds keys, tokens, passwords or email addresses.
+  `analyze` shows every tag and what each rule costs in qloudpulse, `verify` checks a bundle against its manifest,
+  and the local UI (`ui`, `run --ui`) shows all of it in a browser on this machine.
+- **Delivers** every hour (`run`) to your own S3 bucket, to qloudpulse, or to your own command. The upload signs in
+  as `qloudpulse-stack` does (`QLOUDPULSE_TOKEN`, or the token `login` kept). `[encrypt]` sends a JWE to
+  qloudpulse's key instead of the plaintext, and `rotate-key` replaces your pseudonym key with a file to relink
+  history.
+- **No qloudpulse code at all, if you prefer:** `--no-default-features` builds a client without the upload, and
+  holds no qloudpulse host.
+- **Released as `qloudpulse-stack` is:** static binaries for Linux, macOS and Windows, `SHA256SUMS`, signed build
+  provenance, an SBOM, reproducible builds, and `install.sh` and `install.ps1`. `--version` names the commit. The
+  install scripts say which version is installed (in the install directory, or on PATH when none is given) and which
+  they would install, and ask before replacing it; `--yes` (`-Yes`, `QLOUDPULSE_ASSUME_YES=1`) skips the question.

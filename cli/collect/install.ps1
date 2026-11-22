@@ -6,8 +6,9 @@ PATH.
   irm https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-collect-<version>/install.ps1 | iex
 
 The copy attached to a release installs that release; this copy in the repository installs the newest release, or
--Version (or $env:QLOUDPULSE_COLLECT_VERSION). Through irm | iex options cannot be passed, so each has an environment variable
-too:
+-Version (or $env:QLOUDPULSE_COLLECT_VERSION). When qloudpulse-collect.exe is already installed it says which version
+that is and which this would install, and asks before replacing it; one already at that version is left alone. -Version, -Yes, or no console to ask in (a pipeline) goes ahead without asking. Through
+irm | iex options cannot be passed, so each has an environment variable too:
 
   -Version <version>   $env:QLOUDPULSE_COLLECT_VERSION      the qloudpulse-collect version (default: the release this script came with;
                                                     for the copy in the repository, the newest release)
@@ -15,6 +16,7 @@ too:
   -Target <target>     the build to install, x86_64-pc-windows-gnu or aarch64-pc-windows-gnullvm (default: this
                        machine's; an ARM64 machine gets the ARM64 build even from an x64 PowerShell)
   -Base <url or dir>   $env:QLOUDPULSE_COLLECT_DOWNLOAD_BASE  where the zips and SHA256SUMS are (default: the release)
+  -Yes                 $env:QLOUDPULSE_ASSUME_YES=1  replace an installed qloudpulse-collect with another version without asking
   -Attest              also check the zip's signed build provenance with gh (gh attestation verify)
   -NoModifyPath        $env:QLOUDPULSE_NO_MODIFY_PATH  leave the user's PATH alone
 
@@ -27,37 +29,105 @@ param(
   [string]$Target = '',
   [string]$Base = $env:QLOUDPULSE_COLLECT_DOWNLOAD_BASE,
   [switch]$Attest,
-  [switch]$NoModifyPath
+  [switch]$NoModifyPath,
+  [switch]$Yes
 )
 
 # A release's copy has its version here (cli/collect/release.sh writes it); this one has none.
 $QloudpulseDefaultVersion = ''
 
 function Install-Qloudpulse {
-  param([string]$Version, [string]$Dir, [string]$Target, [string]$Base, [bool]$Attest, [bool]$NoModifyPath)
+  param([string]$Version, [string]$Dir, [string]$Target, [string]$Base, [bool]$Attest, [bool]$NoModifyPath,
+    [bool]$Yes)
   $ErrorActionPreference = 'Stop'
   $ProgressPreference = 'SilentlyContinue' # Windows PowerShell's progress bar slows a download many times over
   $Repo = 'ulfmansson/qloudpulse-public'
 
-  if (-not $Version) { $Version = $QloudpulseDefaultVersion }
-  if (-not $Version) {
+  # -1, 0 or 1 as version a is older than, the same as or newer than b.
+  function Compare-QloudpulseVersion([string]$a, [string]$b) {
+    $x = @($a.Split('.') | ForEach-Object { [long]$_ })
+    $y = @($b.Split('.') | ForEach-Object { [long]$_ })
+    for ($i = 0; $i -lt [Math]::Max($x.Count, $y.Count); $i++) {
+      $p = if ($i -lt $x.Count) { $x[$i] } else { 0 }
+      $q = if ($i -lt $y.Count) { $y[$i] } else { 0 }
+      if ($p -lt $q) { return -1 }
+      if ($p -gt $q) { return 1 }
+    }
+    return 0
+  }
+
+  # Where the version comes from: asked for (-Version or $env:QLOUDPULSE_COLLECT_VERSION), this installer's release, or the
+  # newest.
+  if ($Version) { $From = 'asked' }
+  elseif ($QloudpulseDefaultVersion) { $From = 'release'; $Version = $QloudpulseDefaultVersion }
+  else { $From = 'newest' }
+  if ($From -eq 'newest') {
     if ($Base) { throw 'qloudpulse install: no version: pass -Version or set $env:QLOUDPULSE_COLLECT_VERSION with -Base' }
-    # The newest qloudpulse-collect-<version> release. Not GitHub's "latest": that is the cluster agent's release, in the
+    # The newest qloudpulse-collect release. Not GitHub's "latest": that may be another tool's release, in the
     # same repository.
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     try {
       $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=100" -UseBasicParsing `
         -Headers @{ Accept = 'application/vnd.github+json' }
-    } catch { $releases = @() }
-    $Version = $releases | ForEach-Object { $_.tag_name } | Where-Object { $_ -match '^qloudpulse-collect-[0-9]+(\.[0-9]+)+$' } |
-      ForEach-Object { $_ -replace '^qloudpulse-collect-', '' } | Sort-Object { [version]$_ } -Descending | Select-Object -First 1
-    if (-not $Version) { throw "qloudpulse install: could not find the newest release on github.com/$Repo; pass -Version" }
+    } catch {
+      throw ("qloudpulse install: could not list the releases on github.com/$Repo ($($_.Exception.Message)); " +
+        'pass -Version')
+    }
+    $Version = $releases | ForEach-Object { $_.tag_name } |
+      Where-Object { $_ -match '^qloudpulse-collect-[0-9]+(\.[0-9]+)+$' } |
+      ForEach-Object { $_ -replace '^qloudpulse-collect-', '' } | Sort-Object { [version]$_ } -Descending |
+      Select-Object -First 1
+    if (-not $Version) { throw "qloudpulse install: github.com/$Repo has no qloudpulse-collect release yet; pass -Version" }
   }
   $Version = $Version -replace '^(v|qloudpulse-collect-)', ''
   if ($Version -notmatch '^[0-9]+(\.[0-9]+)*$') { throw "qloudpulse install: not a version: $Version (for example 0.2.0)" }
-  $Tag = "qloudpulse-collect-$Version"
+  $Bin = 'qloudpulse-collect'; $Tag = "qloudpulse-collect-$Version"; $Workflow = 'cli-collect-release.yml'
   if (-not $Base) { $Base = "https://github.com/$Repo/releases/download/$Tag" }
+  $DirGiven = [bool]$Dir
   if (-not $Dir) { $Dir = Join-Path $env:LOCALAPPDATA 'Programs\qloudpulse' }
+
+  # One already installed: in -Dir first, then on PATH.
+  $Old = $null; $OldVersion = $null
+  # On PATH too, unless -Dir (or $env:QLOUDPULSE_INSTALL_DIR) names where it goes: one elsewhere is then another install.
+  $candidates = @(Join-Path $Dir 'qloudpulse-collect.exe')
+  if (-not $DirGiven) {
+    $candidates += @(Get-Command qloudpulse-collect -CommandType Application -ErrorAction SilentlyContinue |
+      ForEach-Object { $_.Path })
+  }
+  foreach ($f in $candidates) {
+    if (-not $f -or -not (Test-Path -LiteralPath $f -PathType Leaf)) { continue }
+    # "qloudpulse-collect 0.1.0 (1ab39062b 2026-11-21)".
+    try { $said = & $f --version 2>$null | Select-Object -First 1 } catch { continue }
+    if ("$said" -match '^\S+ ([0-9]+(\.[0-9]+)*)') { $Old = $f; $OldVersion = $Matches[1]; break }
+  }
+  if ($Old) {
+    $offer = switch ($From) {
+      'newest' { "the newest release is $Version" }
+      'release' { "this installer is for $Version" }
+      default { "you asked for $Version" }
+    }
+    $cmp = Compare-QloudpulseVersion $OldVersion $Version
+    if ($cmp -eq 0) {
+      Write-Host "qloudpulse install: $Old is $OldVersion and ${offer}: already up to date, nothing to do"
+      return
+    }
+    Write-Host "qloudpulse install: $Old is $OldVersion; $offer"
+    if ($From -ne 'asked' -and -not $Yes) {
+      if ($cmp -lt 0) { $question = "Upgrade to $Version? [Y/n]"; $default = 'y' }
+      else { $question = "Replace it with the older $Version? [y/N]"; $default = 'n' }
+      # Asked only in a console someone can answer; a pipeline, with its input redirected or none, goes ahead.
+      if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and -not $env:CI) {
+        try { $answer = Read-Host "qloudpulse install: $question" } catch { $answer = 'y' } # -NonInteractive
+        if (-not $answer) { $answer = $default }
+        if ($answer -notmatch '^(y|yes)$') {
+          Write-Host "qloudpulse install: left $Old at $OldVersion"
+          return
+        }
+      } else {
+        Write-Host 'qloudpulse install: no console to ask in; going ahead'
+      }
+    }
+  }
 
   if (-not $Target) {
     # The machine's architecture, not this process's: an x64 PowerShell runs emulated on Windows on ARM and its
@@ -76,8 +146,8 @@ function Install-Qloudpulse {
       default { throw "qloudpulse install: no Windows build for $arch; build from source (cli/collect/README.md)" }
     }
   }
-  $Zip = "qloudpulse-collect-$Version-$Target.zip"
-  Write-Host "qloudpulse install: qloudpulse-collect $Version for $Target"
+  $Zip = "$Bin-$Version-$Target.zip"
+  Write-Host "qloudpulse install: $Bin $Version for $Target"
 
   if ($Base -match '^https?://') {
     # Windows PowerShell 5.1 may not offer TLS 1.2 unless asked; GitHub takes nothing older.
@@ -110,24 +180,30 @@ function Install-Qloudpulse {
 
     if ($Attest) {
       if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw 'qloudpulse install: -Attest needs gh (https://cli.github.com)' }
-      & gh attestation verify (Join-Path $Tmp $Zip) --repo $Repo --signer-workflow "$Repo/.github/workflows/cli-collect-release.yml" --source-ref "refs/tags/$Tag" | Out-Host
+      & gh attestation verify (Join-Path $Tmp $Zip) --repo $Repo --signer-workflow "$Repo/.github/workflows/$Workflow" --source-ref "refs/tags/$Tag" | Out-Host
       if ($LASTEXITCODE -ne 0) { throw "qloudpulse install: $Zip has no provenance from $Repo's release workflow at $Tag; nothing was installed" }
     }
 
     $out = Join-Path $Tmp 'x'
     Expand-Archive -LiteralPath (Join-Path $Tmp $Zip) -DestinationPath $out
-    $exe = Join-Path $out 'qloudpulse-collect.exe'
+    $exe = Join-Path $out "$Bin.exe"
+    if (-not (Test-Path -LiteralPath $exe)) { throw "qloudpulse install: $Zip has no $Bin.exe in it" }
     $said = & $exe --version
-    if ($LASTEXITCODE -ne 0) { throw 'qloudpulse install: the downloaded qloudpulse-collect.exe does not run here' }
+    if ($LASTEXITCODE -ne 0) { throw "qloudpulse install: the downloaded $Bin.exe does not run here" }
 
     New-Item -ItemType Directory -Path $Dir -Force | Out-Null
-    # Copied next to the old one and moved over it, so qloudpulse-collect.exe is never half written.
-    $new = Join-Path $Dir 'qloudpulse-collect.exe.new'
+    # Copied next to the old one and moved over it, so the client is never half written.
+    $installed = Join-Path $Dir "$Bin.exe"
+    $new = "$installed.new"
     Copy-Item -LiteralPath $exe -Destination $new -Force
-    Move-Item -LiteralPath $new -Destination (Join-Path $Dir 'qloudpulse-collect.exe') -Force
-    Write-Host "qloudpulse install: installed $said as $(Join-Path $Dir 'qloudpulse-collect.exe')"
+    Move-Item -LiteralPath $new -Destination $installed -Force
+    Write-Host "qloudpulse install: installed $said as $installed"
   } finally {
     Remove-Item -LiteralPath $Tmp -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  # One that was somewhere else is still there.
+  if ($Old -and $Old -ne $installed) {
+    Write-Host "qloudpulse install: $Old ($OldVersion) is still there; remove it if you no longer need it: Remove-Item '$Old'"
   }
 
   if ($env:GITHUB_PATH) {
@@ -146,7 +222,7 @@ function Install-Qloudpulse {
         # Setting and clearing a variable this way tells Windows the environment changed, so new terminals see it.
         [Environment]::SetEnvironmentVariable('QLOUDPULSE_INSTALL_REFRESH', '1', 'User')
         [Environment]::SetEnvironmentVariable('QLOUDPULSE_INSTALL_REFRESH', $null, 'User')
-        Write-Host "qloudpulse install: added $Dir to your PATH; open a new terminal to use qloudpulse-collect"
+        Write-Host "qloudpulse install: added $Dir to your PATH; open a new terminal to use $Bin"
       }
     } finally {
       $key.Close()
@@ -156,4 +232,5 @@ function Install-Qloudpulse {
 }
 
 Install-Qloudpulse -Version $Version -Dir $Dir -Target $Target -Base $Base -Attest:$Attest.IsPresent `
-  -NoModifyPath:($NoModifyPath.IsPresent -or [bool]$env:QLOUDPULSE_NO_MODIFY_PATH)
+  -NoModifyPath:($NoModifyPath.IsPresent -or [bool]$env:QLOUDPULSE_NO_MODIFY_PATH) `
+  -Yes:($Yes.IsPresent -or ($env:QLOUDPULSE_ASSUME_YES -and $env:QLOUDPULSE_ASSUME_YES -ne '0'))
