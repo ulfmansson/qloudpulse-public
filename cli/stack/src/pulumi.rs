@@ -5,7 +5,7 @@
 //! `propertyDependencies`). Pulumi prints a secret as `"[secret]"` and a value it knows only after apply as its
 //! unknown sentinel; the client sends neither. Which types and attributes are sent is the catalogue's.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -751,7 +751,13 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
         stack_too_large = Some(resources.len() + sames.len());
         sames.clear();
     }
-    for urn in referred.into_iter().chain(sames) {
+    // Each one sent here names what it refers to as a changed one does, since qloudpulse prices an Auto Scaling group
+    // from its launch template and an ECS service from its task definition whether or not they change. What it
+    // refers to and is not sent yet goes after the rest, while the request has room.
+    let mut queue: VecDeque<&str> = referred.into_iter().chain(sames).collect();
+    let mut queued: BTreeSet<&str> = queue.iter().copied().collect();
+    let mut found: Vec<&str> = Vec::new();
+    while let Some(urn) = queue.pop_front() {
         if !sent.insert(urn) {
             continue;
         }
@@ -772,6 +778,13 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
             unless_set_in: None,
         };
         let (attrs, hidden) = priced_attributes_filled(state.inputs.as_ref(), &fill, &priced.attributes);
+        let references = references_of(Some(state), priced, &mut found);
+        for next in found.drain(..) {
+            // This one, those waiting and the one found must all fit.
+            if !sent.contains(next) && resources.len() + 1 + queue.len() < MAX_RESOURCES && queued.insert(next) {
+                queue.push_back(next);
+            }
+        }
         let key = key(urn);
         locals.push(Local {
             key: key.clone(),
@@ -791,7 +804,7 @@ pub fn estimate(preview: &Preview, catalogue: &Catalogue, options: &Options) -> 
             after: Some(attrs),
             unknown: hidden,
             resource_id: None,
-            references: None,
+            references,
         });
     }
 

@@ -24,6 +24,13 @@ Needs a qloudpulse with ADR 0140 (report service with migration V35) before it i
 - The line saying a newer release is out, and the error below the oldest qloudpulse takes, name
   `qloudpulse-stack update`.
 
+### Fixed
+
+- A resource the change leaves the same sends its references, as a changed one does: an unchanged Auto Scaling group
+  names its launch template, an ECS service its task definition, an Aurora instance its cluster. qloudpulse prices
+  them through those, so before this every unchanged one came back not priced and the stack's cost left out its
+  biggest resources. What such a resource refers to goes in the request too, while it has room.
+
 ## [0.5.0] - 2026-11-21
 
 The first release since 0.3.1, and the first as `qloudpulse-stack`. 0.4.0 was tagged on 2026-11-21 but its release
