@@ -232,6 +232,14 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
         run: cli/collect/release.sh --skip-tests --targets "$TARGET" --out "$RUNNER_TEMP/again" --compare "$RUNNER_TEMP/first/SHA256SUMS"
+      # A build that differs is kept, so it can be compared byte for byte with the Build job's cli-collect-<target>.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ failure() }}
+        with:
+          name: again-${{ matrix.target }}
+          path: ${{ runner.temp }}/again/qloudpulse-collect-*
+          if-no-files-found: ignore
+          retention-days: 7
 
   sbom:
     name: SBOM
