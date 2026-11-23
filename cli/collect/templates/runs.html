@@ -11,7 +11,7 @@
     <div class="card"><div class="l">This process runs since</div><div class="n small-n">{{ since }}</div><div class="l">{{ cycles.len() }} cycles so far</div></div>
   </div>
   {% else %}
-  <div class="panel side small"><b>No run loop in this process.</b><p class="muted">Start the UI with <code>run --every {{ every }}h --ui</code> to see each cycle here as it happens. The history below comes from the bundles on disk.</p></div>
+  <div class="panel side small"><b>No run loop in this process.</b><p class="muted">Start the UI with <code>qloudpulse-collect run --every {{ every }}h --ui</code> to see each cycle here as it happens. The history below comes from the bundles on disk.</p></div>
   {% endif %}
 </div>
 

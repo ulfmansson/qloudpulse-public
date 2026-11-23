@@ -10,6 +10,12 @@ has lines.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-23
+
+- `run --every` takes `1h` as well as `1`, the form the docs and the UI show; before, `1h` was refused.
+- The Runs page names the whole command to start the loop, `qloudpulse-collect run --every 1h --ui`, not only its
+  flags.
+
 ## [0.1.0] - 2026-11-22
 
 The first version. It collects what qloudpulse's AWS collectors read, with your own credentials, into a bundle you

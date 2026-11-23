@@ -2278,7 +2278,7 @@ dependencies = [
 
 [[package]]
 name = "qloudpulse-collect"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes-gcm",
  "aes-kw",
@@ -2316,7 +2316,7 @@ dependencies = [
 
 [[package]]
 name = "qloudpulse-stack"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "clap",

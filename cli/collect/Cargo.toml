@@ -1,6 +1,6 @@
 [package]
 name = "qloudpulse-collect"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.88"
 description = "Collects cloud cost data with your own credentials into a bundle you inspect, redact and deliver. Never contacts qloudpulse."
