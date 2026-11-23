@@ -13,11 +13,11 @@ Each release has a static binary for Linux (x86_64 and arm64), binaries for macO
 and arm64), with their SHA-256 sums, and an install script that picks the one for your machine:
 
 ```bash
-curl -fsSL https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-collect-0.1.0/install.sh | sh
+curl -fsSL https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-collect-0.1.1/install.sh | sh
 ```
 
 ```powershell
-irm https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-collect-0.1.0/install.ps1 | iex
+irm https://github.com/ulfmansson/qloudpulse-public/releases/download/qloudpulse-collect-0.1.1/install.ps1 | iex
 ```
 
 Each script installs the release it came from: the version is in the URL, so a machine gets the same client every
@@ -278,7 +278,7 @@ Sigstore's public transparency log. Nothing built on a laptop can carry it. With
 (signed in to any GitHub account):
 
 ```bash
-VERSION=0.1.0
+VERSION=0.1.1
 TARGET=x86_64-unknown-linux-musl
 gh attestation verify "qloudpulse-collect-$VERSION-$TARGET.tar.gz" --repo ulfmansson/qloudpulse-public \
   --signer-workflow ulfmansson/qloudpulse-public/.github/workflows/cli-collect-release.yml \
