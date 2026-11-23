@@ -98,8 +98,8 @@ enum Command {
         /// One cycle now, then exit.
         #[arg(long)]
         once: bool,
-        /// Overrides [run] every_hours.
-        #[arg(long)]
+        /// Hours between cycles, as `1` or `1h`. Overrides [run] every_hours.
+        #[arg(long, value_name = "HOURS", value_parser = hours)]
         every: Option<u32>,
         /// Also serve the local UI, with this loop's cycles in its run history.
         #[arg(long, conflicts_with = "once")]
@@ -200,6 +200,19 @@ fn main() {
         eprintln!("error: {e:#}");
         std::process::exit(1);
     }
+}
+
+/// `--every`: whole hours, with or without an `h` (`1`, `1h`), so the form the docs and the UI show works as typed.
+fn hours(s: &str) -> std::result::Result<u32, String> {
+    let n: u32 = s
+        .strip_suffix(['h', 'H'])
+        .unwrap_or(s)
+        .parse()
+        .map_err(|_| format!("expected whole hours, such as 1 or 1h, not `{s}`"))?;
+    if n == 0 {
+        return Err("must be at least 1 hour".into());
+    }
+    Ok(n)
 }
 
 fn load(path: &Path) -> Result<(Config, Vec<u8>)> {
@@ -402,9 +415,6 @@ fn run(cli: Cli) -> Result<()> {
             ui_allow_host,
         } => {
             anyhow::ensure!(!once, "--ui runs the loop; leave out --once");
-            if let Some(n) = every {
-                anyhow::ensure!(n >= 1, "--every must be at least 1");
-            }
             let options = qloudpulse_collect::ui::Options::new(ui_bind, ui_allow_host)?;
             qloudpulse_collect::ui::run_with_ui(cli.config, every, options)?;
         }
@@ -420,7 +430,6 @@ fn run(cli: Cli) -> Result<()> {
         Command::Run { once, every, .. } => {
             let mut client = client(&cli.config)?;
             if let Some(n) = every {
-                anyhow::ensure!(n >= 1, "--every must be at least 1");
                 client.config.run.every_hours = n;
             }
             client.pseudonyms().context("the pseudonym key")?;
@@ -505,4 +514,33 @@ fn run(cli: Cli) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_takes_hours_with_or_without_the_unit() {
+        assert_eq!(hours("1"), Ok(1));
+        assert_eq!(hours("1h"), Ok(1));
+        assert_eq!(hours("24H"), Ok(24));
+        assert!(hours("0").is_err());
+        assert!(hours("0h").is_err());
+        assert!(hours("90m").is_err());
+        assert!(hours("h").is_err());
+    }
+
+    #[test]
+    fn the_command_the_ui_suggests_parses() {
+        let cli = Cli::try_parse_from(["qloudpulse-collect", "run", "--every", "1h", "--ui"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Run {
+                every: Some(1),
+                ui: true,
+                ..
+            }
+        ));
+    }
 }
