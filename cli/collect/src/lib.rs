@@ -22,4 +22,5 @@ pub mod run;
 pub mod scan;
 pub mod snapshot;
 pub mod ui;
+pub mod view_token;
 pub mod window;
