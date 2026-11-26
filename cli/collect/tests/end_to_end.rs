@@ -98,11 +98,12 @@ fn hourly_cycle_collects_redacts_packs_and_verifies() {
         credentials: Credentials::new("AKID", "secret", None, None, "test"),
     };
     let phases = std::sync::Mutex::new(Vec::new());
+    let tell = |phase| phases.lock().unwrap().push(phase);
     let run = Run {
         caller: &caller,
         window,
         spot_history: false,
-        progress: Some(&|phase| phases.lock().unwrap().push(phase)),
+        progress: Some(&tell),
     };
     let outcome = run.collect(&[account], &["eu-west-1".to_string()]);
     assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
