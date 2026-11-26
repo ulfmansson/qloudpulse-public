@@ -2,7 +2,7 @@
 
 use super::protocol::{self, WireRequest};
 use super::sign::sign_request;
-use super::transport::{HttpRequest, HttpResponse, Transport};
+use super::transport::{HttpRequest, HttpResponse, Transport, unanswered_kind};
 use crate::body::Body;
 use crate::callplan::CallPlan;
 use crate::record::{Record, RecordedResponse, kept_headers};
@@ -29,6 +29,29 @@ impl std::fmt::Display for AwsError {
 
 impl std::error::Error for AwsError {}
 
+/// A request that got no answer at all, after every try. `host` is the service's endpoint from the call plan, never
+/// the request's own host, which can carry a bucket name or an account ID as a label.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unanswered {
+    pub host: String,
+    pub tries: u32,
+    /// [`unanswered_kind`]'s word.
+    pub kind: &'static str,
+    detail: String,
+}
+
+impl std::fmt::Display for Unanswered {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "no answer from {} after {} tries: {}",
+            self.host, self.tries, self.detail
+        )
+    }
+}
+
+impl std::error::Error for Unanswered {}
+
 #[derive(Clone)]
 pub struct Account {
     pub id: String,
@@ -37,6 +60,10 @@ pub struct Account {
 
 /// Throttling and server errors are retried this many times before the last answer is recorded.
 const ATTEMPTS: u32 = 6;
+
+/// A request that got no answer at all (the name did not resolve, the connection dropped) is tried this many times:
+/// with the waits capped at 20 s that rides out about a minute and a half of a network or VPN reconnecting.
+const UNANSWERED_ATTEMPTS: u32 = 10;
 
 const THROTTLING: &[&str] = &[
     "Throttling",
@@ -143,7 +170,8 @@ impl<'a> Caller<'a> {
         let mut request = first;
         let mut page = 1;
         let answer = loop {
-            let response = self.send(&request, svc.signing_name(), region, &account.credentials)?;
+            let endpoint = protocol::host(svc, region);
+            let response = self.send(&request, &endpoint, svc.signing_name(), region, &account.credentials)?;
             let body = Body::parse(&response.body);
             let error = error_of(&response, &body);
             let mut records = self.records.lock().expect("records");
@@ -194,6 +222,7 @@ impl<'a> Caller<'a> {
     fn send(
         &self,
         wire: &WireRequest,
+        endpoint: &str,
         signing_name: &str,
         region: &str,
         credentials: &Credentials,
@@ -223,20 +252,30 @@ impl<'a> Caller<'a> {
             request.headers.push(("host".into(), host));
             sign_request(&mut request, credentials, region, signing_name, (self.now)())?;
             let outcome = self.transport.send(&request);
-            let retry = match &outcome {
-                Err(_) => true,
-                Ok(r) => {
+            let (retry, attempts) = match &outcome {
+                Err(_) => (true, UNANSWERED_ATTEMPTS),
+                Ok(r) => (
                     r.status == 429
                         || r.status >= 500
-                        || error_of(r, &Body::parse(&r.body)).is_some_and(|e| THROTTLING.contains(&e.code.as_str()))
-                }
+                        || error_of(r, &Body::parse(&r.body)).is_some_and(|e| THROTTLING.contains(&e.code.as_str())),
+                    ATTEMPTS,
+                ),
             };
-            if !retry || attempt >= ATTEMPTS {
-                return outcome;
+            if !retry || attempt >= attempts {
+                // Name the endpoint: "failed to lookup address information" alone does not say which one.
+                return outcome.map_err(|e| {
+                    Unanswered {
+                        host: endpoint.to_string(),
+                        tries: attempt,
+                        kind: unanswered_kind(&e),
+                        detail: format!("{e:#}"),
+                    }
+                    .into()
+                });
             }
             let wait = self
                 .backoff
-                .saturating_mul(1 << (attempt - 1))
+                .saturating_mul(1 << (attempt - 1).min(16))
                 .min(Duration::from_secs(20));
             std::thread::sleep(wait);
         }
@@ -381,6 +420,87 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("usageMetrics"));
         assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+    }
+
+    /// Gives no answer (as when a name does not resolve) for its first `down` tries.
+    struct Unreachable {
+        down: usize,
+        calls: AtomicUsize,
+    }
+
+    impl Transport for Unreachable {
+        fn send(&self, _: &HttpRequest) -> Result<HttpResponse> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) < self.down {
+                return Err(ureq::Error::Io(std::io::Error::other("failed to lookup address information")).into());
+            }
+            Ok(HttpResponse {
+                status: 200,
+                headers: vec![],
+                body: b"<R/>".to_vec(),
+            })
+        }
+    }
+
+    fn describe_cache_clusters(transport: &Unreachable) -> Result<Vec<Body>> {
+        let mut caller = Caller::new(CallPlan::embedded(), transport, vec![]);
+        caller.backoff = Duration::ZERO;
+        caller.call(
+            "aws-cost-collect",
+            &account(),
+            "ap-southeast-1",
+            "elasticache",
+            "DescribeCacheClusters",
+            json!({"MaxRecords": 100}),
+        )
+    }
+
+    #[test]
+    fn rides_out_a_network_that_is_briefly_gone() {
+        let transport = Unreachable {
+            down: 8,
+            calls: AtomicUsize::new(0),
+        };
+        describe_cache_clusters(&transport).unwrap();
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 9);
+    }
+
+    #[test]
+    fn names_the_host_that_never_answered() {
+        let transport = Unreachable {
+            down: usize::MAX,
+            calls: AtomicUsize::new(0),
+        };
+        let err = describe_cache_clusters(&transport).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "no answer from elasticache.ap-southeast-1.amazonaws.com after 10 tries: io: failed to lookup address information"
+        );
+        assert_eq!(err.downcast_ref::<Unanswered>().unwrap().kind, "dns");
+    }
+
+    #[test]
+    fn the_host_it_names_never_carries_a_bucket() {
+        let transport = Unreachable {
+            down: usize::MAX,
+            calls: AtomicUsize::new(0),
+        };
+        let mut caller = Caller::new(CallPlan::embedded(), &transport, vec![]);
+        caller.backoff = Duration::ZERO;
+        let err = caller
+            .call(
+                "x",
+                &account(),
+                "eu-north-1",
+                "s3",
+                "GetBucketAcl",
+                json!({"Bucket": "payroll-exports"}),
+            )
+            .unwrap_err();
+        assert!(!err.to_string().contains("payroll-exports"), "{err}");
+        assert_eq!(
+            err.downcast_ref::<Unanswered>().unwrap().host,
+            "s3.eu-north-1.amazonaws.com"
+        );
     }
 
     /// Records the URL and host of what it is sent.

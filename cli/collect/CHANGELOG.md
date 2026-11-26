@@ -10,6 +10,15 @@ has lines.
 
 ## [Unreleased]
 
+- A request that gets no answer at all (a name that does not resolve, a dropped connection) is now tried ten times
+  over about a minute and a half, not six times over fifteen seconds, so a network or VPN that reconnects no longer
+  costs a collector its region. The error names the service endpoint it could not reach.
+- The manifest's `failures` no longer carry an error's own text, which could name a role, a bucket or a query. Each
+  is now fixed words (`086307192996 ap-southeast-1 elasticache: dns elasticache.ap-southeast-1.amazonaws.com`), and
+  the new `errors` list has the same field by field: account, region, collector, kind, and an AWS status and error
+  code or the endpoint. The full error stays in this machine's log. Every collector that stops is now logged; before,
+  some only reached the manifest.
+
 ## [0.1.1] - 2026-11-23
 
 - `run --every` takes `1h` as well as `1`, the form the docs and the UI show; before, `1h` was refused.

@@ -48,7 +48,8 @@ impl Client {
         // As the AWS SDKs (and aws-config, for STS) honour it: everything goes to that endpoint instead of AWS.
         caller.endpoint = std::env::var("AWS_ENDPOINT_URL").ok().filter(|e| !e.trim().is_empty());
         let home = &self.config.home_region;
-        let mut failures = Vec::new();
+        // What stops before and after the hourly collectors; put ahead of theirs at the end.
+        let mut early = collect::Outcome::default();
         let mut accounts = Vec::new();
         if self.config.accounts.is_empty() {
             let credentials = self.credentials.ambient()?;
@@ -62,13 +63,12 @@ impl Client {
                         id: a.id.clone(),
                         credentials,
                     }),
-                    Err(e) => {
-                        log::warn(
-                            "account skipped",
-                            &[("account", a.id.clone()), ("error", format!("{e:#}"))],
-                        );
-                        failures.push(format!("{}: could not assume {}: {e:#}", a.id, a.role_arn));
-                    }
+                    Err(e) => early.fail(
+                        &a.id,
+                        "",
+                        collect::ASSUME_ROLE,
+                        &e.context(format!("could not assume {}", a.role_arn)),
+                    ),
                 }
             }
         }
@@ -94,7 +94,7 @@ impl Client {
         let mut outcome = run.collect(&accounts, &regions);
         if daily && let Some(c) = &self.config.cur {
             match self.payer(c, &accounts) {
-                Err(e) => failures.push(format!("{} {} cur: {e:#}", c.account, c.region)),
+                Err(e) => early.fail(&c.account, &c.region, "cur", &e),
                 Ok(payer) => {
                     match self.read_bill(&caller, c, &payer, now) {
                         Ok((cur, rows)) => {
@@ -102,22 +102,16 @@ impl Client {
                             let today = now.to_zoned(jiff::tz::TimeZone::UTC).date().to_string();
                             for account in &accounts {
                                 if let Err(e) = collect::infra::collect(&run, account, &rows, &today) {
-                                    failures.push(format!("{} infra: {e:#}", account.id));
+                                    early.fail(&account.id, "", "infra", &e);
                                 }
                             }
                         }
-                        Err(e) => {
-                            log::warn(
-                                "bill not read",
-                                &[("account", c.account.clone()), ("error", format!("{e:#}"))],
-                            );
-                            failures.push(format!("{} {} cur: {e:#}", c.account, c.region));
-                        }
+                        Err(e) => early.fail(&c.account, &c.region, "cur", &e),
                     }
                     if c.forecast {
                         match collect::forecast::collect(&caller, &payer, now, collect::forecast::PREDICTION_INTERVAL) {
                             Ok(f) => outcome.forecast = Some(f),
-                            Err(e) => failures.push(format!("{} forecast: {e:#}", c.account)),
+                            Err(e) => early.fail(&c.account, "", "forecast", &e),
                         }
                     }
                 }
@@ -126,11 +120,12 @@ impl Client {
         if daily && self.config.carbon {
             for account in &accounts {
                 if let Err(e) = collect::carbon::collect(&caller, account, now) {
-                    failures.push(format!("{} carbon: {e:#}", account.id));
+                    early.fail(&account.id, "", "carbon", &e);
                 }
             }
         }
-        outcome.failures.splice(0..0, failures);
+        outcome.failures.splice(0..0, early.failures);
+        outcome.stopped.splice(0..0, early.stopped);
         let records = caller.into_records();
         let meta = SnapshotMeta {
             tool_version: env!("CARGO_PKG_VERSION").into(),

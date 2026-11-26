@@ -4,7 +4,7 @@
 //! entries, fixed times and modes): the same snapshot and config give the same bytes.
 
 use crate::callplan::CallPlan;
-use crate::collect::Outcome;
+use crate::collect::{Outcome, Stopped};
 use crate::config::{Config, TagDefault};
 use crate::identifiers::{IdStats, Identifiers};
 use crate::pseudonym::Pseudonymizer;
@@ -38,8 +38,11 @@ pub struct Manifest {
     pub collected_at: jiff::Timestamp,
     pub accounts: Vec<String>,
     pub regions: Vec<String>,
-    /// Collectors that stopped early, by account and region.
+    /// Collectors that stopped early, one line each: [`Stopped::line`] of `errors`.
     pub failures: Vec<String>,
+    /// The same collectors, field by field and in fixed words only: an error's own text never leaves.
+    #[serde(default)]
+    pub errors: Vec<Stopped>,
     /// The bill queries this bundle answers: qloudpulse replays them with these periods and scope tag keys.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cur: Option<crate::collect::cur::CurOutcome>,
@@ -167,9 +170,19 @@ pub fn pack(
         accounts,
         regions,
         failures,
+        stopped,
         cur,
         forecast,
     } = outcome;
+    // A snapshot written before `stopped` existed has only the full text, which stays here.
+    let failures: Vec<String> = if stopped.is_empty() {
+        failures
+            .iter()
+            .map(|_| "a collector stopped; this machine's log has the detail".to_string())
+            .collect()
+    } else {
+        stopped.iter().map(Stopped::line).collect()
+    };
     let manifest = Manifest {
         schema_version: SCHEMA_VERSION.into(),
         tool: "qloudpulse-collect".into(),
@@ -182,6 +195,7 @@ pub fn pack(
         accounts,
         regions,
         failures,
+        errors: stopped,
         cur,
         forecast,
         files,
@@ -393,9 +407,7 @@ mod tests {
             outcome: Outcome {
                 accounts: vec!["111122223333".into()],
                 regions: vec!["eu-west-1".into()],
-                failures: vec![],
-                cur: None,
-                forecast: None,
+                ..Outcome::default()
             },
         };
         let tagged = "<R><tagSet><item><key>Owner</key><value>alice</value></item></tagSet></R>";

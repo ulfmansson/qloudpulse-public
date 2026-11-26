@@ -31,6 +31,32 @@ pub trait Transport: Send + Sync {
     fn send(&self, request: &HttpRequest) -> Result<HttpResponse>;
 }
 
+/// Why a request got no answer, as one fixed word: `dns`, `timeout`, `connect`, `tls` or `network`. The error's own
+/// text stays out of it, so the word can leave in a manifest.
+pub fn unanswered_kind(error: &anyhow::Error) -> &'static str {
+    use std::io::ErrorKind as K;
+    for cause in error.chain() {
+        let Some(e) = cause.downcast_ref::<ureq::Error>() else {
+            continue;
+        };
+        return match e {
+            ureq::Error::HostNotFound => "dns",
+            ureq::Error::Timeout(_) => "timeout",
+            ureq::Error::ConnectionFailed => "connect",
+            ureq::Error::Tls(_) | ureq::Error::TlsRequired => "tls",
+            // The system resolver's failure arrives as a plain I/O error.
+            ureq::Error::Io(io) if io.to_string().contains("lookup address") => "dns",
+            ureq::Error::Io(io) => match io.kind() {
+                K::TimedOut => "timeout",
+                K::ConnectionRefused | K::ConnectionReset | K::ConnectionAborted | K::NotConnected => "connect",
+                _ => "network",
+            },
+            _ => "network",
+        };
+    }
+    "network"
+}
+
 /// The real one, over HTTPS.
 pub struct UreqTransport {
     agent: ureq::Agent,

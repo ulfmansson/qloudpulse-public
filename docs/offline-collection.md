@@ -89,7 +89,9 @@ Without our database the client plans its own calls:
   `x-amz-crc32` are not recorded, since a redacted body would fail them.
 - `manifest.json`: tool version, `schema_version` (semver), `call_plan_version`, `source_id`, collection window, the
   accounts covered, a SHA-256 for every file, a hash and summary of the applied config, the HMAC key fingerprint, and
-  scan results.
+  scan results. A collector that stopped early is listed in `errors` in fixed words only (account, region, collector,
+  a kind such as `dns` or `aws_error`, and an AWS status and error code or the service endpoint): the error's own
+  text, which can name a role or a bucket, stays in the log on your machine.
 - Plain text throughout so a reviewer can `tar -xzf` and `jq` it. The JSON Schema is published in this repo.
 - `pack --encrypt` (opt-in) wraps the finished `.tgz` as a JWE to a qloudpulse public key that is **compiled in and
   pinned**. The customer inspects the plaintext first; its SHA-256 is recorded alongside.

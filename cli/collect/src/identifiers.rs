@@ -149,6 +149,9 @@ impl Identifiers<'_> {
         }
         outcome.accounts = outcome.accounts.iter().map(|a| rewrite(a, &mut resources)).collect();
         outcome.failures = outcome.failures.iter().map(|f| rewrite(f, &mut resources)).collect();
+        for s in outcome.stopped.iter_mut() {
+            s.account = rewrite(&s.account, &mut resources);
+        }
         if let Some(cur) = &mut outcome.cur {
             cur.account = rewrite(&cur.account, &mut resources);
         }
@@ -218,6 +221,12 @@ mod tests {
             accounts: vec!["111122223333".into()],
             regions: vec![],
             failures: vec!["111122223333 eu-west-1 x: y".into()],
+            stopped: vec![crate::collect::Stopped::of(
+                "111122223333",
+                "eu-west-1",
+                "x",
+                &anyhow::anyhow!("y"),
+            )],
         };
         let stats = ids.apply(&mut records, &mut outcome);
 
@@ -274,6 +283,7 @@ mod tests {
         );
         assert_eq!(outcome.accounts, vec![a.clone()]);
         assert!(outcome.failures[0].starts_with(&a));
+        assert_eq!(outcome.stopped[0].account, a);
         assert_eq!(
             stats,
             IdStats {

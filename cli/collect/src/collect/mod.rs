@@ -11,7 +11,7 @@ pub mod forecast;
 pub mod infra;
 
 use crate::aws::Caller;
-use crate::aws::caller::{Account, AwsError};
+use crate::aws::caller::{Account, AwsError, Unanswered};
 use crate::body::Body;
 use crate::log;
 use crate::window::Window;
@@ -23,14 +23,121 @@ use serde_json::Value;
 pub struct Outcome {
     pub accounts: Vec<String>,
     pub regions: Vec<String>,
-    /// `account region collector: error`, for each collector that stopped early.
+    /// `account region collector: error`, for each collector that stopped early. The error is in full, so this
+    /// stays on this machine: the snapshot and the log. What leaves is [`Outcome::stopped`].
     pub failures: Vec<String>,
+    /// The same collectors, in fixed words: what the manifest carries.
+    #[serde(default)]
+    pub stopped: Vec<Stopped>,
     /// What the bill queries read, when this run read the bill.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cur: Option<cur::CurOutcome>,
     /// What the forecast read, when this run read it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forecast: Option<forecast::ForecastOutcome>,
+}
+
+/// One collector that stopped early, in fixed words only. Nothing AWS, the network or this machine said is copied
+/// into it (an error's text can name a role, a bucket, a table or a path), so it can leave in the manifest and be
+/// logged by whoever receives the bundle.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Stopped {
+    pub account: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub region: String,
+    pub collector: String,
+    /// `aws_error`, `dns`, `timeout`, `connect`, `tls`, `network`, `credentials`, `query_failed` or `other`.
+    pub kind: String,
+    /// The HTTP status of an `aws_error`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<u16>,
+    /// The AWS error code of an `aws_error`, e.g. `AccessDenied`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// The service endpoint that gave no answer, from the call plan: `elasticache.ap-southeast-1.amazonaws.com`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+}
+
+/// Collector name for an account whose role could not be assumed.
+pub const ASSUME_ROLE: &str = "assume-role";
+
+impl Stopped {
+    pub fn of(account: &str, region: &str, collector: &str, error: &anyhow::Error) -> Stopped {
+        let mut stopped = Stopped {
+            account: account.to_string(),
+            region: region.to_string(),
+            collector: collector.to_string(),
+            kind: "other".into(),
+            status: None,
+            code: None,
+            host: None,
+        };
+        if let Some(aws) = error.chain().find_map(|c| c.downcast_ref::<AwsError>()) {
+            stopped.kind = "aws_error".into();
+            stopped.status = Some(aws.status);
+            // A code is a name like `AccessDenied`; anything else in its place is not copied.
+            let name = !aws.code.is_empty()
+                && aws.code.len() <= 64
+                && aws
+                    .code
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_');
+            stopped.code = name.then(|| aws.code.clone());
+        } else if let Some(u) = error.chain().find_map(|c| c.downcast_ref::<Unanswered>()) {
+            stopped.kind = u.kind.into();
+            stopped.host = Some(u.host.clone());
+        } else if error.chain().any(|c| c.is::<cur::QueryFailed>()) {
+            stopped.kind = "query_failed".into();
+        } else if collector == ASSUME_ROLE {
+            stopped.kind = "credentials".into();
+        }
+        stopped
+    }
+
+    /// `account region collector: kind status code host`, the parts it has.
+    pub fn line(&self) -> String {
+        let mut line = self.account.clone();
+        for part in [&self.region, &self.collector] {
+            if !part.is_empty() {
+                line.push(' ');
+                line.push_str(part);
+            }
+        }
+        line.push_str(": ");
+        line.push_str(&self.kind);
+        if let Some(status) = self.status {
+            line.push_str(&format!(" {status}"));
+        }
+        for part in [&self.code, &self.host].into_iter().flatten() {
+            line.push(' ');
+            line.push_str(part);
+        }
+        line
+    }
+}
+
+impl Outcome {
+    /// Notes that `collector` stopped: the error in full in the log and in [`Outcome::failures`], which stay here,
+    /// and in fixed words in [`Outcome::stopped`], which leaves. `region` is empty for what has none.
+    pub fn fail(&mut self, account: &str, region: &str, collector: &str, error: &anyhow::Error) {
+        log::warn(
+            "collector stopped",
+            &[
+                ("account", account.to_string()),
+                ("region", region.to_string()),
+                ("collector", collector.to_string()),
+                ("error", format!("{error:#}")),
+            ],
+        );
+        let place = if region.is_empty() {
+            account.to_string()
+        } else {
+            format!("{account} {region}")
+        };
+        self.failures.push(format!("{place} {collector}: {error:#}"));
+        self.stopped.push(Stopped::of(account, region, collector, error));
+    }
 }
 
 pub struct Run<'a> {
@@ -45,24 +152,13 @@ impl Run<'_> {
         let mut outcome = Outcome {
             accounts: accounts.iter().map(|a| a.id.clone()).collect(),
             regions: regions.to_vec(),
-            failures: Vec::new(),
-            cur: None,
-            forecast: None,
+            ..Outcome::default()
         };
         for account in accounts {
             for region in regions {
                 for (name, collector) in cost::COLLECTORS {
                     if let Err(e) = collector(self, account, region) {
-                        log::warn(
-                            "collector stopped",
-                            &[
-                                ("account", account.id.clone()),
-                                ("region", region.clone()),
-                                ("collector", name.to_string()),
-                                ("error", e.to_string()),
-                            ],
-                        );
-                        outcome.failures.push(format!("{} {region} {name}: {e}", account.id));
+                        outcome.fail(&account.id, region, name, &e);
                     }
                 }
             }
@@ -71,7 +167,7 @@ impl Run<'_> {
         for account in accounts {
             for region in regions {
                 if let Err(e) = cost::ecs(self, account, region) {
-                    outcome.failures.push(format!("{} {region} ecs: {e}", account.id));
+                    outcome.fail(&account.id, region, "ecs", &e);
                 }
             }
         }
@@ -208,4 +304,48 @@ fn objects<'a>(value: &'a Value, path: &[&str], out: &mut Vec<&'a Value>) {
 pub fn distinct(items: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     items.into_iter().filter(|i| seen.insert(i.clone())).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn what_leaves_of_a_failure_is_fixed_words_only() {
+        let role = "arn:aws:iam::111122223333:role/payroll-readers";
+        let denied = anyhow::Error::new(AwsError {
+            status: 403,
+            code: "AccessDenied".into(),
+        })
+        .context(format!("User {role}/alice@example.com may not read table salaries"));
+        let assume = anyhow::anyhow!("sts said no to {role}").context(format!("could not assume {role}"));
+        let query = anyhow::Error::new(cur::QueryFailed("FAILED: s3://acme-billing/cur/ not found".into()));
+        let odd_code = anyhow::Error::new(AwsError {
+            status: 400,
+            code: "bucket acme-billing is gone".into(),
+        });
+
+        let mut outcome = Outcome::default();
+        outcome.fail("111122223333", "eu-west-1", "rds", &denied);
+        outcome.fail("111122223333", "", ASSUME_ROLE, &assume);
+        outcome.fail("111122223333", "eu-west-1", "cur", &query);
+        outcome.fail("111122223333", "eu-west-1", "kms", &odd_code);
+
+        let lines: Vec<String> = outcome.stopped.iter().map(Stopped::line).collect();
+        assert_eq!(
+            lines,
+            [
+                "111122223333 eu-west-1 rds: aws_error 403 AccessDenied",
+                "111122223333 assume-role: credentials",
+                "111122223333 eu-west-1 cur: query_failed",
+                "111122223333 eu-west-1 kms: aws_error 400",
+            ]
+        );
+        let leaving = serde_json::to_string(&outcome.stopped).unwrap();
+        for private in ["payroll", "alice", "salaries", "acme-billing", "arn:"] {
+            assert!(!leaving.contains(private), "{private} in {leaving}");
+        }
+        // The full text is still there for the person running it.
+        assert!(outcome.failures[1].contains("could not assume arn:aws:iam::111122223333:role/payroll-readers"));
+    }
 }
