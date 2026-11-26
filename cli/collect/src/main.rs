@@ -371,6 +371,13 @@ fn run(cli: Cli) -> Result<()> {
             let transport = UreqTransport::new();
             let token = deliver::qloudpulse::token(&target.endpoint)?;
             for b in &bundles {
+                if b.is_dir() {
+                    anyhow::bail!(
+                        "{0} is a raw snapshot, not a bundle; nothing was sent. A raw snapshot never leaves: \
+                         `qloudpulse-collect pack {0}` applies your rules and writes the bundle (.tgz) to upload.",
+                        b.display()
+                    );
+                }
                 bundle::open(b).with_context(|| format!("{} is not a valid bundle; nothing was sent", b.display()))?;
                 // With [encrypt], the JWE next to the bundle is sent, never the plaintext.
                 let file = if encrypted {

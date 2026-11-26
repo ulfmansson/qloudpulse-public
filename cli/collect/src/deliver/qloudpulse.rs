@@ -104,7 +104,7 @@ pub fn upload_with(
     bytes: &[u8],
 ) -> Result<String> {
     let response = transport.send(&request(target, token, name, bytes)?)?;
-    let text: String = String::from_utf8_lossy(&response.body).chars().take(300).collect();
+    let text = String::from_utf8_lossy(&response.body);
     let outcome: Result<String> = match response.status {
         200 | 201 => {
             let reference = serde_json::from_str::<serde_json::Value>(&text)
@@ -119,9 +119,60 @@ pub fn upload_with(
             response.status,
             send::missing_token(&target.endpoint)
         )),
-        status => Err(anyhow::anyhow!("qloudpulse answered {status}: {text}")),
+        status => Err(anyhow::anyhow!("{}", refusal(&target.endpoint, status, &text, name))),
     };
     outcome.context("uploading to qloudpulse")
+}
+
+/// What to tell the person when qloudpulse did not take the bundle: where it was sent, what qloudpulse said (its
+/// problem document's title and detail when it sent one), and what to do about it.
+fn refusal(endpoint: &str, status: u16, body: &str, name: &str) -> String {
+    let problem = serde_json::from_str::<serde_json::Value>(body).unwrap_or_default();
+    let field = |k: &str| problem.get(k).and_then(|v| v.as_str()).map(|s| brief(s, 300));
+    let said = match (field("title"), field("detail")) {
+        (Some(title), Some(detail)) => format!("{title}: {detail}"),
+        (Some(one), None) | (None, Some(one)) => one,
+        (None, None) if body.trim().is_empty() => "nothing more".to_string(),
+        (None, None) => brief(body, 300),
+    };
+    let mut out = format!("{endpoint} answered {status}, {said}");
+    if !out.ends_with('.') {
+        out.push('.');
+    }
+    if let Some(about) = field("type").filter(|t| t.starts_with("https://")) {
+        out.push_str(&format!("\n  about this answer: {about}"));
+    }
+    let advice = match status {
+        404 => format!(
+            "this qloudpulse does not take offline bundles: it has no place for them, or they are not turned on for \
+             your company. Nothing is wrong with {name}; it stays where it is and the same command sends it later. \
+             Ask qloudpulse to turn offline collection on, or name another qloudpulse with --endpoint or \
+             [deliver.qloudpulse] endpoint."
+        ),
+        400 | 422 => format!(
+            "qloudpulse read {name} and refused it. `qloudpulse-collect verify` checks it here; a client older than \
+             qloudpulse expects is the usual cause, and `qloudpulse-collect update` gets the newest."
+        ),
+        413 => format!("{name} is larger than qloudpulse takes in one bundle."),
+        429 => "qloudpulse is asking for fewer requests; send it again in a while.".to_string(),
+        500.. => "qloudpulse failed on its side; the bundle is intact, send it again in a while.".to_string(),
+        _ => String::new(),
+    };
+    if !advice.is_empty() {
+        out.push_str(&format!("\n  what to do: {advice}"));
+    }
+    out
+}
+
+/// A server's words for a terminal: one line, printable, at most `max` characters.
+fn brief(text: &str, max: usize) -> String {
+    login::plain(text)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(max)
+        .collect()
 }
 
 #[cfg(test)]
@@ -172,6 +223,37 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn a_refusal_says_where_what_and_what_to_do() {
+        let body = r#"{"type":"https://qloudpulse.com/api-reference.html#problem-not-taking-bundles","title":"Not taking bundles","status":404,"detail":"Offline collection bundles are not taken here.","instance":"/v1/collection-bundles"}"#;
+        let err = upload_with(&Answer(404, body, Mutex::new(vec![])), &target(), TOKEN, "b.tgz", b"x").unwrap_err();
+        let text = format!("{err:#}");
+        assert!(
+            text.contains(
+                "https://api.example.test answered 404, Not taking bundles: Offline collection bundles are not taken here."
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("about this answer: https://qloudpulse.com/api-reference.html#problem-not-taking-bundles")
+        );
+        assert!(text.contains("what to do: this qloudpulse does not take offline bundles"));
+        assert!(text.contains("Nothing is wrong with b.tgz"));
+        assert!(!text.contains('{'), "the JSON itself is not shown: {text}");
+        assert!(!text.contains(TOKEN));
+
+        // Not a problem document: its text, on one line and without control characters.
+        let text = refusal(
+            "https://api.example.test",
+            502,
+            "<html>\x1b[31mBad\n gateway</html>",
+            "b.tgz",
+        );
+        assert!(text.contains("answered 502, <html>"), "{text}");
+        assert!(!text.contains('\x1b'));
+        assert!(text.contains("send it again in a while"));
     }
 
     #[test]

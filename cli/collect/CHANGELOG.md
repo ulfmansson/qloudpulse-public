@@ -10,6 +10,10 @@ has lines.
 
 ## [Unreleased]
 
+- When qloudpulse does not take a bundle, `upload` and `deliver` say where it was sent, what qloudpulse answered in
+  its own words rather than as JSON, and what to do: for instance that this qloudpulse does not take offline bundles
+  and the bundle can be sent later. `upload` given a raw snapshot directory says to `pack` it first.
+
 - A request that gets no answer at all (a name that does not resolve, a dropped connection) is now tried ten times
   over about a minute and a half, not six times over fifteen seconds, so a network or VPN that reconnects no longer
   costs a collector its region. The error names the service endpoint it could not reach.
