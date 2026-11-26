@@ -3,12 +3,13 @@
 
 use super::diff::{self, Row};
 use super::rules::{self, Draft, FIELD_ACTIONS, TAG_ACTIONS, sha256_hex};
-use super::state::{Sample, Shared, lock};
+use super::state::{Cycle, Sample, Shared, lock};
 use crate::analyze;
 use crate::bundle::{self, Manifest};
 use crate::config::{Config, FEATURE_TAGS, REQUIRED_FIELDS};
 use crate::pseudonym::Pseudonymizer;
 use crate::record::Record;
+use crate::run::Phase;
 use crate::scan::{ScanReport, Severity};
 use anyhow::{Context, Result, bail};
 use askama::Template;
@@ -33,9 +34,19 @@ pub struct Head {
     pub source_id: String,
     pub fingerprint: String,
     pub config_path: String,
-    pub run_line: String,
+    /// This process also runs the `run` loop (`run --ui`).
+    pub under_run: bool,
+    /// The strip under the header: what the client is doing now, how the last cycle went, when the next one is.
+    pub status: Status,
+    /// The qloudpulse web app, for the links in the header; `None` shows none (always so in a build without the
+    /// upload, unless the config names an app).
+    pub app: Option<String>,
+    pub collectors_page: &'static str,
     pub csrf: String,
-    /// Reload the page every few seconds, while a sample is being collected.
+    /// The page shows what the status strip follows (cycles, bundles, the sample): the script loads it again when
+    /// a cycle or the sample starts or ends.
+    pub live: bool,
+    /// Without the script: reload the page every few seconds, while a sample is being collected.
     pub refresh: bool,
     /// A newer release of the client, when one is out.
     pub newer: Option<String>,
@@ -48,23 +59,6 @@ fn head(s: &Shared, title: &'static str, active: &'static str, config: Option<&C
             .unwrap_or_else(|_| "no key yet: run init".into()),
         None => "unknown".into(),
     };
-    let run_line = match &s.run {
-        Some(run) => {
-            let r = lock(run);
-            match (&r.next, r.cycles.front()) {
-                (None, Some(c)) if c.finished.is_none() => {
-                    format!(
-                        "under run --every {}h · a cycle is running since {}",
-                        r.every_hours,
-                        hm(c.started)
-                    )
-                }
-                (Some(next), _) => format!("under run --every {}h · next run {} UTC", r.every_hours, hm(*next)),
-                _ => format!("under run --every {}h", r.every_hours),
-            }
-        }
-        None => "ui only: this process runs no collection".into(),
-    };
     Head {
         title,
         active,
@@ -74,11 +68,163 @@ fn head(s: &Shared, title: &'static str, active: &'static str, config: Option<&C
         source_id: config.map(|c| c.source_id.clone()).unwrap_or_else(|| "?".into()),
         fingerprint,
         config_path: s.config_path.display().to_string(),
-        run_line,
+        under_run: s.run.is_some(),
+        status: status_of(s),
+        app: config.and_then(Config::app),
+        collectors_page: crate::config::COLLECTORS_PAGE,
         csrf: s.csrf.clone(),
+        live: false,
         refresh: false,
         newer: lock(&s.newer).clone(),
     }
+}
+
+/// How the last finished cycle went.
+pub struct LastCycle {
+    pub result: &'static str,
+    pub class: &'static str,
+    /// RFC 3339, for the page's script, and the same in UTC for a page without it.
+    pub at: String,
+    pub at_utc: String,
+    pub bundle: String,
+    pub error: String,
+}
+
+/// The status strip. It is part of every page, and `/status` answers it alone so the page's script can keep it
+/// current without loading the page again.
+#[derive(Template)]
+#[template(path = "status.html")]
+pub struct Status {
+    /// `running`, `waiting` or `idle`.
+    pub class: &'static str,
+    pub label: &'static str,
+    pub text: String,
+    /// While a cycle runs: when it started (RFC 3339, and UTC as text).
+    pub since: String,
+    pub since_utc: String,
+    /// How far the cycle is, as `step` of `steps`; no bar when `steps` is 0.
+    pub step: usize,
+    pub steps: usize,
+    /// The next run (RFC 3339, and UTC as text); empty when none is set.
+    pub next: String,
+    pub next_utc: String,
+    pub last: Option<LastCycle>,
+    /// A sample being collected: where it is. Empty otherwise.
+    pub sample: String,
+    pub sample_step: usize,
+    pub sample_steps: usize,
+    /// Changes when a cycle or the sample starts or ends.
+    pub rev: String,
+}
+
+fn rfc3339(t: Timestamp) -> String {
+    t.strftime("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// How far a phase is through the reading of the accounts: `(step, steps)`, or `(0, 0)` when it does not say.
+fn steps(phase: &Phase) -> (usize, usize) {
+    match phase {
+        Phase::Collecting {
+            part,
+            account,
+            accounts,
+            region,
+            regions,
+            ..
+        } => {
+            // Two passes over every account and region: the inventory, then ECS.
+            let pass = accounts * regions;
+            let done = (account - 1) * regions + (region - 1);
+            (if *part == "ECS" { pass + done } else { done }, 2 * pass)
+        }
+        _ => (0, 0),
+    }
+}
+
+/// `ok`, `failed`, ... and the class that colours it.
+fn cycle_result(c: &Cycle) -> (&'static str, &'static str) {
+    match (&c.finished, &c.error) {
+        (None, _) => ("running", "muted"),
+        (Some(_), Some(_)) => ("failed", "bad"),
+        (Some(_), None) if !c.pending.is_empty() => ("delivery pending", "warn"),
+        (Some(_), None) if c.already_collected => ("already collected", "muted"),
+        _ => ("ok", "ok"),
+    }
+}
+
+pub fn status_of(s: &Shared) -> Status {
+    let mut st = Status {
+        class: "idle",
+        label: "UI only",
+        text: "this process runs no collection. Start it as qloudpulse-collect run --ui to collect every hour.".into(),
+        since: String::new(),
+        since_utc: String::new(),
+        step: 0,
+        steps: 0,
+        next: String::new(),
+        next_utc: String::new(),
+        last: None,
+        sample: String::new(),
+        sample_step: 0,
+        sample_steps: 0,
+        rev: String::new(),
+    };
+    let mut rev = String::new();
+    if let Some(run) = &s.run {
+        let r = lock(run);
+        let running = r.cycles.front().filter(|c| c.finished.is_none());
+        match running {
+            Some(c) => {
+                st.class = "running";
+                st.label = "Cycle running";
+                st.text = c.phase.to_string();
+                st.since = rfc3339(c.started);
+                st.since_utc = hm(c.started);
+                (st.step, st.steps) = steps(&c.phase);
+            }
+            None => {
+                st.class = "waiting";
+                st.label = "Waiting";
+                st.text = format!("run --every {}h", r.every_hours);
+            }
+        }
+        if let Some(next) = r.next {
+            st.next = rfc3339(next);
+            st.next_utc = format!("{} UTC", hm(next));
+        }
+        st.last = r.cycles.iter().find_map(|c| {
+            let finished = c.finished?;
+            let (result, class) = cycle_result(c);
+            Some(LastCycle {
+                result,
+                class,
+                at: rfc3339(finished),
+                at_utc: format!("{} UTC", hm(finished)),
+                bundle: c.bundle.clone().unwrap_or_default(),
+                error: c.error.clone().unwrap_or_default(),
+            })
+        });
+        if let Some(c) = r.cycles.front() {
+            rev = format!("{}-{}", c.started.as_second(), c.finished.is_some());
+        }
+    }
+    let sample = match &*lock(&s.sample) {
+        Sample::None => "none",
+        Sample::Collecting { phase, .. } => {
+            st.sample = phase.to_string();
+            (st.sample_step, st.sample_steps) = steps(phase);
+            "collecting"
+        }
+        Sample::Ready { .. } => "ready",
+        Sample::Failed { .. } => "failed",
+    };
+    st.rev = format!("{rev}-{sample}");
+    st
+}
+
+/// The status strip alone, for the page's script.
+pub fn status(s: &Shared) -> Response {
+    html(status_of(s))
 }
 
 #[derive(Template)]
@@ -466,24 +612,26 @@ struct AnalyzeView {
     source: String,
     sample_state: &'static str,
     sample_line: String,
+    /// While the sample is being collected: where it is. The status strip's script keeps it current.
+    sample_phase: String,
     report: Option<ReportView>,
     show_values: bool,
     note: String,
 }
 
-fn sample_status(s: &Shared) -> (&'static str, String) {
-    match &*lock(&s.sample) {
+fn sample_status(s: &Shared) -> (&'static str, String, String) {
+    let (state, line) = match &*lock(&s.sample) {
         Sample::None => (
             "none",
             "No sample in memory. Collect one to see raw tag values and to preview rules on real answers.".into(),
         ),
-        Sample::Collecting { since } => (
-            "collecting",
-            format!(
-                "Collecting into memory since {} UTC. Under run, a running cycle finishes first.",
-                hm(*since)
-            ),
-        ),
+        Sample::Collecting { since, phase } => {
+            return (
+                "collecting",
+                format!("Collecting into memory since {} UTC:", hm(*since)),
+                phase.to_string(),
+            );
+        }
         Sample::Ready {
             at,
             origin,
@@ -502,7 +650,8 @@ fn sample_status(s: &Shared) -> (&'static str, String) {
             ),
         ),
         Sample::Failed { at, error } => ("failed", format!("The sample at {} failed: {error}", when(*at))),
-    }
+    };
+    (state, line, String::new())
 }
 
 pub fn analyze(s: &Shared, q: &HashMap<String, String>) -> Response {
@@ -525,7 +674,7 @@ fn analyze_page(s: &Shared, q: &HashMap<String, String>) -> Result<Response> {
             value: name,
         });
     }
-    let (sample_state, sample_line) = sample_status(s);
+    let (sample_state, sample_line, sample_phase) = sample_status(s);
     let mut note = String::new();
     let report = if source == "sample" {
         match &*lock(&s.sample) {
@@ -573,6 +722,7 @@ fn analyze_page(s: &Shared, q: &HashMap<String, String>) -> Result<Response> {
     };
     let mut h = head(s, "Analyze", "analyze", Some(&config));
     h.refresh = sample_state == "collecting";
+    h.live = h.refresh;
     Ok(html(AnalyzeView {
         head: h,
         snapshots: raw_snapshots(&config),
@@ -580,6 +730,7 @@ fn analyze_page(s: &Shared, q: &HashMap<String, String>) -> Result<Response> {
         source,
         sample_state,
         sample_line,
+        sample_phase,
         report,
         show_values,
         note,
@@ -1229,8 +1380,10 @@ fn bundles_page(s: &Shared) -> Result<Response> {
             }
         })
         .collect();
+    let mut h = head(s, "Bundles", "bundles", Some(&config));
+    h.live = true;
     Ok(html(BundlesView {
-        head: head(s, "Bundles", "bundles", Some(&config)),
+        head: h,
         output_dir: config.output_dir.display().to_string(),
         keep: config.run.keep_bundles,
         targets: targets(&config),
@@ -1500,6 +1653,8 @@ pub struct CycleRow {
     pub took: String,
     pub result: &'static str,
     pub class: &'static str,
+    /// Under the result: where a running cycle is, or why one collected nothing.
+    pub detail: String,
     pub bundle: String,
     pub error: String,
     pub pending: Vec<String>,
@@ -1526,6 +1681,8 @@ struct RunsView {
     every: u32,
     since: String,
     next: String,
+    /// The next run as RFC 3339, for the page's script; empty while a cycle runs.
+    next_at: String,
     cycles: Vec<CycleRow>,
     history: Vec<HistoryRow>,
     minute: u32,
@@ -1537,20 +1694,22 @@ pub fn runs(s: &Shared) -> Response {
 
 fn runs_page(s: &Shared) -> Result<Response> {
     let (config, _) = load(s)?;
-    let (under_run, every, since, next, cycles) = match &s.run {
+    let (under_run, every, since, next, next_at, cycles) = match &s.run {
         Some(run) => {
             let r = lock(run);
             let cycles = r
                 .cycles
                 .iter()
                 .map(|c| {
-                    let (result, class) = match (&c.finished, &c.error) {
-                        (None, _) => ("running", "muted"),
-                        (Some(_), Some(_)) => ("failed", "bad"),
-                        (Some(_), None) if !c.pending.is_empty() => ("delivery pending", "warn"),
-                        _ => ("ok", "ok"),
-                    };
+                    let (result, class) = cycle_result(c);
                     CycleRow {
+                        detail: match c.finished {
+                            None => c.phase.to_string(),
+                            Some(_) if c.already_collected => {
+                                "this hour's bundle was already here, so nothing was collected again".into()
+                            }
+                            Some(_) => String::new(),
+                        },
                         started: when(c.started),
                         took: c
                             .finished
@@ -1569,10 +1728,18 @@ fn runs_page(s: &Shared) -> Result<Response> {
                 r.every_hours,
                 when(r.since),
                 r.next.map(when).unwrap_or_else(|| "now: a cycle is running".into()),
+                r.next.map(rfc3339).unwrap_or_default(),
                 cycles,
             )
         }
-        None => (false, config.run.every_hours, String::new(), String::new(), vec![]),
+        None => (
+            false,
+            config.run.every_hours,
+            String::new(),
+            String::new(),
+            String::new(),
+            vec![],
+        ),
     };
     let state = delivered(&config.output_dir);
     let history = bundle_names(&config)?
@@ -1619,12 +1786,15 @@ fn runs_page(s: &Shared) -> Result<Response> {
             }
         })
         .collect();
+    let mut h = head(s, "Run history", "runs", Some(&config));
+    h.live = true;
     Ok(html(RunsView {
-        head: head(s, "Run history", "runs", Some(&config)),
+        head: h,
         under_run,
         every,
         since,
         next,
+        next_at,
         cycles,
         history,
         minute: config.run.minute,

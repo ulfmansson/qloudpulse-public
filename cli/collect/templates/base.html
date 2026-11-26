@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-{% if head.refresh %}<meta http-equiv="refresh" content="3">{% endif %}
+{% if head.refresh %}<noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}
 <title>{{ head.title }} · qloudpulse-collect</title>
 <link rel="icon" href="/assets/mark.svg">
 <link rel="stylesheet" href="/assets/app.css">
 <script src="/assets/app.js" defer></script>
 </head>
-<body>
+<body{% if head.live %} data-live{% endif %}>
 <header class="top">
   <div class="row1">
     <div class="brand">
@@ -31,13 +31,17 @@
       <a href="/bundles"{% if head.active == "bundles" %} class="on" aria-current="page"{% endif %}>Bundles</a>
       <a href="/runs"{% if head.active == "runs" %} class="on" aria-current="page"{% endif %}>Run history</a>
     </nav>
-    <div class="runstate">{{ head.run_line }} · config <code>{{ head.config_path }}</code></div>
+    <div class="runstate">
+      {% if let Some(app) = head.app %}<span class="ext" title="Opens qloudpulse in a new tab. Nothing about this page goes with the click: no referrer, and no way back into this tab."><a href="{{ app }}" target="_blank" rel="noreferrer noopener">qloudpulse ↗</a><a href="{{ app }}{{ head.collectors_page }}" target="_blank" rel="noreferrer noopener">Collectors in qloudpulse ↗</a></span>{% endif %}
+      <span>config <code>{{ head.config_path }}</code></span>
+    </div>
   </div>
 </header>
+{{ head.status|safe }}
 <main>
 {% if let Some(newer) = head.newer %}<div class="note warn">{{ newer }}</div>{% endif %}
 {% block content %}{% endblock %}
 </main>
-<footer>qloudpulse-collect {{ head.version }}. This page talks to nothing but this address: every asset is part of the binary, and the raw sample lives in this process's memory only.</footer>
+<footer>qloudpulse-collect {{ head.version }}. This page talks to nothing but this address{% if head.app.is_some() %} (the links to qloudpulse open only when you click them, and carry no referrer){% endif %}: every asset is part of the binary, and the raw sample lives in this process's memory only.</footer>
 </body>
 </html>

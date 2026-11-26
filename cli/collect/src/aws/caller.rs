@@ -80,6 +80,11 @@ impl<'a> Caller<'a> {
         }
     }
 
+    /// How many answers are recorded so far.
+    pub fn recorded(&self) -> usize {
+        self.records.lock().map(|r| r.len()).unwrap_or(0)
+    }
+
     pub fn into_records(self) -> Vec<Record> {
         self.records
             .into_inner()

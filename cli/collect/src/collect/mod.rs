@@ -14,6 +14,7 @@ use crate::aws::Caller;
 use crate::aws::caller::{Account, AwsError};
 use crate::body::Body;
 use crate::log;
+use crate::run::Phase;
 use crate::window::Window;
 use anyhow::Result;
 use serde_json::Value;
@@ -38,9 +39,25 @@ pub struct Run<'a> {
     pub window: Window,
     /// Also read the 90-day spot price history (once a day).
     pub spot_history: bool,
+    /// Told before each account and region is read (the local UI shows it).
+    pub progress: Option<&'a (dyn Fn(Phase) + Send + Sync)>,
 }
 
 impl Run<'_> {
+    fn at(&self, part: &'static str, accounts: &[Account], regions: &[String], account: usize, region: usize) {
+        if let Some(tell) = self.progress {
+            tell(Phase::Collecting {
+                part,
+                account: account + 1,
+                accounts: accounts.len(),
+                region: region + 1,
+                regions: regions.len(),
+                region_name: regions[region].clone(),
+                records: self.caller.recorded(),
+            });
+        }
+    }
+
     pub fn collect(&self, accounts: &[Account], regions: &[String]) -> Outcome {
         let mut outcome = Outcome {
             accounts: accounts.iter().map(|a| a.id.clone()).collect(),
@@ -49,8 +66,9 @@ impl Run<'_> {
             cur: None,
             forecast: None,
         };
-        for account in accounts {
-            for region in regions {
+        for (a, account) in accounts.iter().enumerate() {
+            for (r, region) in regions.iter().enumerate() {
+                self.at("inventory", accounts, regions, a, r);
                 for (name, collector) in cost::COLLECTORS {
                     if let Err(e) = collector(self, account, region) {
                         log::warn(
@@ -68,8 +86,9 @@ impl Run<'_> {
             }
         }
         // ECS after all inventory, as qloudpulse's collector does.
-        for account in accounts {
-            for region in regions {
+        for (a, account) in accounts.iter().enumerate() {
+            for (r, region) in regions.iter().enumerate() {
+                self.at("ECS", accounts, regions, a, r);
                 if let Err(e) = cost::ecs(self, account, region) {
                     outcome.failures.push(format!("{} {region} ecs: {e}", account.id));
                 }

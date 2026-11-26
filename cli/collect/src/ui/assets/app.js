@@ -1,10 +1,65 @@
 // qloudpulse-collect's local UI. The pages work without this file; it only saves clicks: a select that picks a view
-// submits itself, and the rules editor refreshes its preview, the file it would save and its errors as you type.
+// submits itself, the status strip keeps itself current (asking this server only), and the rules editor refreshes its
+// preview, the file it would save and its errors as you type.
 "use strict";
 (function () {
   document.querySelectorAll("select[data-autosubmit]").forEach(function (s) {
     s.addEventListener("change", function () { s.form.submit(); });
   });
+
+  // The status strip. The server writes every time in UTC; here each also gets the browser's local time, the next
+  // run a countdown and a running cycle its seconds.
+  function two(n) { return (n < 10 ? "0" : "") + n; }
+  function span(secs) {
+    secs = Math.max(0, Math.round(secs));
+    var h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60;
+    if (h > 0) return h + " h " + m + " min";
+    if (m > 0) return m + " min " + two(s) + " s";
+    return s + " s";
+  }
+  function clock() {
+    document.querySelectorAll("time[data-local]").forEach(function (t) {
+      var at = new Date(t.getAttribute("datetime"));
+      if (isNaN(at)) return;
+      if (!t.dataset.utc) t.dataset.utc = t.textContent;
+      var text = t.dataset.utc + " (" + two(at.getHours()) + ":" + two(at.getMinutes()) + " your time)";
+      var away = (at - Date.now()) / 1000;
+      if (t.hasAttribute("data-countdown")) text += away > 0 ? ", in " + span(away) : ", now";
+      if (t.hasAttribute("data-elapsed")) text += ", " + span(-away) + " ago";
+      t.textContent = text;
+    });
+  }
+  clock();
+  setInterval(clock, 1000);
+  var asking = false;
+  function follow() {
+    var strip = document.getElementById("status");
+    if (!strip || asking || document.hidden) return;
+    asking = true;
+    fetch("/status", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.text() : Promise.reject(r.status); })
+      .then(function (html) {
+        var was = strip.dataset.rev;
+        var box = document.createElement("div");
+        box.innerHTML = html; // rendered and escaped by the server
+        var fresh = box.firstElementChild;
+        if (!fresh) return;
+        strip.replaceWith(fresh);
+        clock();
+        // The same words elsewhere on the page: the sample's line on Analyze, the running cycle's row in Run history.
+        [["[data-sample-text]", "[data-sample-phase]"], ["[data-cycle-text]", "[data-cycle-phase]"]].forEach(function (p) {
+          var from = fresh.querySelector(p[0]);
+          document.querySelectorAll(p[1]).forEach(function (el) {
+            if (from) el.textContent = from.textContent;
+          });
+        });
+        // A cycle or the sample started or ended: a page that lists them is out of date.
+        if (fresh.dataset.rev !== was && document.body.hasAttribute("data-live")) location.reload();
+      })
+      .catch(function () { /* the server stopped: the strip keeps what it last said */ })
+      .then(function () { asking = false; });
+  }
+  if (document.getElementById("status")) setInterval(follow, 2000);
 
   var form = document.getElementById("rules-form");
   if (!form) return;

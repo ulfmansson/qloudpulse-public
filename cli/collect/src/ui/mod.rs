@@ -3,8 +3,8 @@
 //!
 //! It exists so people can see what leaves before it leaves: what the client reads, what the rules do with it, every
 //! bundle it wrote and every run. It listens on 127.0.0.1 unless told otherwise, needs the token it prints, and
-//! renders every page on the server; the little script it has only refreshes the rules preview. The raw sample is
-//! held in memory and never written to disk.
+//! renders every page on the server; the little script it has only refreshes the rules preview and the status
+//! strip. The raw sample is held in memory and never written to disk.
 
 mod diff;
 mod pages;
@@ -19,7 +19,7 @@ use crate::aws::UreqTransport;
 use crate::aws::credentials::CredentialSource;
 use crate::config::Config;
 use crate::log;
-use crate::run::{Client, next_run};
+use crate::run::{Client, Phase, Turn, due};
 use anyhow::Result;
 use jiff::Timestamp;
 use state::{Cycle, Sample, lock};
@@ -94,10 +94,12 @@ pub fn client(config_path: &Path, every: Option<u32>) -> Result<Client> {
         credentials,
         transport: Box::new(UreqTransport::new()),
         force_daily: false,
+        progress: None,
     })
 }
 
-/// `run --ui`: the UI, and the clock-aligned loop of `run` beside it. Each cycle reads the config again, so what the
+/// `run --ui`: the UI, and the loop of `run` beside it: a cycle at the start, then one at each aligned time
+/// ([`due`]). Each cycle reads the config again, so what the
 /// rules editor saves applies from the next one; a config that no longer loads keeps the last good one running.
 pub fn run_with_ui(config_path: PathBuf, every: Option<u32>, options: Options) -> Result<()> {
     let mut current = client(&config_path, every)?;
@@ -113,16 +115,19 @@ pub fn run_with_ui(config_path: PathBuf, every: Option<u32>, options: Options) -
         }),
     )?;
     let run = shared.run.as_ref().expect("run --ui keeps a run log");
+    let mut last = None;
     loop {
         let now = Timestamp::now();
-        let next = next_run(now, current.config.run.every_hours, current.config.run.minute);
-        {
-            let mut log_ = lock(run);
-            log_.next = Some(next);
-            log_.every_hours = current.config.run.every_hours;
+        let next = due(now, last, current.config.run.every_hours, current.config.run.minute);
+        if next > now {
+            {
+                let mut log_ = lock(run);
+                log_.next = Some(next);
+                log_.every_hours = current.config.run.every_hours;
+            }
+            log::info("waiting", &[("next", next.to_string())]);
+            std::thread::sleep(std::time::Duration::try_from(next.duration_since(now)).unwrap_or_default());
         }
-        log::info("waiting", &[("next", next.to_string())]);
-        std::thread::sleep(std::time::Duration::try_from(next.duration_since(now)).unwrap_or_default());
         match client(&config_path, every) {
             Ok(c) => current = c,
             Err(e) => log::warn(
@@ -130,22 +135,37 @@ pub fn run_with_ui(config_path: PathBuf, every: Option<u32>, options: Options) -
                 &[("error", format!("{e:#}"))],
             ),
         }
-        // A sample being collected finishes first: the two never call AWS at once.
-        let _collecting = lock(&shared.collector);
+        // The window is the last full hour before this moment, whatever a sample makes the cycle wait.
         let started = Timestamp::now();
+        last = Some(started);
         {
             let mut log_ = lock(run);
             log_.next = None;
+            log_.every_hours = current.config.run.every_hours;
             log_.cycles.push_front(Cycle {
                 started,
+                phase: Phase::Queued,
                 finished: None,
                 bundle: None,
+                already_collected: false,
                 error: None,
                 pending: vec![],
             });
             log_.cycles.truncate(RunLog::KEEP);
         }
-        let result = current.cycle(started);
+        current.progress = Some(Box::new({
+            let shared = shared.clone();
+            move |phase| {
+                if let Some(run) = &shared.run
+                    && let Some(c) = lock(run).cycles.front_mut()
+                {
+                    c.phase = phase;
+                }
+            }
+        }));
+        // A sample being collected finishes first: the two never call AWS at once.
+        let _collecting = lock(&shared.collector);
+        let result = current.turn(started);
         if let Err(e) = &result {
             log::warn("cycle failed", &[("error", format!("{e:#}"))]);
         }
@@ -154,7 +174,10 @@ pub fn run_with_ui(config_path: PathBuf, every: Option<u32>, options: Options) -
         if let Some(c) = log_.cycles.front_mut() {
             c.finished = Some(Timestamp::now());
             match result {
-                Ok(path) => c.bundle = path.file_name().map(|n| n.to_string_lossy().into_owned()),
+                Ok(turn) => {
+                    c.already_collected = matches!(turn, Turn::AlreadyCollected(_));
+                    c.bundle = turn.bundle().file_name().map(|n| n.to_string_lossy().into_owned());
+                }
                 Err(e) => c.error = Some(format!("{e:#}")),
             }
             c.pending = pending;
@@ -192,6 +215,7 @@ pub(crate) fn start_sample(shared: Arc<Shared>) {
         }
         *sample = Sample::Collecting {
             since: Timestamp::now(),
+            phase: Phase::Queued,
         };
     }
     let spawned = std::thread::Builder::new().name("ui-sample".into()).spawn({
@@ -199,7 +223,17 @@ pub(crate) fn start_sample(shared: Arc<Shared>) {
         move || {
             let result = {
                 let _collecting = lock(&shared.collector);
-                client(&shared.config_path, None).and_then(|c| c.collect_in_memory(Timestamp::now()))
+                client(&shared.config_path, None).and_then(|mut c| {
+                    c.progress = Some(Box::new({
+                        let shared = shared.clone();
+                        move |now| {
+                            if let Sample::Collecting { phase, .. } = &mut *lock(&shared.sample) {
+                                *phase = now;
+                            }
+                        }
+                    }));
+                    c.collect_in_memory(Timestamp::now())
+                })
             };
             let mut sample = lock(&shared.sample);
             // Forgotten while it ran: the answer is dropped too.
