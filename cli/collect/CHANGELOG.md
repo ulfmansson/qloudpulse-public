@@ -10,6 +10,11 @@ has lines.
 
 ## [Unreleased]
 
+- `troubleshoot` checks what a run needs and says what to do about each thing that fails: the config, the pseudonym
+  key, the AWS credentials and roles, that every region's endpoint resolves, and what the newest bundle says
+  stopped. With `--qloudpulse` it also checks that qloudpulse knows your token and takes bundles, by sending an empty
+  request.
+
 - When qloudpulse does not take a bundle, `upload` and `deliver` say where it was sent, what qloudpulse answered in
   its own words rather than as JSON, and what to do: for instance that this qloudpulse does not take offline bundles
   and the bundle can be sent later. `upload` given a raw snapshot directory says to `pack` it first.

@@ -21,5 +21,6 @@ pub mod redact;
 pub mod run;
 pub mod scan;
 pub mod snapshot;
+pub mod troubleshoot;
 pub mod ui;
 pub mod window;

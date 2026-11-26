@@ -256,6 +256,21 @@ Each delivery target is opt-in under `[deliver]`:
 | `[deliver.qloudpulse]`, or `qloudpulse-collect upload <bundle>` | HTTPS `POST` of the bundle, signed in exactly as the qloudpulse CLI is: `QLOUDPULSE_TOKEN` (a token from Your tokens, for unattended runs), else the token `qloudpulse login` or `qloudpulse-collect login` kept on this machine (the two share it), else, at a terminal, a sign-in with the browser. qloudpulse keeps only the newest bundle per source. |
 | `[deliver.command]` | Runs your command with `{bundle}` replaced by the bundle's path. |
 
+## When something does not work
+
+```bash
+qloudpulse-collect troubleshoot
+```
+
+checks what a run needs, one thing at a time, and says what to do about each that fails: that the config reads, that
+the pseudonym key is there, that AWS accepts the credentials (and whose they are) and each configured role can be
+assumed, that every region's endpoint resolves from this machine, and what the newest bundle says stopped early. It
+collects nothing and writes nothing, and exits 1 when a check fails.
+
+With `--qloudpulse` (or `[deliver.qloudpulse]` configured) it also checks the upload: that qloudpulse knows your
+token and takes bundles. For that it sends qloudpulse an empty request, no bundle and no data, and reads how it is
+refused. `--endpoint` names another qloudpulse.
+
 ## A build that cannot contact qloudpulse
 
 ```bash

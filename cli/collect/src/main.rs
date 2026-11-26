@@ -13,7 +13,8 @@ use std::path::{Path, PathBuf};
 /// Collects cloud cost data with your own credentials into a bundle you inspect, redact and deliver.
 ///
 /// Nothing is read from qloudpulse. The only time the client contacts qloudpulse is `upload`, or `run` with
-/// [deliver.qloudpulse] configured, and then it sends a finished bundle and nothing else.
+/// [deliver.qloudpulse] configured, and then it sends a finished bundle and nothing else; and `troubleshoot` when it
+/// checks the upload, which sends an empty request.
 #[derive(Parser)]
 #[command(version = env!("QLOUDPULSE_LONG_VERSION"), name = "qloudpulse-collect")]
 struct Cli {
@@ -129,6 +130,18 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Check what a run needs, one thing at a time, and say what to do about each that fails: the config, the key,
+    /// the AWS credentials and roles, that every region's endpoint resolves, and what the newest bundle says stopped.
+    /// Collects and writes nothing. Exits 1 when a check fails.
+    Troubleshoot {
+        /// Also check the upload: that qloudpulse knows your token and takes bundles. Sends qloudpulse an empty
+        /// request, no bundle. Checked without this when [deliver.qloudpulse] is configured.
+        #[arg(long)]
+        qloudpulse: bool,
+        /// The qloudpulse API to check; [deliver.qloudpulse] endpoint, or qloudpulse's own.
+        #[arg(long, requires = "qloudpulse")]
+        endpoint: Option<String>,
+    },
     /// Print the read-only IAM policy the call plan needs (plus S3 delivery, if configured).
     Policy,
     /// Print the compiled-in call plan: every operation the client may call.
@@ -169,6 +182,7 @@ fn checks_for_update(cli: &Cli) -> bool {
         Command::Init
         | Command::Analyze { .. }
         | Command::Verify { .. }
+        | Command::Troubleshoot { .. }
         | Command::Policy
         | Command::CallPlan
         | Command::RotateKey { .. }
@@ -266,6 +280,20 @@ fn run(cli: Cli) -> Result<()> {
                     "created the pseudonym key {}. Back it up: losing it changes every pseudonym.",
                     config.key_file.display()
                 );
+            }
+        }
+        Command::Troubleshoot { qloudpulse, endpoint } => {
+            let report = qloudpulse_collect::troubleshoot::run(
+                &qloudpulse_collect::troubleshoot::Options {
+                    config_path: &cli.config,
+                    qloudpulse,
+                    endpoint,
+                },
+                &UreqTransport::new(),
+            );
+            print!("{}", report.text());
+            if report.failed() {
+                std::process::exit(1);
             }
         }
         Command::Collect { daily } => {
