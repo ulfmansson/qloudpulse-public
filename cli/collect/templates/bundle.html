@@ -26,7 +26,8 @@
       {% for f in files %}<tr><td class="mono small">{{ f.path }}</td><td class="mono small hash">{{ f.sha256 }}</td><td class="num small">{{ f.bytes }}</td><td class="num">{{ f.records }}</td><td class="ok">✓</td></tr>{% endfor %}
     </table>
     <h3>Delivered to</h3>
-    <span class="deliv">{% for d in deliveries %}<span class="dv {% if d.done %}ok{% else %}bad{% endif %}">{{ d.target }} {% if d.done %}✓{% else %}✗ pending{% endif %}</span>{% else %}<span class="muted small">no target configured</span>{% endfor %}</span>
+    <span class="deliv">{% for d in deliveries %}{% if !d.href.is_empty() %}<a class="dv ok" href="{{ d.href }}" target="_blank" rel="noopener noreferrer" title="See on qloudpulse what became of it: checked, then read into your reports">{{ d.target }} ✓ ↗</a>{% else %}<span class="dv {% if d.done %}ok{% else %}bad{% endif %}">{{ d.target }} {% if d.done %}✓{% else %}✗ pending{% endif %}</span>{% endif %}{% else %}<span class="muted small">no target configured</span>{% endfor %}</span>
+    {% for d in deliveries %}{% if !d.href.is_empty() %}<p class="small">qloudpulse has it. Follow it, checked and then read into your reports, under <a href="{{ d.href }}" target="_blank" rel="noopener noreferrer">Bundles arrived on qloudpulse ↗</a></p>{% endif %}{% endfor %}
   </div>
   <div class="panel">
     <h2>Rules applied</h2>

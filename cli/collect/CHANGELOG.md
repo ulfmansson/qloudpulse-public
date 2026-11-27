@@ -10,6 +10,10 @@ has lines.
 
 ## [Unreleased]
 
+- After an upload, the client says where to follow the bundle on qloudpulse: `upload`, `deliver` and `run` print the
+  report site's **Bundles arrived** page with the reference, and in the local UI a delivered `qloudpulse ✓` (Bundles,
+  a bundle's page, Run history) links to it, as does the Bundles page's targets panel.
+
 ## [0.1.1] - 2026-11-23
 
 - `run --every` takes `1h` as well as `1`, the form the docs and the UI show; before, `1h` was refused.

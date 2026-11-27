@@ -440,6 +440,70 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "upload")]
+    #[test]
+    fn a_bundle_qloudpulse_has_links_to_where_it_is_followed() {
+        let dir = tempfile::tempdir().unwrap().keep();
+        // The Bundles page says how an upload would sign in: from a file of the test's, never this machine's keychain.
+        // SAFETY: no other test reads QLOUDPULSE_CREDENTIALS_FILE, and each one setting it would set a missing file.
+        unsafe {
+            std::env::set_var(
+                qloudpulse_stack::credentials::FILE_VARIABLE,
+                dir.join("credentials.json"),
+            )
+        };
+        let path = dir.join("c.toml");
+        let config = format!(
+            "{}\n[deliver.qloudpulse]\nendpoint = \"https://api.qloudpulse.com\"\n\n[deliver.command]\nargv = [\"true\"]\n",
+            crate::config::starter()
+        );
+        std::fs::write(&path, config).unwrap();
+        let bundles = dir.join("bundles");
+        std::fs::create_dir_all(&bundles).unwrap();
+        for name in ["main-2026112702.tgz", "main-2026112703.tgz"] {
+            std::fs::write(bundles.join(name), b"not read for the list").unwrap();
+        }
+        std::fs::write(
+            bundles.join(".delivered.json"),
+            r#"{"main-2026112702.tgz":["qloudpulse","command"],"main-2026112703.tgz":["command"]}"#,
+        )
+        .unwrap();
+        let s = Arc::new(Shared::new(path, "127.0.0.1:7781".parse().unwrap(), vec![], None));
+        let app = router(s.clone());
+        let text = |r: Response| {
+            let bytes = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(axum::body::to_bytes(r.into_body(), usize::MAX))
+                .unwrap();
+            String::from_utf8(bytes.to_vec()).unwrap()
+        };
+        let page = "https:&#x2f;&#x2f;app.qloudpulse.com&#x2f;account&#x2f;aws#aws-offline";
+        let page = |html: &str| {
+            html.replace(page, "PAGE")
+                .replace("https://app.qloudpulse.com/account/aws#aws-offline", "PAGE")
+        };
+        for uri in ["/bundles", "/runs"] {
+            let html = page(&text(call(app.clone(), get(uri, "127.0.0.1:7781", Some(&s.token)))));
+            // The one bundle qloudpulse has links there; the one it lacks, and the command's, do not.
+            assert_eq!(
+                html.matches(r#"<a class="dv ok" href="PAGE" target="_blank" rel="noopener noreferrer""#)
+                    .count(),
+                1,
+                "{uri}: {html}"
+            );
+            assert!(html.contains("qloudpulse ✓ ↗</a>"), "{uri}: {html}");
+            assert!(html.contains(r#"<span class="dv bad">qloudpulse ✗"#), "{uri}: {html}");
+        }
+        let html = page(&text(call(app, get("/bundles", "127.0.0.1:7781", Some(&s.token)))));
+        assert!(
+            html.contains(
+                r#"<a href="PAGE" target="_blank" rel="noopener noreferrer">Bundles arrived on qloudpulse ↗</a>"#
+            ),
+            "{html}"
+        );
+    }
+
     #[test]
     fn a_post_needs_the_form_token_and_our_origin() {
         let (s, app) = app();

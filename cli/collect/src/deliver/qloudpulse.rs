@@ -75,6 +75,15 @@ pub fn token(endpoint: &str) -> Result<String> {
     )
 }
 
+/// The page of the qloudpulse behind `endpoint` that follows each uploaded bundle: Settings, AWS, Offline collection,
+/// whose "Bundles arrived" lists the latest uploads by reference with what became of them (checked, replayed,
+/// refused). `https://app.qloudpulse.com/account/aws#aws-offline` for hosted qloudpulse.
+pub const PROGRESS_PAGE: &str = "/account/aws#aws-offline";
+
+pub fn progress_page(endpoint: &str) -> Result<String> {
+    Ok(format!("{}{PROGRESS_PAGE}", login::origin(endpoint)?))
+}
+
 pub fn request(target: &QloudpulseTarget, token: &str, name: &str, bytes: &[u8]) -> Result<HttpRequest> {
     let endpoint = target.endpoint.trim_end_matches('/');
     send::check_endpoint(endpoint)?;
@@ -105,15 +114,19 @@ pub fn upload_with(
 ) -> Result<String> {
     let response = transport.send(&request(target, token, name, bytes)?)?;
     let text: String = String::from_utf8_lossy(&response.body).chars().take(300).collect();
+    // `request` has already checked the endpoint, so the page is there; the guard only keeps a message whole.
+    let follow = progress_page(&target.endpoint)
+        .map(|page| format!("; follow it at {page}"))
+        .unwrap_or_default();
     let outcome: Result<String> = match response.status {
         200 | 201 => {
             let reference = serde_json::from_str::<serde_json::Value>(&text)
                 .ok()
                 .and_then(|v| v.get("reference").and_then(|r| r.as_str()).map(str::to_string))
                 .unwrap_or_default();
-            Ok(format!("{name} accepted, reference {reference}"))
+            Ok(format!("{name} accepted, reference {reference}{follow}"))
         }
-        409 => Ok(format!("{name} was already delivered")),
+        409 => Ok(format!("{name} was already delivered{follow}")),
         401 | 403 => Err(anyhow::anyhow!(
             "qloudpulse refused the token ({}): {}",
             response.status,
@@ -154,7 +167,10 @@ mod tests {
     fn posts_the_bundle_with_the_token_and_accepts_409() {
         let ok = Answer(201, r#"{"reference":"r1"}"#, Mutex::new(vec![]));
         let detail = upload_with(&ok, &target(), TOKEN, "b.tgz", b"bytes").unwrap();
-        assert!(detail.contains("r1"));
+        assert_eq!(
+            detail,
+            "b.tgz accepted, reference r1; follow it at https://api.example.test/account/aws#aws-offline"
+        );
         let sent = &ok.2.lock().unwrap()[0];
         assert_eq!(sent.url, "https://api.example.test/v1/collection-bundles");
         assert!(
@@ -184,6 +200,23 @@ mod tests {
             endpoint: "http://127.0.0.1:8080".into(),
         };
         assert!(request(&t, "x", "b.tgz", b"").is_ok());
+    }
+
+    #[test]
+    fn the_progress_page_is_on_the_report_site() {
+        assert_eq!(
+            progress_page("https://api.qloudpulse.com").unwrap(),
+            "https://app.qloudpulse.com/account/aws#aws-offline"
+        );
+        assert_eq!(
+            progress_page("https://qloudpulse.example.com/api").unwrap(),
+            "https://qloudpulse.example.com/account/aws#aws-offline"
+        );
+        assert_eq!(
+            progress_page("http://127.0.0.1:8080").unwrap(),
+            "http://127.0.0.1:8080/account/aws#aws-offline"
+        );
+        assert!(progress_page("http://api.example.test").is_err());
     }
 
     #[test]
