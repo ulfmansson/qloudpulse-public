@@ -24,6 +24,10 @@ pub struct Config {
     pub accounts: Vec<AccountConfig>,
     #[serde(default = "default_key_file")]
     pub key_file: PathBuf,
+    /// The view token behind the `encrypt` action (`qp_…`). You enter it in qloudpulse to read encrypted values in
+    /// your browser; qloudpulse never receives it.
+    #[serde(default = "default_view_token_file")]
+    pub view_token_file: PathBuf,
     /// Raw snapshots and the client's own state. Never delivered.
     #[serde(default = "default_work_dir")]
     pub work_dir: PathBuf,
@@ -89,6 +93,9 @@ pub struct TagRules {
     pub drop: Vec<String>,
     #[serde(default)]
     pub pseudonymize: Vec<String>,
+    /// Encrypted with the view token: qloudpulse groups by them, and only someone with the token reads them.
+    #[serde(default)]
+    pub encrypt: Vec<String>,
     #[serde(default)]
     pub replace: Vec<TagReplace>,
 }
@@ -100,6 +107,7 @@ impl Default for TagRules {
             keep: FEATURE_TAGS.iter().map(|(k, _)| k.to_string()).collect(),
             drop: vec![],
             pseudonymize: vec![],
+            encrypt: vec![],
             replace: vec![],
         }
     }
@@ -122,6 +130,7 @@ pub enum FieldAction {
     Drop,
     Replace,
     Pseudonymize,
+    Encrypt,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -317,6 +326,9 @@ fn default_table() -> String {
 fn default_key_file() -> PathBuf {
     "qloudpulse-collect.key".into()
 }
+fn default_view_token_file() -> PathBuf {
+    "qloudpulse-collect.view-token".into()
+}
 fn default_work_dir() -> PathBuf {
     "qloudpulse-collect-work".into()
 }
@@ -363,7 +375,12 @@ impl Config {
         {
             e.public_key_file = base.join(&e.public_key_file);
         }
-        for p in [&mut self.key_file, &mut self.work_dir, &mut self.output_dir] {
+        for p in [
+            &mut self.key_file,
+            &mut self.view_token_file,
+            &mut self.work_dir,
+            &mut self.output_dir,
+        ] {
             if p.is_relative() {
                 *p = base.join(&*p);
             }
@@ -426,11 +443,20 @@ impl Config {
                 TagAction::Keep | TagAction::Replace(_) => None,
                 TagAction::Drop => Some(format!("dropping tag {key} disables {feature}")),
                 TagAction::Pseudonymize => Some(format!("pseudonymizing tag {key} makes {feature} show pseudonyms")),
+                TagAction::Encrypt => Some(format!(
+                    "encrypting tag {key} makes {feature} show encrypted values until the view token is entered, \
+                     and rules in qloudpulse cannot match its values"
+                )),
             })
             .collect()
     }
 
-    /// The action for a tag key. Order: drop, pseudonymize, replace, keep, then the default.
+    /// Whether a rule encrypts, so the view token is needed.
+    pub fn encrypts(&self) -> bool {
+        !self.tags.encrypt.is_empty() || self.fields.iter().any(|f| f.action == FieldAction::Encrypt)
+    }
+
+    /// The action for a tag key. Order: drop, pseudonymize, encrypt, replace, keep, then the default.
     pub fn tag_action(&self, key: &str) -> TagAction {
         // Derived from your own rules before redaction: kept, whatever the default.
         if key == crate::derive::ENV_TAG {
@@ -441,6 +467,8 @@ impl Config {
             TagAction::Drop
         } else if t.pseudonymize.iter().any(|k| k == key) {
             TagAction::Pseudonymize
+        } else if t.encrypt.iter().any(|k| k == key) {
+            TagAction::Encrypt
         } else if let Some(i) = t.replace.iter().position(|r| r.key == key) {
             TagAction::Replace(i)
         } else if t.keep.iter().any(|k| k == key) || t.default == TagDefault::Allow {
@@ -465,6 +493,7 @@ pub enum TagAction {
     Keep,
     Drop,
     Pseudonymize,
+    Encrypt,
     /// Index into `tags.replace`.
     Replace(usize),
 }
@@ -475,6 +504,7 @@ impl TagAction {
             TagAction::Keep => "keep",
             TagAction::Drop => "drop",
             TagAction::Pseudonymize => "pseudonymize",
+            TagAction::Encrypt => "encrypt",
             TagAction::Replace(_) => "replace",
         }
     }
@@ -499,6 +529,9 @@ home_region = "eu-west-1"
 # role_arn = "arn:aws:iam::111122223333:role/qloudpulse-collect"
 
 key_file = "qloudpulse-collect.key"      # created by `init`; back it up: losing it changes every pseudonym
+# The view token (qp_…) behind the encrypt action, created by `init`. Enter it in qloudpulse to read encrypted values
+# in your browser; qloudpulse never receives it. Back it up: without it nobody can read those values again.
+view_token_file = "qloudpulse-collect.view-token"
 work_dir = "qloudpulse-collect-work"     # raw snapshots and state; never delivered
 output_dir = "bundles"
 
@@ -516,6 +549,7 @@ keep = ["Name", "Environment", "Team", "Company", "eks:cluster-name", "aws:eks:c
         "karpenter.sh/nodepool", "eks:nodegroup-name", "aws:autoscaling:groupName"]
 drop = []
 pseudonymize = []   # e.g. ["Owner"]: the same value always gives the same pseudonym, which only you can reverse
+encrypt = []        # e.g. ["Owner"]: sent encrypted; whoever has the view token reads it in qloudpulse's UI
 
 # [[tags.replace]]
 # key = "CostCenter"
@@ -523,7 +557,7 @@ pseudonymize = []   # e.g. ["Owner"]: the same value always gives the same pseud
 # with = "$1"
 
 # Rules for any field, by the end of its path in the answer (list wrappers `item`/`member` left out).
-# Actions: drop, replace (with, optional pattern), pseudonymize. Fields qloudpulse prices from are refused.
+# Actions: drop, replace (with, optional pattern), pseudonymize, encrypt. Fields qloudpulse prices from are refused.
 # [[fields]]
 # path = "privateDnsName"
 # action = "pseudonymize"

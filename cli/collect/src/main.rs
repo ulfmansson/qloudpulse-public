@@ -7,6 +7,7 @@ use qloudpulse_collect::config::{Config, starter};
 use qloudpulse_collect::pseudonym::Pseudonymizer;
 use qloudpulse_collect::run::Client;
 use qloudpulse_collect::snapshot::Snapshot;
+use qloudpulse_collect::view_token::ViewToken;
 use qloudpulse_collect::{analyze, bundle, deliver, log};
 use std::path::{Path, PathBuf};
 
@@ -34,7 +35,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Write a starter config and create the pseudonym key.
+    /// Write a starter config and create the pseudonym key and the view token.
     Init,
     /// Read the accounts into a raw snapshot (local only, never delivered).
     Collect {
@@ -129,6 +130,17 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Print the view token (qp_…) that reads `encrypt` rules' values. Enter it in qloudpulse to see them in your
+    /// browser; qloudpulse never receives it. It is printed on stdout only, so it can go straight into a password
+    /// manager.
+    ViewToken {
+        /// Create the token file first (a config from before `encrypt` existed has none). Refuses to replace one.
+        #[arg(long)]
+        create: bool,
+        /// Print only the key id that names the token, as bundles and qloudpulse show it.
+        #[arg(long, conflicts_with = "create")]
+        key_id: bool,
+    },
     /// Print the read-only IAM policy the call plan needs (plus S3 delivery, if configured).
     Policy,
     /// Print the compiled-in call plan: every operation the client may call.
@@ -180,6 +192,7 @@ fn checks_for_update(cli: &Cli) -> bool {
         | Command::Upload { .. }
         | Command::Run { .. }
         | Command::Ui { .. }
+        | Command::ViewToken { .. }
         | Command::Update { .. } => false,
     };
     asked_by_a_person && !cli.log_json && std::io::stderr().is_terminal()
@@ -265,6 +278,17 @@ fn run(cli: Cli) -> Result<()> {
                 println!(
                     "created the pseudonym key {}. Back it up: losing it changes every pseudonym.",
                     config.key_file.display()
+                );
+            }
+            if config.view_token_file.exists() {
+                println!("{} exists; left as it is", config.view_token_file.display());
+            } else {
+                let token = ViewToken::create(&config.view_token_file)?;
+                println!(
+                    "created the view token {} (key id {}). Back it up: without it nobody can read encrypted values. \
+                     `view-token` prints it.",
+                    config.view_token_file.display(),
+                    token.key_id()
                 );
             }
         }
@@ -432,7 +456,7 @@ fn run(cli: Cli) -> Result<()> {
             if let Some(n) = every {
                 client.config.run.every_hours = n;
             }
-            client.pseudonyms().context("the pseudonym key")?;
+            client.pseudonyms().context("the pseudonym key or the view token")?;
             if once {
                 let path = client.cycle(jiff::Timestamp::now())?;
                 println!("{}", path.display());
@@ -458,6 +482,30 @@ fn run(cli: Cli) -> Result<()> {
                     path.display()
                 ),
                 None => println!("no relink file: history before today will not join what comes after"),
+            }
+        }
+        Command::ViewToken { create, key_id } => {
+            let (config, _) = load(&cli.config)?;
+            let path = &config.view_token_file;
+            let token = if create {
+                let token = ViewToken::create(path)?;
+                eprintln!(
+                    "created the view token {}. Back it up: without it nobody can read encrypted values.",
+                    path.display()
+                );
+                token
+            } else {
+                ViewToken::load(path)?
+            };
+            if key_id {
+                println!("{}", token.key_id());
+            } else {
+                eprintln!(
+                    "key id {}. Enter the token in qloudpulse where it asks for one; your browser decrypts the values \
+                     and qloudpulse never receives the token. Anyone holding it reads every value it encrypted.",
+                    token.key_id()
+                );
+                println!("{}", token.text());
             }
         }
         Command::Policy => {

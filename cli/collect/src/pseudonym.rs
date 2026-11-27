@@ -1,6 +1,8 @@
 //! Pseudonyms: HMAC-SHA256 with a key only the customer holds. The same value always gives the same pseudonym, so
 //! grouping survives across bundles, and without the key nobody can reverse it.
 
+use crate::config::Config;
+use crate::view_token::{ValueCipher, ViewToken};
 use anyhow::{Context, Result, bail};
 use hmac::{Hmac, Mac};
 use rand::RngCore;
@@ -15,6 +17,9 @@ pub struct Pseudonymizer {
     key: Vec<u8>,
     /// pseudonym -> real value, kept only when the customer asked for the local map.
     seen: Option<Mutex<BTreeMap<String, String>>>,
+    /// The `encrypt` action's cipher, from the view token. Loaded by [`Pseudonymizer::for_config`] when a rule
+    /// encrypts.
+    cipher: Option<ValueCipher>,
 }
 
 impl Pseudonymizer {
@@ -22,7 +27,35 @@ impl Pseudonymizer {
         Pseudonymizer {
             key,
             seen: keep_map.then(|| Mutex::new(BTreeMap::new())),
+            cipher: None,
         }
+    }
+
+    /// Encrypts `encrypt` rules' values under this token.
+    pub fn with_view_token(mut self, token: &ViewToken) -> Pseudonymizer {
+        self.cipher = Some(token.cipher());
+        self
+    }
+
+    /// The key a config names, with its view token when a rule encrypts: what redaction needs.
+    pub fn for_config(config: &Config, keep_map: bool) -> Result<Pseudonymizer> {
+        let p = Pseudonymizer::load(&config.key_file, keep_map)?;
+        if !config.encrypts() {
+            return Ok(p);
+        }
+        let token = ViewToken::load(&config.view_token_file).context("a rule encrypts")?;
+        Ok(p.with_view_token(&token))
+    }
+
+    /// The `encrypt` action: `qpe1_…`, which only the view token reads. None without a token, which drops the
+    /// value rather than send it as it is.
+    pub fn encrypt(&self, value: &str) -> Option<String> {
+        self.cipher.as_ref().map(|c| c.seal(value))
+    }
+
+    /// Names the view token without revealing it, when values are encrypted.
+    pub fn view_key_id(&self) -> Option<String> {
+        self.cipher.as_ref().map(|c| c.key_id().to_string())
     }
 
     /// Creates a key file with 32 random bytes, readable by its owner only. Refuses to overwrite one.
@@ -248,6 +281,29 @@ mod tests {
                 .unwrap()
                 .contains(&new.pseudonym("alice@corp")),
             "the map follows the new key"
+        );
+    }
+
+    #[test]
+    fn an_encrypt_rule_needs_the_view_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.toml");
+        std::fs::write(&path, "source_id = \"a\"\n[tags]\nencrypt = [\"Owner\"]\n").unwrap();
+        let (config, _) = Config::load(&path).unwrap();
+        Pseudonymizer::create_key(&config.key_file).unwrap();
+        let err = Pseudonymizer::for_config(&config, false).err().unwrap();
+        assert!(format!("{err:#}").contains("view-token --create"), "{err:#}");
+        let token = ViewToken::create(&config.view_token_file).unwrap();
+        let p = Pseudonymizer::for_config(&config, false).unwrap();
+        assert_eq!(p.view_key_id(), Some(token.key_id()));
+
+        std::fs::write(&path, "source_id = \"a\"\n").unwrap();
+        let (plain, _) = Config::load(&path).unwrap();
+        std::fs::remove_file(&plain.view_token_file).unwrap();
+        assert_eq!(
+            Pseudonymizer::for_config(&plain, false).unwrap().view_key_id(),
+            None,
+            "no encrypt rule, no token needed"
         );
     }
 

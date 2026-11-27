@@ -40,6 +40,18 @@ jobs:
       - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
       - run: cargo test --locked
 
+  # The browser code that reads encrypted values, against the vectors `cargo test` keeps current. The runner image's
+  # own Node (20 or later has WebCrypto as a global); nothing is installed.
+  browser:
+    name: view token browser code
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: node --version && node --test web/qloudpulse-values.test.mjs
+
   clippy:
     name: cargo clippy
     runs-on: ubuntu-24.04
