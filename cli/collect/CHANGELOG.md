@@ -23,6 +23,9 @@ has lines.
 - **A delivered bundle is deleted**: once every `[deliver]` target has it, or once `upload` sent a bundle of
   `output_dir`, the bundle and its `.jwe` go. `[run] delete_delivered = false` keeps them until `keep_bundles` pushes
   them out, as before. A bundle outside `output_dir` is never deleted.
+- **`upload` with no bundle named sends the newest**: the newest raw snapshot's bundle, packed first if it is not yet
+  (the raw snapshot is then deleted unless `keep_raw`), or the newest bundle in `output_dir` when that is newer. With
+  neither, it says there is nothing to upload, before any sign-in.
 - `--help` ends with the files on this machine, worked out from the config the run would use: config, pseudonym key,
   view token, raw snapshots, bundles, sign-in token and update check.
 - **Encrypted values and the view token.** A new action, `encrypt`, for `[tags]` (`encrypt = ["Owner"]`) and

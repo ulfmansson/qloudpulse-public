@@ -166,7 +166,8 @@ delivered, never raw snapshots.
 - **S3** (`[deliver.s3]`: bucket, prefix, region, optional KMS key): a `PutObject` to the customer's **own** bucket
   with their own credentials, the only write the binary makes to AWS. This is kept apart from the read-only
   collection allow-list, and the IAM policy for it is a separate statement on that one bucket.
-- **qloudpulse** (`qloudpulse-collect upload <bundle>…` or `[deliver.qloudpulse]`): an HTTPS `POST` of the bundle to
+- **qloudpulse** (`qloudpulse-collect upload [<bundle>…]` or `[deliver.qloudpulse]`; `upload` with no bundle named
+  packs the newest raw snapshot if it has no bundle yet and sends that, or the newest bundle): an HTTPS `POST` of the bundle to
   `https://api.qloudpulse.com/v1/collection-bundles` (`--endpoint` to change it). It signs in exactly as the
   qloudpulse CLI does, with the CLI's own code: `QLOUDPULSE_TOKEN` when set (a token from Your tokens, for unattended
   runs); else the token `qloudpulse login` or `qloudpulse-collect login` kept on this machine (in the system keychain,
