@@ -63,6 +63,10 @@ pub struct Config {
     /// Read AWS's carbon estimate of each account once a day. Needs `sustainability:GetEstimatedCarbonEmissions`.
     #[serde(default = "yes")]
     pub carbon: bool,
+    /// The qloudpulse web app the local UI links to. Absent: [`QLOUDPULSE_APP`], unless `[deliver.qloudpulse]` names
+    /// another endpoint (a self-hosted qloudpulse), where its app's address is not known. Empty: no links.
+    #[serde(default)]
+    pub app_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -350,6 +354,16 @@ pub const QLOUDPULSE_ENDPOINT: &str = if cfg!(feature = "upload") {
     ""
 };
 
+/// The qloudpulse web app, which the local UI links to. Empty in a build without `upload`, as the endpoint is.
+pub const QLOUDPULSE_APP: &str = if cfg!(feature = "upload") {
+    "https://app.qloudpulse.com"
+} else {
+    ""
+};
+
+/// The page of the app that lists a company's collectors, the offline ones among them.
+pub const COLLECTORS_PAGE: &str = "/account/aws";
+
 fn default_endpoint() -> String {
     QLOUDPULSE_ENDPOINT.into()
 }
@@ -460,7 +474,40 @@ impl Config {
         {
             bail!("[deliver.command] argv is empty");
         }
+        if let Some(a) = self.app_url.as_deref().filter(|a| !a.is_empty()) {
+            // It becomes a link on every page of the local UI: an address of a web site and nothing else.
+            let ok = url::Url::parse(a).is_ok_and(|u| {
+                matches!(u.scheme(), "https" | "http")
+                    && u.host_str().is_some()
+                    && u.username().is_empty()
+                    && u.password().is_none()
+                    && u.query().is_none()
+                    && u.fragment().is_none()
+            });
+            if !ok {
+                bail!("app_url must be an http(s) address such as https://app.example.com, or \"\" for no links");
+            }
+        }
         Ok(())
+    }
+
+    /// The qloudpulse web app the local UI links to, without a trailing `/`; `None` for no links. A build without
+    /// `upload` has no default, so it shows none unless `app_url` gives one.
+    pub fn app(&self) -> Option<String> {
+        let app = match &self.app_url {
+            Some(a) => a.as_str(),
+            None if self
+                .deliver
+                .qloudpulse
+                .as_ref()
+                .is_some_and(|q| q.endpoint != QLOUDPULSE_ENDPOINT) =>
+            {
+                ""
+            }
+            None => QLOUDPULSE_APP,
+        };
+        let app = app.trim_end_matches('/');
+        (!app.is_empty()).then(|| app.to_string())
     }
 
     /// What a rule costs, for `analyze` and `pack`: one line per feature it disables.
@@ -571,7 +618,7 @@ keep_pseudonym_map = false
 
 # AWS's carbon estimate per account, once a day (sustainability:GetEstimatedCarbonEmissions).
 carbon = true
-
+{app}
 [tags]
 # A tag no rule names is dropped ("deny") or kept ("allow").
 default = "deny"
@@ -655,6 +702,12 @@ delete_delivered = true   # delete a bundle once every [deliver] target has it
 "#;
 
 #[cfg(feature = "upload")]
+const STARTER_APP: &str = r#"
+# The qloudpulse web app the local UI links to. Set it for a self-hosted qloudpulse; "" shows no links.
+# app_url = "https://app.qloudpulse.com"
+"#;
+
+#[cfg(feature = "upload")]
 const STARTER_UPLOAD: &str = r#"# [deliver.qloudpulse]
 # endpoint = "https://api.qloudpulse.com"
 # Signed in as the qloudpulse CLI is: QLOUDPULSE_TOKEN (a token from Your tokens, for unattended runs), else the
@@ -668,7 +721,11 @@ pub fn starter() -> String {
     let upload = STARTER_UPLOAD;
     #[cfg(not(feature = "upload"))]
     let upload = "";
-    STARTER_TEMPLATE.replace("{qloudpulse}", upload)
+    #[cfg(feature = "upload")]
+    let app = STARTER_APP;
+    #[cfg(not(feature = "upload"))]
+    let app = "";
+    STARTER_TEMPLATE.replace("{qloudpulse}", upload).replace("{app}", app)
 }
 
 #[cfg(test)]
@@ -687,6 +744,27 @@ mod tests {
         assert_eq!(config.tag_action("Team"), TagAction::Keep);
         assert_eq!(config.tag_action("Owner"), TagAction::Drop);
         assert!(config.feature_impact().is_empty());
+    }
+
+    #[test]
+    fn the_app_the_ui_links_to() {
+        let default = parse("source_id = \"a\"").unwrap();
+        assert_eq!(default.app().as_deref().unwrap_or(""), QLOUDPULSE_APP);
+        let own = parse("source_id = \"a\"\napp_url = \"https://qp.example.com/\"").unwrap();
+        assert_eq!(own.app().as_deref(), Some("https://qp.example.com"));
+        assert_eq!(parse("source_id = \"a\"\napp_url = \"\"").unwrap().app(), None);
+        // A self-hosted endpoint: its app is not qloudpulse.com's, and nobody said where it is.
+        let hosted = "source_id = \"a\"\n[deliver.qloudpulse]\nendpoint = \"https://api.qp.example.com\"";
+        assert_eq!(parse(hosted).unwrap().app(), None);
+        for bad in [
+            "javascript:alert(1)",
+            "app.example.com",
+            "https://u:p@example.com",
+            "https://example.com/?next=x",
+        ] {
+            let err = parse(&format!("source_id = \"a\"\napp_url = \"{bad}\"")).unwrap_err();
+            assert!(err.to_string().contains("app_url"), "{bad}: {err}");
+        }
     }
 
     #[test]

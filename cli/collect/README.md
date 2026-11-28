@@ -243,9 +243,17 @@ qloudpulse-collect view-token
 qloudpulse-collect run
 ```
 
-`run` collects at 5 past each hour, packs, deletes the raw snapshot, delivers, and deletes each bundle once every
-delivery target has it (`[run] delete_delivered = false` keeps the newest `keep_bundles` instead). It never deletes a
-bundle a delivery target is still missing; a failed delivery is retried at the next run. Use `run --once` for cron, a systemd timer or a Kubernetes CronJob.
+`run` collects when it starts and then at 5 past each hour, packs, deletes the raw snapshot, delivers, and deletes
+each bundle once every delivery target has it (`[run] delete_delivered = false` keeps the newest `keep_bundles`
+instead). It never deletes a bundle a delivery target is still missing; a failed delivery is retried at the next run.
+Use `run --once` for cron, a systemd timer or a Kubernetes CronJob.
+
+- **At the start** it collects the hour that just ended, so you need not wait for the next 5 past. Started before 5
+  past (`[run] minute`), it waits for that minute first: until then AWS may not have the whole hour.
+- **No hour is collected twice.** When the bundle of that hour is already in `output_dir`, or was the last one packed
+  and has been delivered and deleted since (`output_dir/.last-packed` names it), as after a restart within the hour,
+  `run` collects nothing and only delivers what is still owed. With `--every 6h` the cycle at the start is the only
+  one off the 6-hour grid.
 
 ## The local UI
 
@@ -259,6 +267,16 @@ qloudpulse-collect run --ui
 
 - `ui` serves a web page on `127.0.0.1:7781` and prints its address with a session token. Open that address; the
   token is new each time. `run --ui` does the same next to the hourly loop, and shows each cycle as it happens.
+- **The status strip** under the header, on every page, says what the client is doing now: which account and region
+  it is reading (x of y) and how many answers it has so far, then reading the bill, packing, delivering. While it
+  waits, the strip shows how the last cycle went, with its bundle, and the next run in UTC and in your browser's
+  time, with a countdown. It keeps itself current by asking the UI's own address; **Collect sample now** shows the
+  same progress.
+- **Links to qloudpulse** in the header open the app and its page of collectors (`/account/aws`) in a new tab. They
+  send no referrer, so nothing about this UI reaches qloudpulse, and the page itself still contacts only its own
+  address. `app_url` in the config names another app (a self-hosted qloudpulse); `app_url = ""` removes the links.
+  With a `[deliver.qloudpulse] endpoint` of your own and no `app_url` there are none, and a build without the upload
+  has none.
 - **Analyze**: every tag key with its values and what your rules do with it, what the rules cost in qloudpulse, the
   scan before and after your rules, errors and calls by operation. **Collect sample now** reads your accounts into
   memory only; a raw snapshot that `collect` left on disk can be loaded instead.
@@ -266,9 +284,10 @@ qloudpulse-collect run --ui
   redactor as `pack`. Saving goes through the same checks as the CLI, rewrites only what changed (your comments
   stay), and refuses if the file changed on disk meanwhile. Under `run`, a saved rule applies from the next cycle.
 - **Bundles**: every bundle, which target has it, its manifest checked against its files, and every record as it
-  left. **Run history**: each bundle's window, failures and deliveries. Once qloudpulse has a bundle, its
-  `qloudpulse ✓` links to **Bundles arrived** on qloudpulse (`/account/aws#aws-offline`), which shows each upload by
-  reference and what became of it. The link opens in a new tab; the UI itself still loads nothing from qloudpulse.
+  left. **Run history**: each bundle's window, failures and deliveries, and under `run --ui` each cycle of the
+  process, the one at its start included. Once qloudpulse has a bundle, its `qloudpulse ✓` links to **Bundles
+  arrived** on qloudpulse (`/account/aws#aws-offline`), which shows each upload by reference and what became of it.
+  The link opens in a new tab; the UI itself still loads nothing from qloudpulse.
 - It answers only to requests that name it by IP address, as `localhost`, or by a name you give with
   `--ui-allow-host` (other DNS names are refused, against DNS rebinding), and that carry the token; every form carries
   a second token. Every asset is in the binary and the page may load nothing from anywhere else.

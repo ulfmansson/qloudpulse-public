@@ -79,6 +79,7 @@ pub fn router(shared: Arc<Shared>) -> Router {
         .route("/bundles", get(bundles))
         .route("/bundles/{name}", get(bundle))
         .route("/runs", get(runs))
+        .route("/status", get(status))
         .route(
             "/assets/app.css",
             get(|| async { asset("text/css; charset=utf-8", CSS) }),
@@ -317,6 +318,11 @@ async fn runs(State(s): State<Arc<Shared>>) -> Response {
     page(move || pages::runs(&s)).await
 }
 
+/// The status strip alone: the page's script asks for it every few seconds.
+async fn status(State(s): State<Arc<Shared>>) -> Response {
+    pages::status(&s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,6 +386,206 @@ mod tests {
             .block_on(axum::body::to_bytes(r.into_body(), usize::MAX))
             .unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    /// Every `<a ...>` of a page that leaves this server.
+    fn outside_links(page: &str) -> Vec<&str> {
+        page.split("<a ")
+            .skip(1)
+            .map(|a| a.split('>').next().unwrap_or(""))
+            .filter(|a| a.contains("href=\"http"))
+            .collect()
+    }
+
+    #[cfg(feature = "upload")]
+    #[test]
+    fn links_to_qloudpulse_carry_nothing_of_this_page() {
+        let (s, app) = app();
+        for path in ["/analyze", "/rules", "/bundles", "/runs"] {
+            let page = body(call(app.clone(), get(path, "127.0.0.1:7781", Some(&s.token))));
+            let links = outside_links(&page);
+            // The header's two come first: the app and its collectors page. A page may add its own after them,
+            // as /bundles does with Bundles arrived.
+            assert!(links.len() >= 2, "{path}: the app and its collectors page: {links:?}");
+            assert!(links[0].contains(r#"href="https://app.qloudpulse.com""#), "{links:?}");
+            assert!(
+                links[1].contains(r#"href="https://app.qloudpulse.com/account/aws""#),
+                "{links:?}"
+            );
+            for link in links {
+                // The UI's first address carries the session token: no Referer may ever reach qloudpulse, and the
+                // page it opens gets no handle on this one.
+                let rel = link
+                    .split(r#"rel=""#)
+                    .nth(1)
+                    .and_then(|r| r.split('"').next())
+                    .unwrap_or("");
+                let rel: Vec<&str> = rel.split_whitespace().collect();
+                assert!(rel.contains(&"noreferrer") && rel.contains(&"noopener"), "{link}");
+                assert!(link.contains(r#"target="_blank""#), "{link}");
+            }
+            assert!(!page.contains(&s.token), "the token is in no page");
+        }
+        let r = call(app, get("/runs", "127.0.0.1:7781", Some(&s.token)));
+        assert_eq!(r.headers()[header::REFERRER_POLICY], "same-origin");
+    }
+
+    #[cfg(feature = "upload")]
+    #[test]
+    fn the_app_comes_from_the_config() {
+        let (s, app) = app();
+        let starter = crate::config::starter();
+        let own = starter.replacen("source_id", "app_url = \"https://qp.example.com\"\nsource_id", 1);
+        std::fs::write(&s.config_path, own).unwrap();
+        let page = body(call(app.clone(), get("/runs", "127.0.0.1:7781", Some(&s.token))));
+        let links = outside_links(&page);
+        assert!(links[0].contains(r#"href="https://qp.example.com""#), "{links:?}");
+        assert!(
+            links[1].contains(r#"href="https://qp.example.com/account/aws""#),
+            "{links:?}"
+        );
+        let none = starter.replacen("source_id", "app_url = \"\"\nsource_id", 1);
+        std::fs::write(&s.config_path, none).unwrap();
+        let page = body(call(app, get("/runs", "127.0.0.1:7781", Some(&s.token))));
+        assert!(outside_links(&page).is_empty(), "{page}");
+    }
+
+    #[cfg(not(feature = "upload"))]
+    #[test]
+    fn a_build_without_the_upload_links_nowhere() {
+        let (s, app) = app();
+        for path in ["/analyze", "/rules", "/bundles", "/runs"] {
+            let page = body(call(app.clone(), get(path, "127.0.0.1:7781", Some(&s.token))));
+            assert!(outside_links(&page).is_empty(), "{path}: {page}");
+        }
+    }
+
+    fn at(s: &str) -> jiff::Timestamp {
+        s.parse().unwrap()
+    }
+
+    fn under_run() -> (Arc<Shared>, Router) {
+        use super::super::state::RunLog;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.keep().join("c.toml");
+        std::fs::write(&path, crate::config::starter()).unwrap();
+        let run = RunLog {
+            every_hours: 1,
+            since: at("2026-11-26T17:27:00Z"),
+            next: None,
+            cycles: Default::default(),
+        };
+        let s = Arc::new(Shared::new(path, "127.0.0.1:7781".parse().unwrap(), vec![], Some(run)));
+        (s.clone(), router(s))
+    }
+
+    #[test]
+    fn the_status_strip_says_where_a_cycle_is_and_how_the_last_went() {
+        use super::super::state::{Cycle, lock};
+        use crate::run::Phase;
+        let (s, app) = under_run();
+        let strip = |path: &str| body(call(app.clone(), get(path, "127.0.0.1:7781", Some(&s.token))));
+        let run = s.run.as_ref().unwrap();
+        lock(run).cycles.push_front(Cycle {
+            started: at("2026-11-26T17:27:00Z"),
+            phase: Phase::Collecting {
+                part: "inventory",
+                account: 2,
+                accounts: 2,
+                region: 3,
+                regions: 4,
+                region_name: "eu-north-1".into(),
+                records: 1284,
+            },
+            finished: None,
+            bundle: None,
+            already_collected: false,
+            error: None,
+            pending: vec![],
+        });
+        let running = strip("/status");
+        assert!(
+            running.starts_with(r#"<div id="status" class="status running""#),
+            "{running}"
+        );
+        assert!(running.contains("<b>Cycle running</b>"), "{running}");
+        assert!(
+            running.contains("collecting inventory: account 2 of 2, region 3 of 4 (eu-north-1), 1284 records so far"),
+            "{running}"
+        );
+        // 4 regions done of the first account, 2 of the second, of two passes over 2 x 4.
+        assert!(running.contains(r#"<progress max="16" value="6">"#), "{running}");
+        assert!(
+            running.contains(r#"<time datetime="2026-11-26T17:27:00Z" data-local data-elapsed>17:27 UTC</time>"#),
+            "{running}"
+        );
+        // The same strip is part of every page.
+        for path in ["/analyze", "/rules", "/bundles", "/runs"] {
+            assert!(strip(path).contains("account 2 of 2, region 3 of 4"), "{path}");
+        }
+        assert!(
+            strip("/runs").contains("account 2 of 2, region 3 of 4"),
+            "the cycle's row says it too"
+        );
+
+        {
+            let mut log = lock(run);
+            let c = log.cycles.front_mut().unwrap();
+            c.finished = Some(at("2026-11-26T17:28:10Z"));
+            c.bundle = Some("qloudpulse-main-20261126T1600Z.tgz".into());
+            log.next = Some(at("2026-11-26T18:05:00Z"));
+        }
+        let waiting = strip("/status");
+        assert!(
+            waiting.starts_with(r#"<div id="status" class="status waiting""#),
+            "{waiting}"
+        );
+        assert!(
+            waiting.contains(
+                r#"next run <time datetime="2026-11-26T18:05:00Z" data-local data-countdown>18:05 UTC</time>"#
+            ),
+            "{waiting}"
+        );
+        assert!(waiting.contains(r#"last cycle <b class="ok">ok</b>"#), "{waiting}");
+        assert!(
+            waiting.contains(r#"href="/bundles/qloudpulse-main-20261126T1600Z.tgz""#),
+            "{waiting}"
+        );
+        assert_ne!(
+            running.split("data-rev=").nth(1).and_then(|r| r.split('"').nth(1)),
+            waiting.split("data-rev=").nth(1).and_then(|r| r.split('"').nth(1)),
+            "the pages that list cycles load again when one ends"
+        );
+
+        lock(run).cycles.push_front(Cycle {
+            started: at("2026-11-26T18:05:00Z"),
+            phase: Phase::Delivering,
+            finished: Some(at("2026-11-26T18:05:01Z")),
+            bundle: None,
+            already_collected: false,
+            error: Some("no account could be read".into()),
+            pending: vec![],
+        });
+        let failed = strip("/status");
+        assert!(failed.contains(r#"last cycle <b class="bad">failed</b>"#), "{failed}");
+        assert!(failed.contains("no account could be read"), "{failed}");
+    }
+
+    #[test]
+    fn the_run_history_says_run_starts_with_a_cycle() {
+        let (s, app) = under_run();
+        let page = body(call(app, get("/runs", "127.0.0.1:7781", Some(&s.token))));
+        assert!(page.contains("<code>run</code> starts with a cycle"), "{page}");
+        assert!(!page.contains("starts at the next run time"));
+    }
+
+    #[test]
+    fn the_status_strip_needs_the_session_and_says_ui_only_without_a_loop() {
+        let (s, app) = app();
+        let r = call(app.clone(), get("/status", "127.0.0.1:7781", None));
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        let strip = body(call(app, get("/status", "127.0.0.1:7781", Some(&s.token))));
+        assert!(strip.contains("<b>UI only</b>"), "{strip}");
     }
 
     #[test]

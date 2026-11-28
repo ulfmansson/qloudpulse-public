@@ -1,0 +1,7 @@
+<div id="status" class="status {{ class }}" data-rev="{{ rev }}" role="status">
+  <span class="now"><span class="dot"></span><b>{{ label }}</b> <span class="what"{% if class == "running" %} data-cycle-text{% endif %}>{{ text }}</span>{% if !since.is_empty() %} <span class="muted">· started <time datetime="{{ since }}" data-local data-elapsed>{{ since_utc }} UTC</time></span>{% endif %}</span>
+  {% if steps > 0 %}<progress max="{{ steps }}" value="{{ step }}"></progress>{% endif %}
+  {% if !next.is_empty() %}<span class="part">next run <time datetime="{{ next }}" data-local data-countdown>{{ next_utc }}</time></span>{% endif %}
+  {% if let Some(l) = last %}<span class="part">last cycle <b class="{{ l.class }}">{{ l.result }}</b> at <time datetime="{{ l.at }}" data-local>{{ l.at_utc }}</time>{% if !l.bundle.is_empty() %} · <a class="mono" href="/bundles/{{ l.bundle }}">{{ l.bundle }}</a>{% endif %}{% if !l.error.is_empty() %} · <span class="bad err" title="{{ l.error }}">{{ l.error }}</span>{% endif %}</span>{% endif %}
+  {% if !sample.is_empty() %}<span class="part"><span class="dot on"></span><b>Sample</b> <span data-sample-text>{{ sample }}</span>{% if sample_steps > 0 %} <progress max="{{ sample_steps }}" value="{{ sample_step }}"></progress>{% endif %}</span>{% endif %}
+</div>

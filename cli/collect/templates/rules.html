@@ -16,7 +16,7 @@
   </div>
 </div>
 {% if !writable %}<div class="note warn"><b>The config is read-only here.</b> <code>{{ head.config_path }}</code> is on a file system this UI cannot write, as a Kubernetes ConfigMap is. Edit the rules here, then download or copy the file below and put it in the ConfigMap, for example <code>kubectl create configmap &lt;name&gt; --from-file={{ file_name }}=./{{ file_name }} --dry-run=client -o yaml | kubectl apply -f -</code>. Under <code>run</code>, the new rules apply from the first cycle after Kubernetes refreshes the mounted file (about a minute); a <code>subPath</code> mount is never refreshed, so restart the pod.</div>{% endif %}
-{% if saved %}<div class="note ok">Saved to <code>{{ head.config_path }}</code>. {% if head.run_line.starts_with("under run") %}The running loop uses it from the next cycle; bundles already packed are unchanged.{% else %}The next <code>pack</code> or <code>run</code> uses it.{% endif %}</div>{% endif %}
+{% if saved %}<div class="note ok">Saved to <code>{{ head.config_path }}</code>. {% if head.under_run %}The running loop uses it from the next cycle; bundles already packed are unchanged.{% else %}The next <code>pack</code> or <code>run</code> uses it.{% endif %}</div>{% endif %}
 {% if !save_error.is_empty() %}<div class="note bad">{{ save_error }}</div>{% endif %}
 {% for c in conflicts %}<div class="note warn">{{ c }}.</div>{% endfor %}
 <div id="errors">{{ errors|safe }}</div>

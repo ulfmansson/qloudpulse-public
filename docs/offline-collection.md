@@ -44,7 +44,7 @@ most once a day, never from `collect`, `pack`, `deliver`, `upload` or `run`, and
 collect  -> raw snapshot (local only, never delivered)
 analyze  -> report on a raw snapshot or a finished bundle
 pack     -> apply config, scan, write .tgz (+ optional --encrypt)
-run --every 1h [--ui]   -> collect + pack + deliver, clock-aligned, raw deleted after pack (unless --keep-raw)
+run --every 1h [--ui]   -> collect + pack + deliver, at the start and then clock-aligned, raw deleted after pack (unless --keep-raw)
 ui       -> local web UI
 init, rotate-key
 ```
@@ -156,6 +156,11 @@ Without our database the client plans its own calls:
 - Raw data for the dashboard comes from a **"collect sample now"** action held **in memory only** for the session.
   Raw data never hits disk from the UI.
 - Under `run`, config edits take effect at the next cycle.
+- A status strip on every page says where the running cycle or sample is, how the last cycle went, and when the next
+  one starts, in UTC and in the browser's time. The page's script asks the UI's own address for it.
+- The header links to the qloudpulse app and its page of collectors (`app_url` in the config; none in a build
+  without the upload). They open in a new tab with `rel="noreferrer noopener"`: the page still contacts only
+  localhost, and no address of the UI reaches qloudpulse.
 
 ### Delivery
 

@@ -3,11 +3,11 @@
 <div class="headline">
   <div class="grow">
     <h1>Run history</h1>
-    <p class="muted">Each cycle collects the hour that just ended, packs it, delivers everything pending and prunes. Cycles start {{ minute }} minutes past the hour (<code>[run] minute</code>) so that hour is complete.</p>
+    <p class="muted">Each cycle collects the hour that just ended, packs it, delivers everything pending and prunes. Cycles start {{ minute }} minutes past the hour (<code>[run] minute</code>) so that hour is complete. <code>run</code> also runs one when it starts, unless that hour's bundle is already here.</p>
   </div>
   {% if under_run %}
   <div class="cards three">
-    <div class="card"><div class="l">Next run</div><div class="n small-n">{{ next }}</div><div class="l">every {{ every }} h</div></div>
+    <div class="card"><div class="l">Next run</div><div class="n small-n">{% if next_at.is_empty() %}{{ next }}{% else %}<time datetime="{{ next_at }}" data-local data-countdown>{{ next }}</time>{% endif %}</div><div class="l">every {{ every }} h</div></div>
     <div class="card"><div class="l">This process runs since</div><div class="n small-n">{{ since }}</div><div class="l">{{ cycles.len() }} cycles so far</div></div>
   </div>
   {% else %}
@@ -18,11 +18,11 @@
 {% if under_run %}
 <div class="panel">
   <h2>Cycles of this process</h2>
-  {% if cycles.is_empty() %}<p class="muted small">None yet: the first one starts at the next run time.</p>{% else %}
+  {% if cycles.is_empty() %}<p class="muted small">None yet. <code>run</code> starts with a cycle; started before {{ minute }} minutes past the hour, it waits for that minute first.</p>{% else %}
   <div class="scroll"><table>
     <tr><th>Started</th><th>Result</th><th class="num">Took</th><th>Bundle</th><th>Still to deliver</th><th>Error</th></tr>
     {% for c in cycles %}
-    <tr><td class="small nowrap">{{ c.started }}</td><td class="st {{ c.class }}">{{ c.result }}</td><td class="num small">{{ c.took }}</td>
+    <tr><td class="small nowrap">{{ c.started }}</td><td><span class="st {{ c.class }}">{{ c.result }}</span>{% if !c.detail.is_empty() %}<div class="small muted"{% if c.result == "running" %} data-cycle-phase{% endif %}>{{ c.detail }}</div>{% endif %}</td><td class="num small">{{ c.took }}</td>
       <td class="mono small">{% if !c.bundle.is_empty() %}<a href="/bundles/{{ c.bundle }}">{{ c.bundle }}</a>{% endif %}</td>
       <td class="small">{% if c.pending.is_empty() %}<span class="muted">—</span>{% else %}<ul class="plain warn">{% for p in c.pending %}<li>{{ p }}</li>{% endfor %}</ul><span class="muted">retried at the next cycle</span>{% endif %}</td>
       <td class="small bad">{{ c.error }}</td></tr>

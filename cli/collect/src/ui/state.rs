@@ -2,6 +2,7 @@
 //! `run` it sits in.
 
 use crate::record::Record;
+use crate::run::Phase;
 use crate::snapshot::SnapshotMeta;
 use jiff::Timestamp;
 use rand::RngCore;
@@ -17,6 +18,7 @@ pub enum Sample {
     None,
     Collecting {
         since: Timestamp,
+        phase: Phase,
     },
     Ready {
         at: Timestamp,
@@ -34,8 +36,13 @@ pub enum Sample {
 /// One cycle of the `run` loop this UI sits in.
 pub struct Cycle {
     pub started: Timestamp,
+    /// Where it is, while it runs.
+    pub phase: Phase,
     pub finished: Option<Timestamp>,
     pub bundle: Option<String>,
+    /// The window's bundle was already there when the cycle started (the process started again within the hour):
+    /// nothing was collected.
+    pub already_collected: bool,
     pub error: Option<String>,
     /// Targets still missing a bundle after the cycle's deliveries: retried at the next cycle.
     pub pending: Vec<String>,

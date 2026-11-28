@@ -40,6 +40,17 @@ has lines.
 - After an upload, the client says where to follow the bundle on qloudpulse: `upload`, `deliver` and `run` print the
   report site's **Bundles arrived** page with the reference, and in the local UI a delivered `qloudpulse ✓` (Bundles,
   a bundle's page, Run history) links to it, as does the Bundles page's targets panel.
+- `run` collects when it starts, then at each aligned time as before; it no longer waits up to an hour for the first
+  cycle. Started before `[run] minute` past the hour, it waits for that minute. An hour whose bundle is already in
+  `output_dir`, or was the last packed and has been delivered and deleted since (`.last-packed` there names it), is not
+  collected again (a restart within the hour only delivers what is owed), and a cycle that runs past an aligned time
+  is followed at once by the next instead of leaving that hour out. `run --once` is unchanged.
+- The local UI has a status strip on every page: which account and region the client is reading and how many
+  answers it has, then the bill, packing and delivering; how the last cycle went, with its bundle; and the next run
+  in UTC and in the browser's time, with a countdown. **Collect sample now** shows the same progress, and the page
+  no longer reloads every 3 seconds while it runs.
+- The local UI's header links to qloudpulse and to its page of collectors. The links send no referrer. `app_url` in
+  the config names another app, or none with `""`; a build without the upload shows none.
 
 ## [0.1.1] - 2026-11-23
 

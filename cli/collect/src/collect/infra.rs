@@ -1162,6 +1162,7 @@ mod tests {
             caller: &caller,
             window: Window::last_full_hour("2026-11-21T00:05:00Z".parse().unwrap()),
             spot_history: false,
+            progress: None,
         };
         let account = Account {
             id: "111122223333".into(),

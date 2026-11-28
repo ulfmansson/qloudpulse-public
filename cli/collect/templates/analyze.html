@@ -14,7 +14,7 @@
       {% if !show_values %}<input type="hidden" name="values" value="0">{% endif %}
       <noscript><button>Show</button></noscript>
     </form>
-    <p class="small state-{{ sample_state }}">{{ sample_line }}</p>
+    <p class="small state-{{ sample_state }}">{{ sample_line }}{% if sample_state == "collecting" %} <span data-sample-phase>{{ sample_phase }}</span>. Under run, a running cycle finishes first.{% endif %}</p>
     <div class="toolbar">
       <form method="post" action="/sample"><input type="hidden" name="csrf" value="{{ head.csrf }}"><button class="primary"{% if sample_state == "collecting" %} disabled{% endif %}>Collect sample now (held in memory only)</button></form>
       <form method="post" action="/sample/forget"><input type="hidden" name="csrf" value="{{ head.csrf }}"><button{% if sample_state == "none" %} disabled{% endif %}>Forget sample</button></form>

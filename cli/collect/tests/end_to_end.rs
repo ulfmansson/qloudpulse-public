@@ -9,6 +9,7 @@ use qloudpulse_collect::callplan::CallPlan;
 use qloudpulse_collect::collect::Run;
 use qloudpulse_collect::config::Config;
 use qloudpulse_collect::pseudonym::Pseudonymizer;
+use qloudpulse_collect::run::Phase;
 use qloudpulse_collect::snapshot::{Snapshot, SnapshotMeta};
 use qloudpulse_collect::window::Window;
 use qloudpulse_collect::{analyze, bundle};
@@ -96,13 +97,30 @@ fn hourly_cycle_collects_redacts_packs_and_verifies() {
         id: "111122223333".into(),
         credentials: Credentials::new("AKID", "secret", None, None, "test"),
     };
+    let phases = std::sync::Mutex::new(Vec::new());
+    let tell = |phase| phases.lock().unwrap().push(phase);
     let run = Run {
         caller: &caller,
         window,
         spot_history: false,
+        progress: Some(&tell),
     };
     let outcome = run.collect(&[account], &["eu-west-1".to_string()]);
     assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
+    // What the local UI shows while this runs: which account and region, and how much is read so far.
+    let phases = phases.into_inner().unwrap();
+    assert_eq!(phases.len(), 2, "{phases:?}");
+    assert_eq!(
+        phases[0].to_string(),
+        "collecting inventory: account 1 of 1, region 1 of 1 (eu-west-1), 0 records so far"
+    );
+    match &phases[1] {
+        Phase::Collecting { part, records, .. } => {
+            assert_eq!(*part, "ECS");
+            assert!(*records > 0, "the inventory is recorded by then");
+        }
+        other => panic!("{other:?}"),
+    }
 
     let seen = fake.seen.lock().unwrap().clone();
     for expected in [

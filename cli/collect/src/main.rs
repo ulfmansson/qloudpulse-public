@@ -94,7 +94,7 @@ enum Command {
         #[arg(long, default_value = qloudpulse_collect::config::QLOUDPULSE_ENDPOINT)]
         endpoint: String,
     },
-    /// Collect, pack and deliver every N hours, on the clock.
+    /// Collect, pack and deliver: once at the start, then every N hours on the clock.
     Run {
         /// One cycle now, then exit.
         #[arg(long)]
@@ -312,6 +312,7 @@ fn client(path: &Path) -> Result<Client> {
         credentials,
         transport: Box::new(UreqTransport::new()),
         force_daily: false,
+        progress: None,
     })
 }
 
