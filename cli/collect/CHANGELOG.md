@@ -10,6 +10,8 @@ has lines.
 
 ## [Unreleased]
 
+- `cookie` 0.18.3, for RUSTSEC-2026-0594 (private cookie nonces could repeat in a process that forks). It comes in
+  through `ureq`'s cookie store.
 - **Encrypted values and the view token.** A new action, `encrypt`, for `[tags]` (`encrypt = ["Owner"]`) and
   `[[fields]]` (`action = "encrypt"`): the value leaves as `qpe1_<key id>_…`, AES-256-GCM under a key derived from
   the view token, `qp_…`, which `init` (or `view-token --create`) creates and only you hold. The same value always

@@ -10,6 +10,9 @@ has lines.
 
 ## [Unreleased]
 
+- `cookie` 0.18.3, for RUSTSEC-2026-0594 (private cookie nonces could repeat in a process that forks). It comes in
+  through `ureq`'s cookie store.
+
 ## [0.6.0] - 2026-11-22
 
 ### Added
