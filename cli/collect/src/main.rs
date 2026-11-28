@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory as _, FromArgMatches as _, Parser, Subcommand};
 use qloudpulse_collect::aws::UreqTransport;
 use qloudpulse_collect::aws::credentials::CredentialSource;
 use qloudpulse_collect::callplan::CallPlan;
@@ -8,7 +8,8 @@ use qloudpulse_collect::pseudonym::Pseudonymizer;
 use qloudpulse_collect::run::Client;
 use qloudpulse_collect::snapshot::Snapshot;
 use qloudpulse_collect::view_token::ViewToken;
-use qloudpulse_collect::{analyze, bundle, deliver, log};
+use qloudpulse_collect::{analyze, bundle, deliver, log, paths};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 /// Collects cloud cost data with your own credentials into a bundle you inspect, redact and deliver.
@@ -18,14 +19,11 @@ use std::path::{Path, PathBuf};
 #[derive(Parser)]
 #[command(version = env!("QLOUDPULSE_LONG_VERSION"), name = "qloudpulse-collect")]
 struct Cli {
-    /// The config file.
-    #[arg(
-        long,
-        global = true,
-        env = "QLOUDPULSE_COLLECT_CONFIG",
-        default_value = "qloudpulse-collect.toml"
-    )]
-    config: PathBuf,
+    /// The config file [default: ./qloudpulse-collect.toml if it exists, else
+    /// $XDG_CONFIG_HOME/qloudpulse/qloudpulse-collect.toml or ~/.config/qloudpulse/qloudpulse-collect.toml,
+    /// %APPDATA%\qloudpulse\qloudpulse-collect.toml on Windows]
+    #[arg(long, global = true, env = "QLOUDPULSE_COLLECT_CONFIG")]
+    config: Option<PathBuf>,
     /// Log one JSON object per line, for unattended runs.
     #[arg(long, global = true)]
     log_json: bool,
@@ -74,6 +72,8 @@ enum Command {
         to: Vec<String>,
     },
     /// Upload bundles to qloudpulse, signed in as the qloudpulse CLI is: QLOUDPULSE_TOKEN, else the token `login` kept.
+    ///
+    /// A bundle in the config's output_dir that every [deliver] target then has is deleted ([run] delete_delivered).
     #[cfg(feature = "upload")]
     Upload {
         #[arg(required = true)]
@@ -198,8 +198,74 @@ fn checks_for_update(cli: &Cli) -> bool {
     asked_by_a_person && !cli.log_json && std::io::stderr().is_terminal()
 }
 
+/// The config file this run would use, read from the arguments before clap has them: for `--help`.
+fn config_in_args() -> PathBuf {
+    let mut args = std::env::args_os().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            break;
+        }
+        if arg == "--config" {
+            if let Some(path) = args.next() {
+                return path.into();
+            }
+        } else if let Some(path) = arg.to_str().and_then(|a| a.strip_prefix("--config=")) {
+            return path.into();
+        }
+    }
+    std::env::var_os("QLOUDPULSE_COLLECT_CONFIG")
+        .filter(|v| !v.is_empty())
+        .map_or_else(paths::default_config, PathBuf::from)
+}
+
+/// Where the client keeps its files with the config it would use, worked out now: shown under `--help`.
+fn files_help(config_path: &Path) -> String {
+    let mut out = String::from("Files on this machine, with this config:\n");
+    let mut line = |what: &str, value: String| {
+        let _ = writeln!(out, "  {what:<16}{value}");
+    };
+    let config = if config_path.is_file() {
+        line("Config", config_path.display().to_string());
+        Config::load(config_path).map(|(c, _)| c)
+    } else {
+        line(
+            "Config",
+            format!("{} (not there yet: `init` writes it)", config_path.display()),
+        );
+        Config::parse_at(starter().as_bytes(), config_path)
+    };
+    match config {
+        Ok(c) => {
+            line("Pseudonym key", c.key_file.display().to_string());
+            line("View token", c.view_token_file.display().to_string());
+            line("Raw snapshots", c.work_dir.join("raw").display().to_string());
+            let kept = if c.run.delete_delivered {
+                "deleted once every [deliver] target has them"
+            } else {
+                "kept until keep_bundles pushes them out"
+            };
+            line("Bundles", format!("{} ({kept})", c.output_dir.display()));
+        }
+        Err(e) => line("", format!("the rest is unknown: the config does not load ({e:#})")),
+    }
+    #[cfg(feature = "upload")]
+    line("Sign-in token", qloudpulse_stack::credentials::where_kept());
+    #[cfg(feature = "upload")]
+    if let Some(file) = qloudpulse_stack::update::cache_file(&CLIENT) {
+        line("Update check", file.display().to_string());
+    }
+    out.trim_end().to_string()
+}
+
 fn main() {
-    let cli = Cli::parse();
+    let wants_help = std::env::args_os()
+        .skip(1)
+        .any(|a| a == "-h" || a == "--help" || a == "help");
+    let mut command = Cli::command();
+    if wants_help {
+        command = command.after_help(files_help(&config_in_args()));
+    }
+    let cli = Cli::from_arg_matches(&command.get_matches()).unwrap_or_else(|e| e.exit());
     log::use_json(cli.log_json);
     // Asked beside the command, so the command does not wait for GitHub; said after it.
     #[cfg(feature = "upload")]
@@ -262,15 +328,18 @@ fn newest_snapshot(config: &Config) -> Result<PathBuf> {
 }
 
 fn run(cli: Cli) -> Result<()> {
+    let config_path = cli.config.clone().unwrap_or_else(paths::default_config);
     match cli.command {
         Command::Init => {
-            if cli.config.exists() {
-                println!("{} exists; left as it is", cli.config.display());
+            if config_path.exists() {
+                println!("{} exists; left as it is", config_path.display());
             } else {
-                std::fs::write(&cli.config, starter())?;
-                println!("wrote {}", cli.config.display());
+                paths::create_parent(&config_path)
+                    .with_context(|| format!("creating the directory for {}", config_path.display()))?;
+                std::fs::write(&config_path, starter())?;
+                println!("wrote {}", config_path.display());
             }
-            let (config, _) = load(&cli.config)?;
+            let (config, _) = load(&config_path)?;
             if config.key_file.exists() {
                 println!("{} exists; left as it is", config.key_file.display());
             } else {
@@ -293,7 +362,7 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Command::Collect { daily } => {
-            let mut client = client(&cli.config)?;
+            let mut client = client(&config_path)?;
             client.force_daily = daily;
             let snapshot = client.collect(jiff::Timestamp::now())?;
             println!("{}", snapshot.dir.display());
@@ -304,7 +373,7 @@ fn run(cli: Cli) -> Result<()> {
             no_values,
             draft_rules,
         } => {
-            let config = load(&cli.config).ok().map(|(c, _)| c);
+            let config = load(&config_path).ok().map(|(c, _)| c);
             let path = match path {
                 Some(p) => p,
                 None => newest_snapshot(
@@ -331,7 +400,7 @@ fn run(cli: Cli) -> Result<()> {
             snapshot,
             allow_findings,
         } => {
-            let client = client(&cli.config)?;
+            let client = client(&config_path)?;
             let dir = match snapshot {
                 Some(d) => d,
                 None => newest_snapshot(&client.config)?,
@@ -359,7 +428,7 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Command::Deliver { bundles, to } => {
-            let client = client(&cli.config)?;
+            let client = client(&config_path)?;
             let deliverer = client.deliverer();
             if deliver::targets(&client.config).is_empty() {
                 bail!("no delivery target is configured: see [deliver] in the config");
@@ -383,9 +452,9 @@ fn run(cli: Cli) -> Result<()> {
         }
         #[cfg(feature = "upload")]
         Command::Upload { bundles, endpoint } => {
-            let loaded = load(&cli.config).ok().map(|(c, _)| c);
+            let loaded = load(&config_path).ok().map(|(c, _)| c);
             let encrypted = loaded.as_ref().is_some_and(|c| c.encrypt.is_some());
-            let configured = loaded.and_then(|c| c.deliver.qloudpulse);
+            let configured = loaded.as_ref().and_then(|c| c.deliver.qloudpulse.clone());
             let mut target = configured.unwrap_or(qloudpulse_collect::config::QloudpulseTarget {
                 endpoint: qloudpulse_collect::config::QLOUDPULSE_ENDPOINT.into(),
             });
@@ -410,6 +479,15 @@ fn run(cli: Cli) -> Result<()> {
                 let bytes = std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
                 let detail = deliver::qloudpulse::upload_with(&transport, &target, &token, &name, &bytes)?;
                 println!("{detail}");
+                // A bundle of the config's own output_dir that every target now has is deleted ([run] delete_delivered).
+                if let Some(config) = &loaded {
+                    let deliverer = deliver::Deliverer {
+                        config,
+                        transport: &transport,
+                        credentials: None,
+                    };
+                    deliverer.record_delivered(b, "qloudpulse")?;
+                }
             }
         }
         #[cfg(feature = "upload")]
@@ -440,19 +518,19 @@ fn run(cli: Cli) -> Result<()> {
         } => {
             anyhow::ensure!(!once, "--ui runs the loop; leave out --once");
             let options = qloudpulse_collect::ui::Options::new(ui_bind, ui_allow_host)?;
-            qloudpulse_collect::ui::run_with_ui(cli.config, every, options)?;
+            qloudpulse_collect::ui::run_with_ui(config_path, every, options)?;
         }
         Command::Ui { ui_bind, ui_allow_host } => {
-            load(&cli.config)?;
+            load(&config_path)?;
             #[cfg(feature = "upload")]
             let newer = (!cli.log_json).then_some(|| qloudpulse_stack::update::daily_notice(&CLIENT));
             #[cfg(not(feature = "upload"))]
             let newer: Option<fn() -> Option<String>> = None;
             let options = qloudpulse_collect::ui::Options::new(ui_bind, ui_allow_host)?;
-            qloudpulse_collect::ui::serve(cli.config, options, newer)?;
+            qloudpulse_collect::ui::serve(config_path, options, newer)?;
         }
         Command::Run { once, every, .. } => {
-            let mut client = client(&cli.config)?;
+            let mut client = client(&config_path)?;
             if let Some(n) = every {
                 client.config.run.every_hours = n;
             }
@@ -465,7 +543,7 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Command::RotateKey { force } => {
-            let (config, _) = load(&cli.config)?;
+            let (config, _) = load(&config_path)?;
             let rotated = qloudpulse_collect::pseudonym::rotate(
                 &config.key_file,
                 &config.work_dir.join("pseudonyms.tsv"),
@@ -485,7 +563,7 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Command::ViewToken { create, key_id } => {
-            let (config, _) = load(&cli.config)?;
+            let (config, _) = load(&config_path)?;
             let path = &config.view_token_file;
             let token = if create {
                 let token = ViewToken::create(path)?;
@@ -509,7 +587,7 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Command::Policy => {
-            let config = load(&cli.config).ok().map(|(c, _)| c);
+            let config = load(&config_path).ok().map(|(c, _)| c);
             let plan = CallPlan::embedded();
             let options = config.as_ref().map(Config::options).unwrap_or_default();
             let mut statements = vec![serde_json::json!({

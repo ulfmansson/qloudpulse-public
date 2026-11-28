@@ -30,7 +30,12 @@ most once a day, never from `collect`, `pack`, `deliver`, `upload` or `run`, and
   **call-plan manifest** (operations and IAM actions per collector) and a **bundle JSON Schema** (see Ownership).
 - **Unattended is the primary mode**: no prompts, structured logs, non-zero exit on partial failure. `analyze` and
   `ui` are the human-facing commands.
-- **Config is TOML**, path from `--config`. `init` writes a commented starter file. No secrets in it: AWS credentials
+- **Config is TOML**, path from `--config` (or `QLOUDPULSE_COLLECT_CONFIG`); unnamed, `./qloudpulse-collect.toml` if
+  it exists, else `qloudpulse-collect.toml` in `$XDG_CONFIG_HOME/qloudpulse` or `~/.config/qloudpulse`
+  (`%APPDATA%\qloudpulse` on Windows). Raw snapshots and bundles go to the state directory,
+  `~/.local/state/qloudpulse/collect/<source_id>/` (`$XDG_STATE_HOME`, `%LOCALAPPDATA%`), unless the config names
+  `work_dir` or `output_dir`; a bundle every target has is deleted. `--help` lists the paths. `init` writes a
+  commented starter file. No secrets in it: AWS credentials
   come from the default credential chain.
 
 ### Commands and data flow
@@ -166,7 +171,9 @@ delivered, never raw snapshots.
   qloudpulse CLI does, with the CLI's own code: `QLOUDPULSE_TOKEN` when set (a token from Your tokens, for unattended
   runs); else the token `qloudpulse login` or `qloudpulse-collect login` kept on this machine (in the system keychain,
   or a credentials file only its owner can read); else, at a terminal, a sign-in with the browser. The answer is only
-  a status and a reference; the client reads nothing else from qloudpulse.
+  a status and a reference; the client reads nothing else from qloudpulse. It prints the reference with the page
+  where qloudpulse shows what became of the bundle, **Bundles arrived** (`https://app.qloudpulse.com/account/aws#aws-offline`),
+  and its local UI links there from each bundle qloudpulse has.
 - **A command** (`[deliver.command]`), run once per bundle with its path, for anything else.
 - **Manual upload** in the qloudpulse web UI.
 

@@ -234,15 +234,44 @@ fn read_manifest(path: &Path) -> Result<Manifest> {
 pub struct Delivery {
     pub target: String,
     pub done: bool,
+    /// Where to follow it after it left: the report site's bundle page, once qloudpulse has it. Else empty.
+    pub href: String,
+}
+
+/// The report site's page that follows each uploaded bundle (checked, replayed, refused), for the qloudpulse that
+/// `[deliver.qloudpulse]` names, or the one `upload` sends to without it. Empty in a build without the upload, or
+/// for an endpoint that is not usable.
+#[cfg(feature = "upload")]
+fn progress_page(config: &Config) -> String {
+    let endpoint = config
+        .deliver
+        .qloudpulse
+        .as_ref()
+        .map_or(crate::config::QLOUDPULSE_ENDPOINT, |q| q.endpoint.as_str());
+    crate::deliver::qloudpulse::progress_page(endpoint).unwrap_or_default()
+}
+
+#[cfg(not(feature = "upload"))]
+fn progress_page(_config: &Config) -> String {
+    String::new()
 }
 
 fn deliveries(config: &Config, state: &BTreeMap<String, BTreeSet<String>>, name: &str) -> Vec<Delivery> {
     let done = state.get(name).cloned().unwrap_or_default();
+    let progress = progress_page(config);
     crate::deliver::targets(config)
         .into_iter()
-        .map(|t| Delivery {
-            target: t.to_string(),
-            done: done.contains(t),
+        .map(|t| {
+            let done = done.contains(t);
+            Delivery {
+                target: t.to_string(),
+                done,
+                href: if done && t == "qloudpulse" {
+                    progress.clone()
+                } else {
+                    String::new()
+                },
+            }
         })
         .collect()
 }
@@ -1139,6 +1168,8 @@ struct BundlesView {
     output_dir: String,
     keep: usize,
     targets: Vec<TargetView>,
+    /// The report site's bundle page, or empty: see [`progress_page`].
+    progress: String,
     rows: Vec<BundleRow>,
 }
 
@@ -1241,6 +1272,7 @@ fn bundles_page(s: &Shared) -> Result<Response> {
         output_dir: config.output_dir.display().to_string(),
         keep: config.run.keep_bundles,
         targets: targets(&config),
+        progress: progress_page(&config),
         rows,
     }))
 }

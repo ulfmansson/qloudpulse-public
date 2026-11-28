@@ -191,6 +191,24 @@ impl<K: Keychain> Credentials<K> {
     }
 }
 
+/// Where `login` keeps the token on this machine, as `--help` says it.
+pub fn where_kept() -> String {
+    if let Some(file) = std::env::var_os(FILE_VARIABLE).filter(|v| !v.is_empty()) {
+        return format!("{} ({FILE_VARIABLE})", PathBuf::from(file).display());
+    }
+    let keychain = if cfg!(target_os = "macos") {
+        "the macOS Keychain"
+    } else if cfg!(windows) {
+        "the Windows Credential Manager"
+    } else {
+        "the Secret Service keychain"
+    };
+    match default_file() {
+        Some(file) => format!("{keychain} (service \"{SERVICE}\"), else {}", file.display()),
+        None => format!("{keychain} (service \"{SERVICE}\")"),
+    }
+}
+
 /// The credentials of the machine the client runs on: [`SystemKeychain`] with the file in the config directory, or
 /// only the file [`FILE_VARIABLE`] names when it is set.
 pub fn system() -> Credentials<Box<dyn Keychain>> {
@@ -212,9 +230,10 @@ impl Keychain for Box<dyn Keychain> {
     }
 }
 
-/// `credentials` in the client's config directory: `%APPDATA%\qloudpulse` on Windows, else
-/// `$XDG_CONFIG_HOME/qloudpulse` or `~/.config/qloudpulse`.
-pub fn default_file() -> Option<PathBuf> {
+/// The directory every qloudpulse client keeps its files in: `%APPDATA%\qloudpulse` on Windows, else
+/// `$XDG_CONFIG_HOME/qloudpulse` or `~/.config/qloudpulse` (macOS too, like most command-line tools). A relative
+/// value counts as unset, as the XDG spec says. `None` when there is no home to put it in.
+pub fn config_dir() -> Option<PathBuf> {
     let absolute = |v: std::ffi::OsString| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").and_then(absolute)?
@@ -223,7 +242,12 @@ pub fn default_file() -> Option<PathBuf> {
             .and_then(absolute)
             .or_else(|| std::env::var_os("HOME").and_then(absolute).map(|h| h.join(".config")))?
     };
-    Some(base.join("qloudpulse").join("credentials"))
+    Some(base.join("qloudpulse"))
+}
+
+/// `credentials` in the [`config_dir`].
+pub fn default_file() -> Option<PathBuf> {
+    Some(config_dir()?.join("credentials"))
 }
 
 /// Writes the file so that only its owner can read it: 0600 in a 0700 directory on Unix. On Windows the config

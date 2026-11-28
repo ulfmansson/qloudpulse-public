@@ -218,6 +218,10 @@ pub struct RunConfig {
     /// Bundles kept in `output_dir`; an undelivered one is never deleted.
     #[serde(default = "week_of_hours")]
     pub keep_bundles: usize,
+    /// Delete a bundle (and its `.jwe`) from `output_dir` once every configured target has it. Off: delivered
+    /// bundles stay until `keep_bundles` pushes them out.
+    #[serde(default = "yes")]
+    pub delete_delivered: bool,
 }
 
 impl Default for RunConfig {
@@ -228,6 +232,7 @@ impl Default for RunConfig {
             daily_hour: 0,
             keep_raw: false,
             keep_bundles: 168,
+            delete_delivered: true,
         }
     }
 }
@@ -361,11 +366,34 @@ fn week_of_hours() -> usize {
 impl Config {
     pub fn load(path: &Path) -> Result<(Config, Vec<u8>)> {
         let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-        let mut config: Config = toml::from_str(std::str::from_utf8(&bytes).context("the config is not UTF-8")?)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let config = Config::parse_at(&bytes, path)?;
+        Ok((config, bytes))
+    }
+
+    /// The config `bytes` would be as the file at `path`: what [`Config::load`] reads, and what `--help` shows
+    /// for a config `init` has not written yet.
+    pub fn parse_at(bytes: &[u8], path: &Path) -> Result<Config> {
+        let text = std::str::from_utf8(bytes).context("the config is not UTF-8")?;
+        let mut config: Config = toml::from_str(text).with_context(|| format!("reading {}", path.display()))?;
         config.resolve_paths(path.parent().unwrap_or(Path::new(".")));
         config.check()?;
-        Ok((config, bytes))
+        let named: toml::Table = toml::from_str(text)?;
+        config.use_state_dir(&named, crate::paths::state_dir().as_deref());
+        Ok(config)
+    }
+
+    /// `work_dir` and `output_dir` the config leaves out go to the source's own directory in the state directory,
+    /// not beside the config. Named ones, as `init` wrote them before, stay where they say. With no state directory
+    /// the defaults beside the config are kept.
+    fn use_state_dir(&mut self, named: &toml::Table, state_dir: Option<&Path>) {
+        let Some(state_dir) = state_dir else { return };
+        let dir = crate::paths::source_state_dir(state_dir, &self.source_id);
+        if !named.contains_key("work_dir") {
+            self.work_dir = dir.join("work");
+        }
+        if !named.contains_key("output_dir") {
+            self.output_dir = dir.join("bundles");
+        }
     }
 
     /// Relative paths are relative to the config file, so a run from any directory finds the same files.
@@ -532,8 +560,11 @@ key_file = "qloudpulse-collect.key"      # created by `init`; back it up: losing
 # The view token (qp_…) behind the encrypt action, created by `init`. Enter it in qloudpulse to read encrypted values
 # in your browser; qloudpulse never receives it. Back it up: without it nobody can read those values again.
 view_token_file = "qloudpulse-collect.view-token"
-work_dir = "qloudpulse-collect-work"     # raw snapshots and state; never delivered
-output_dir = "bundles"
+# Raw snapshots (never delivered) and bundles with their delivery state. Left out, they go to the state directory:
+# ~/.local/state/qloudpulse/collect/<source_id>/work and .../bundles ($XDG_STATE_HOME if set, %LOCALAPPDATA% on
+# Windows). A relative path here is relative to this file. `qloudpulse-collect --help` shows where they are.
+# work_dir = "qloudpulse-collect-work"
+# output_dir = "bundles"
 
 # Keep a local table of pseudonym -> real value, to read qloudpulse's reports. It stays on this machine.
 keep_pseudonym_map = false
@@ -605,6 +636,7 @@ minute = 5          # start 5 minutes past the hour, so the hour just ended is c
 daily_hour = 0      # this UTC hour's run also reads the 90-day spot price history
 keep_raw = false
 keep_bundles = 168
+delete_delivered = true   # delete a bundle once every [deliver] target has it
 
 # Encrypt each bundle (JWE, ECDH-ES+A256KW / A256GCM) to qloudpulse's public key for bundles. The plaintext .tgz
 # stays here for you to inspect; the .tgz.jwe next to it is what is delivered.
@@ -655,6 +687,28 @@ mod tests {
         assert_eq!(config.tag_action("Team"), TagAction::Keep);
         assert_eq!(config.tag_action("Owner"), TagAction::Drop);
         assert!(config.feature_impact().is_empty());
+    }
+
+    #[test]
+    fn left_out_dirs_go_to_the_source_state_dir_and_named_ones_stay() {
+        let text = "source_id = \"main\"\nwork_dir = \"/w\"\n";
+        let mut config = parse(text).unwrap();
+        config.use_state_dir(&toml::from_str(text).unwrap(), Some(Path::new("/st/qloudpulse")));
+        assert_eq!(config.work_dir, PathBuf::from("/w"));
+        assert_eq!(config.output_dir, PathBuf::from("/st/qloudpulse/collect/main/bundles"));
+
+        let text = "source_id = \"main\"\n";
+        let mut config = parse(text).unwrap();
+        config.use_state_dir(&toml::from_str(text).unwrap(), Some(Path::new("/st/qloudpulse")));
+        assert_eq!(config.work_dir, PathBuf::from("/st/qloudpulse/collect/main/work"));
+
+        let mut config = parse(text).unwrap();
+        config.use_state_dir(&toml::from_str(text).unwrap(), None);
+        assert_eq!(
+            config.work_dir,
+            PathBuf::from("qloudpulse-collect-work"),
+            "no state dir: beside the config"
+        );
     }
 
     #[test]
