@@ -245,6 +245,35 @@ fn remove(bundle: &Path, state: &mut State) -> Result<()> {
     Ok(())
 }
 
+/// What `upload` sends when no bundle is named.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Newest {
+    /// A bundle already in `output_dir`.
+    Bundle(PathBuf),
+    /// The newest raw snapshot has no bundle yet: pack it, then send that.
+    Pack,
+}
+
+/// The newest of what there is: the bundle of the newest raw snapshot (whose window is `snapshot`), packed first if it
+/// is not yet, or the newest bundle in `output_dir` when that is newer or there is no raw snapshot. `None`: nothing.
+pub fn newest_for_upload(config: &Config, snapshot: Option<&crate::window::Window>) -> Result<Option<Newest>> {
+    let newest_bundle = bundles(&config.output_dir)?.pop();
+    let Some(window) = snapshot else {
+        return Ok(newest_bundle.map(Newest::Bundle));
+    };
+    let own = config
+        .output_dir
+        .join(crate::bundle::file_name(&config.source_id, window));
+    if let Some(newer) = newest_bundle.filter(|b| b.file_name() > own.file_name()) {
+        return Ok(Some(Newest::Bundle(newer)));
+    }
+    Ok(Some(if own.exists() {
+        Newest::Bundle(own)
+    } else {
+        Newest::Pack
+    }))
+}
+
 /// `.tgz` files in `dir`, oldest first (names sort by window).
 pub fn bundles(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut out: Vec<PathBuf> = match std::fs::read_dir(dir) {
@@ -340,6 +369,43 @@ mod tests {
         assert!(!load_state(&out).contains_key("qloudpulse-main-20261121T0100Z.tgz"));
         deliverer.deliver(&elsewhere, None).unwrap();
         assert!(elsewhere.exists(), "a bundle outside output_dir is the customer's copy");
+    }
+
+    #[test]
+    fn upload_takes_the_newest_snapshot_packed_or_not_or_the_newest_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out");
+        let text = format!("source_id = \"main\"\noutput_dir = \"{}\"\n", out.display());
+        let config: Config = toml::from_str(&text).unwrap();
+        let hour = |t: &str| crate::window::Window::last_full_hour(t.parse().unwrap());
+        let (seven, eight) = (hour("2026-11-21T07:05:00Z"), hour("2026-11-21T08:05:00Z"));
+        let bundle = |w| out.join(crate::bundle::file_name("main", w));
+
+        assert_eq!(newest_for_upload(&config, None).unwrap(), None, "nothing at all");
+        assert_eq!(
+            newest_for_upload(&config, Some(&seven)).unwrap(),
+            Some(Newest::Pack),
+            "not packed yet"
+        );
+
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(bundle(&seven), b"x").unwrap();
+        assert_eq!(
+            newest_for_upload(&config, Some(&seven)).unwrap(),
+            Some(Newest::Bundle(bundle(&seven))),
+            "packed already: that bundle"
+        );
+        assert_eq!(
+            newest_for_upload(&config, None).unwrap(),
+            Some(Newest::Bundle(bundle(&seven)))
+        );
+
+        std::fs::write(bundle(&eight), b"x").unwrap();
+        assert_eq!(
+            newest_for_upload(&config, Some(&seven)).unwrap(),
+            Some(Newest::Bundle(bundle(&eight))),
+            "a bundle newer than the snapshot wins"
+        );
     }
 
     #[cfg(unix)]

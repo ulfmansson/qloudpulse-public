@@ -73,10 +73,13 @@ enum Command {
     },
     /// Upload bundles to qloudpulse, signed in as the qloudpulse CLI is: QLOUDPULSE_TOKEN, else the token `login` kept.
     ///
+    /// With no bundle named, it sends the newest: the newest raw snapshot's bundle, packed first if it is not yet
+    /// (its raw snapshot is then deleted unless [run] keep_raw), or the newest bundle in output_dir when that is newer.
+    ///
     /// A bundle in the config's output_dir that every [deliver] target then has is deleted ([run] delete_delivered).
     #[cfg(feature = "upload")]
     Upload {
-        #[arg(required = true)]
+        /// The bundles to send; the newest when none is named.
         bundles: Vec<PathBuf>,
         /// The qloudpulse API; [deliver.qloudpulse] endpoint, or qloudpulse's own.
         #[arg(long)]
@@ -316,6 +319,42 @@ fn client(path: &Path) -> Result<Client> {
     })
 }
 
+/// The bundle `upload` sends when none is named, packing the newest raw snapshot first if it has none yet.
+#[cfg(feature = "upload")]
+fn newest_to_upload(config_path: &Path) -> Result<PathBuf> {
+    let client = client(config_path)?;
+    let config = &client.config;
+    let snapshot = match newest_snapshot(config) {
+        Ok(dir) => Some(Snapshot::read(&dir)?),
+        Err(_) => None,
+    };
+    match deliver::newest_for_upload(config, snapshot.as_ref().map(|s| &s.meta.window))? {
+        Some(deliver::Newest::Bundle(path)) => {
+            eprintln!("qloudpulse-collect: uploading the newest bundle, {}", path.display());
+            Ok(path)
+        }
+        Some(deliver::Newest::Pack) => {
+            let snapshot = snapshot.expect("Pack only for a snapshot");
+            eprintln!(
+                "qloudpulse-collect: packing the newest raw snapshot, {}, to upload it",
+                snapshot.dir.display()
+            );
+            let path = client.pack(&snapshot, false)?;
+            if !config.run.keep_raw {
+                std::fs::remove_dir_all(&snapshot.dir)
+                    .with_context(|| format!("removing {}", snapshot.dir.display()))?;
+            }
+            Ok(path)
+        }
+        None => bail!(
+            "nothing to upload: no bundle in {} and no raw snapshot in {}; run `qloudpulse-collect collect` first, \
+             or name a bundle",
+            config.output_dir.display(),
+            config.work_dir.join("raw").display()
+        ),
+    }
+}
+
 fn newest_snapshot(config: &Config) -> Result<PathBuf> {
     let raw = config.work_dir.join("raw");
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(&raw)
@@ -463,6 +502,12 @@ fn run(cli: Cli) -> Result<()> {
                 target.endpoint = e;
             }
             let transport = UreqTransport::new();
+            // Chosen (and packed) before signing in, so "nothing to upload" comes without a sign-in first.
+            let bundles = if bundles.is_empty() {
+                vec![newest_to_upload(&config_path)?]
+            } else {
+                bundles
+            };
             let token = deliver::qloudpulse::token(&target.endpoint)?;
             for b in &bundles {
                 bundle::open(b).with_context(|| format!("{} is not a valid bundle; nothing was sent", b.display()))?;
