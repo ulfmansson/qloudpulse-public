@@ -42,8 +42,9 @@ has lines.
   a bundle's page, Run history) links to it, as does the Bundles page's targets panel.
 - `run` collects when it starts, then at each aligned time as before; it no longer waits up to an hour for the first
   cycle. Started before `[run] minute` past the hour, it waits for that minute. An hour whose bundle is already in
-  `output_dir` is not collected again (a restart within the hour only delivers what is owed), and a cycle that runs
-  past an aligned time is followed at once by the next instead of leaving that hour out. `run --once` is unchanged.
+  `output_dir`, or was the last packed and has been delivered and deleted since (`.last-packed` there names it), is not
+  collected again (a restart within the hour only delivers what is owed), and a cycle that runs past an aligned time
+  is followed at once by the next instead of leaving that hour out. `run --once` is unchanged.
 - The local UI has a status strip on every page: which account and region the client is reading and how many
   answers it has, then the bill, packing and delivering; how the last cycle went, with its bundle; and the next run
   in UTC and in the browser's time, with a countdown. **Collect sample now** shows the same progress, and the page

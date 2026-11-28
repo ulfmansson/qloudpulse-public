@@ -15,7 +15,11 @@ use crate::window::Window;
 use crate::window::{HOUR, trunc_hour, utc_hour};
 use anyhow::{Context, Result};
 use jiff::{SignedDuration, Timestamp};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// In `output_dir`: the file name of the last bundle a cycle packed. Delivery may delete the bundle itself
+/// (`[run] delete_delivered`), and a `run` that starts again within the hour must still know its window is done.
+const LAST_PACKED: &str = ".last-packed";
 
 pub struct Client {
     pub config: Config,
@@ -85,8 +89,8 @@ impl std::fmt::Display for Phase {
 pub enum Turn {
     /// Collected and packed this bundle.
     Packed(PathBuf),
-    /// The window's bundle was already in the output directory (this process started again within the hour): nothing
-    /// was collected. Deliveries still owed were tried.
+    /// The window's bundle was packed already (this process started again within the hour): nothing was collected.
+    /// Deliveries still owed were tried. The bundle may be gone, delivered and deleted.
     AlreadyCollected(PathBuf),
 }
 
@@ -291,6 +295,8 @@ impl Client {
         let bundle = self
             .pack(&snapshot, false)
             .with_context(|| format!("raw snapshot kept in {}", snapshot.dir.display()))?;
+        // Before delivering, which may delete the bundle.
+        self.mark_packed(&bundle)?;
         if !self.config.run.keep_raw {
             std::fs::remove_dir_all(&snapshot.dir).with_context(|| format!("removing {}", snapshot.dir.display()))?;
         }
@@ -320,12 +326,28 @@ impl Client {
             .join(bundle::file_name(&self.config.source_id, &Window::last_full_hour(now)))
     }
 
-    /// A cycle of the `run` loop: [`Client::cycle`], unless the window's bundle is already in the output directory.
-    /// A process that starts again within the hour (a pod that restarts) then collects nothing a second time; it
-    /// still delivers what is owed.
+    /// Notes `bundle` as the last one packed (see [`LAST_PACKED`]).
+    pub fn mark_packed(&self, bundle: &Path) -> Result<()> {
+        let name = bundle.file_name().context("a bundle path ends in a file name")?;
+        let mark = self.config.output_dir.join(LAST_PACKED);
+        std::fs::write(&mark, name.as_encoded_bytes()).with_context(|| format!("writing {}", mark.display()))
+    }
+
+    /// Whether `bundle` was packed already: it is in the output directory, or it is the last one packed, delivered
+    /// and deleted since.
+    pub fn already_packed(&self, bundle: &Path) -> bool {
+        bundle.is_file()
+            || bundle.file_name().is_some_and(|name| {
+                std::fs::read(self.config.output_dir.join(LAST_PACKED)).is_ok_and(|m| m == name.as_encoded_bytes())
+            })
+    }
+
+    /// A cycle of the `run` loop: [`Client::cycle`], unless the window's bundle was packed already. A process that
+    /// starts again within the hour (a pod that restarts) then collects nothing a second time, even when the bundle
+    /// was delivered and deleted meanwhile; it still delivers what is owed.
     pub fn turn(&self, now: Timestamp) -> Result<Turn> {
         let path = self.bundle_path(now);
-        if !path.is_file() {
+        if !self.already_packed(&path) {
             return self.cycle(now).map(Turn::Packed);
         }
         log::info(
@@ -460,6 +482,34 @@ mod tests {
         assert_eq!(std::fs::read(&bundle).unwrap(), b"packed at 17:27", "left as it was");
         // An hour later the window is another one, and its bundle is not there.
         assert!(!client.bundle_path(at("2026-11-26T18:05:00Z")).exists());
+    }
+
+    #[test]
+    fn a_window_delivered_and_deleted_is_not_collected_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config: Config = toml::from_str("source_id = \"main\"").unwrap();
+        config.output_dir = dir.path().join("bundles");
+        config.work_dir = dir.path().join("work");
+        std::fs::create_dir_all(&config.output_dir).unwrap();
+        let client = Client {
+            credentials: CredentialSource::new(None, "eu-west-1").unwrap(),
+            config,
+            config_bytes: vec![],
+            transport: Box::new(Silent),
+            force_daily: false,
+            progress: None,
+        };
+        // The pod started at 17:27, packed 16:00-17:00, every target took it and it was deleted
+        // ([run] delete_delivered); the pod starts again at 17:40.
+        let bundle = client.bundle_path(at("2026-11-26T17:27:00Z"));
+        std::fs::write(&bundle, b"packed at 17:27").unwrap();
+        client.mark_packed(&bundle).unwrap();
+        std::fs::remove_file(&bundle).unwrap();
+        let now = at("2026-11-26T17:40:00Z");
+        assert_eq!(client.turn(now).unwrap(), Turn::AlreadyCollected(bundle.clone()));
+        assert!(!bundle.exists(), "nothing packed again");
+        // The next hour's window is collected as usual: the mark names only the last bundle packed.
+        assert!(!client.already_packed(&client.bundle_path(at("2026-11-26T18:05:00Z"))));
     }
 
     #[test]

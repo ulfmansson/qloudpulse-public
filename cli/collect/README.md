@@ -250,9 +250,10 @@ Use `run --once` for cron, a systemd timer or a Kubernetes CronJob.
 
 - **At the start** it collects the hour that just ended, so you need not wait for the next 5 past. Started before 5
   past (`[run] minute`), it waits for that minute first: until then AWS may not have the whole hour.
-- **No hour is collected twice.** When the bundle of that hour is already in `output_dir`, as after a restart within
-  the hour, `run` collects nothing and only delivers what is still owed. With `--every 6h` the cycle at the start is
-  the only one off the 6-hour grid.
+- **No hour is collected twice.** When the bundle of that hour is already in `output_dir`, or was the last one packed
+  and has been delivered and deleted since (`output_dir/.last-packed` names it), as after a restart within the hour,
+  `run` collects nothing and only delivers what is still owed. With `--every 6h` the cycle at the start is the only
+  one off the 6-hour grid.
 
 ## The local UI
 
