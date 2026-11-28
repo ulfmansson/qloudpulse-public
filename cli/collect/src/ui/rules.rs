@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, Value, value};
 
-pub const TAG_ACTIONS: &[&str] = &["default", "keep", "drop", "pseudonymize", "replace"];
-pub const FIELD_ACTIONS: &[&str] = &["drop", "replace", "pseudonymize"];
+pub const TAG_ACTIONS: &[&str] = &["default", "keep", "drop", "pseudonymize", "encrypt", "replace"];
+pub const FIELD_ACTIONS: &[&str] = &["drop", "replace", "pseudonymize", "encrypt"];
 
 /// One tag key as the form shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +53,7 @@ impl Draft {
             .iter()
             .chain(&t.drop)
             .chain(&t.pseudonymize)
+            .chain(&t.encrypt)
             .chain(t.replace.iter().map(|r| &r.key))
             .chain(extra)
         {
@@ -188,6 +189,7 @@ impl Draft {
             keep: order(&old.keep, "keep"),
             drop: order(&old.drop, "drop"),
             pseudonymize: order(&old.pseudonymize, "pseudonymize"),
+            encrypt: order(&old.encrypt, "encrypt"),
             replace,
         };
         config.fields = self
@@ -198,6 +200,7 @@ impl Draft {
                     "drop" => FieldAction::Drop,
                     "replace" => FieldAction::Replace,
                     "pseudonymize" => FieldAction::Pseudonymize,
+                    "encrypt" => FieldAction::Encrypt,
                     other => bail!("the rule for {}: unknown action {other}", f.path),
                 };
                 Ok(FieldRule {
@@ -214,7 +217,13 @@ impl Draft {
 }
 
 fn named(t: &TagRules, key: &str) -> bool {
-    t.keep.iter().chain(&t.drop).chain(&t.pseudonymize).any(|k| k == key) || t.replace.iter().any(|r| r.key == key)
+    t.keep
+        .iter()
+        .chain(&t.drop)
+        .chain(&t.pseudonymize)
+        .chain(&t.encrypt)
+        .any(|k| k == key)
+        || t.replace.iter().any(|r| r.key == key)
 }
 
 pub fn action_name(a: FieldAction) -> &'static str {
@@ -222,16 +231,18 @@ pub fn action_name(a: FieldAction) -> &'static str {
         FieldAction::Drop => "drop",
         FieldAction::Replace => "replace",
         FieldAction::Pseudonymize => "pseudonymize",
+        FieldAction::Encrypt => "encrypt",
     }
 }
 
-/// Keys the file names in more than one list. Only one action applies (drop, pseudonymize, replace, keep, in that
-/// order); saving from the editor keeps the key in that list only.
+/// Keys the file names in more than one list. Only one action applies (drop, pseudonymize, encrypt, replace, keep,
+/// in that order); saving from the editor keeps the key in that list only.
 pub fn conflicts(t: &TagRules) -> Vec<String> {
     let mut out = Vec::new();
-    let lists: [(&str, Vec<&String>); 4] = [
+    let lists: [(&str, Vec<&String>); 5] = [
         ("drop", t.drop.iter().collect()),
         ("pseudonymize", t.pseudonymize.iter().collect()),
+        ("encrypt", t.encrypt.iter().collect()),
         ("replace", t.replace.iter().map(|r| &r.key).collect()),
         ("keep", t.keep.iter().collect()),
     ];
@@ -281,6 +292,7 @@ pub fn edited_toml(original: &str, old: &Config, new: &Config) -> Result<String>
         set_list(t, "keep", &old.tags.keep, &new.tags.keep);
         set_list(t, "drop", &old.tags.drop, &new.tags.drop);
         set_list(t, "pseudonymize", &old.tags.pseudonymize, &new.tags.pseudonymize);
+        set_list(t, "encrypt", &old.tags.encrypt, &new.tags.encrypt);
         if !same(&old.tags.replace, &new.tags.replace) {
             if new.tags.replace.is_empty() {
                 t.remove("replace");

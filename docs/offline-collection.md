@@ -97,13 +97,19 @@ Without our database the client plans its own calls:
 
 ### Filtering and redaction
 
-- Rules target **any field by path**; tags are the commonest target. Four actions:
+- Rules target **any field by path**; tags are the commonest target. Five actions:
   - `drop`
   - `keep` (allowlist)
   - `replace`: a static value or a regex rewrite
   - `pseudonymize`: HMAC-SHA256 with a key only the customer holds. The same input always gives the same output, so
     grouping survives across bundles and we cannot reverse it. An optional local mapping file lets the customer
     translate pseudonyms back when reading reports.
+  - `encrypt`: deterministic AES-256-GCM (the nonce is an HMAC of the value) under keys derived from a **view
+    token**, `qp_…`, that the client creates and only the customer holds. Grouping survives as with a pseudonym, and
+    whoever the customer gives the token reads the real value in qloudpulse's web UI: the page decrypts it in the
+    browser with WebCrypto, so the token and the real value are never sent to qloudpulse or stored by it. Values
+    leave as `qpe1_<key id>_<data>`; the manifest's `view_key_id` says which token a bundle needs. The browser
+    code is published as `cli/collect/web/qloudpulse-values.js`, with test vectors the client's tests keep current.
 - **Unlisted tags are denied by default.** A setting can flip this to allow-all. `init` pre-fills `keep` for the keys
   qloudpulse features use: `Name`, `Environment`, `Team`, `Company`, `eks:cluster-name`, `aws:eks:cluster-name`,
   `karpenter.sh/nodepool`, `eks:nodegroup-name`, `aws:autoscaling:groupName`, plus the company's scope tag keys.

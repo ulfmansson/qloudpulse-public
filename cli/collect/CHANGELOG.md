@@ -10,6 +10,16 @@ has lines.
 
 ## [Unreleased]
 
+- **Encrypted values and the view token.** A new action, `encrypt`, for `[tags]` (`encrypt = ["Owner"]`) and
+  `[[fields]]` (`action = "encrypt"`): the value leaves as `qpe1_<key id>_…`, AES-256-GCM under a key derived from
+  the view token, `qp_…`, which `init` (or `view-token --create`) creates and only you hold. The same value always
+  gives the same output, so qloudpulse still groups costs by it and the replay still matches. Enter the token in
+  qloudpulse and your browser decrypts the values there; the token and the real values never reach qloudpulse.
+  `view-token` prints it. The manifest names the token by its key id (`view_key_id`), never the token itself.
+- The browser code that decrypts, `web/qloudpulse-values.js` (WebCrypto only, no network), is published here with
+  test vectors the client's tests keep current.
+- `pack` refuses a bundle that holds a view token (`qloudpulse-view-token`).
+- Bundle `schema_version` 1.1.0: the manifest adds `view_key_id` and `rules.tags_encrypted`, both optional.
 - After an upload, the client says where to follow the bundle on qloudpulse: `upload`, `deliver` and `run` print the
   report site's **Bundles arrived** page with the reference, and in the local UI a delivered `qloudpulse ✓` (Bundles,
   a bundle's page, Run history) links to it, as does the Bundles page's targets panel.

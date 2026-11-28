@@ -178,7 +178,7 @@ impl Client {
     }
 
     pub fn pseudonyms(&self) -> Result<Pseudonymizer> {
-        Pseudonymizer::load(&self.config.key_file, self.config.keep_pseudonym_map)
+        Pseudonymizer::for_config(&self.config, self.config.keep_pseudonym_map)
     }
 
     pub fn pack(&self, snapshot: &Snapshot, allow_findings: bool) -> Result<PathBuf> {

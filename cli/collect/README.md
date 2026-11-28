@@ -74,8 +74,10 @@ release it would install has the upload in it. Build the new tag the same way in
 qloudpulse-collect init
 ```
 
-`init` writes `qloudpulse-collect.toml` and a pseudonym key, `qloudpulse-collect.key`. Back the key up: losing it
-changes every pseudonym, which breaks cost history at that point. Then set the role to read through:
+`init` writes `qloudpulse-collect.toml`, a pseudonym key, `qloudpulse-collect.key`, and a view token,
+`qloudpulse-collect.view-token` (see [Encrypted values](#encrypted-values-and-the-view-token)). Back both up: losing
+the key changes every pseudonym, which breaks cost history at that point, and without the view token nobody can read
+encrypted values again. Then set the role to read through:
 
 ```bash
 qloudpulse-collect policy > policy.json
@@ -159,6 +161,8 @@ action:
 - `keep`
 - `drop`
 - `pseudonymize`: the same value always gives the same `p_…`, and only your key can reverse it
+- `encrypt`: the same value always gives the same `qpe1_…`, which anyone with your view token can read in
+  qloudpulse's web UI, in their own browser (see [Encrypted values](#encrypted-values-and-the-view-token))
 - `replace`: a regex with `$1`, or a fixed value
 
 `[identifiers]` pseudonymizes account IDs and resource IDs while keeping their format: an account ID becomes another
@@ -169,6 +173,44 @@ inside ARNs and requests too, so the bill and the inventory still join. Both are
 for fields qloudpulse prices from, such as instance type, size or engine. When a rule changes a value, for example a
 table name, the change carries into the later requests that name it. Nothing leaks through a request, and
 qloudpulse's replay still matches.
+
+## Encrypted values and the view token
+
+`pseudonymize` hides a value from qloudpulse and from everyone who reads your reports. `encrypt` hides it from
+qloudpulse only: the people you give the **view token** still see the real value in qloudpulse's reports, decrypted
+in their browser.
+
+```toml
+[tags]
+encrypt = ["Owner", "Name"]
+
+[[fields]]
+path = "TableNames"
+action = "encrypt"
+```
+
+```bash
+qloudpulse-collect view-token
+```
+
+- **The token** is `qp_` and 43 characters, 32 random bytes that `init` writes to `view_token_file`
+  (`qloudpulse-collect.view-token`, readable by its owner only). `view-token` prints it on stdout, for a password
+  manager; `view-token --create` makes one for a config from before `encrypt`, and refuses to replace one.
+  `view-token --key-id` prints only the eight hex digits that name it.
+- **What leaves** is `qpe1_<key id>_<data>`: AES-256-GCM under a key derived from the token. The same value always
+  gives the same output, across bundles, so costs still group by it and a table name carried into a later request
+  still matches on replay. Like a pseudonym, that shows which resources share a value and nothing more; values are
+  padded to 16 bytes, so short values do not give away their length. The manifest carries the key id,
+  `view_key_id`, never the token.
+- **Reading it**: enter the token where qloudpulse asks for one. The page derives the keys with WebCrypto and
+  decrypts the values in your browser; the token and the real values are never sent to qloudpulse or stored by it.
+  That page's code is [`web/qloudpulse-values.js`](web/qloudpulse-values.js), tested against values this client
+  encrypted ([`web/test-vectors.json`](web/test-vectors.json), kept current by `cargo test`).
+- **Anyone holding the token reads every value it encrypted.** Share it the way you share a password. Losing it
+  makes those values unreadable for good: qloudpulse cannot recover them. `pack` refuses a bundle that holds a view
+  token, so one pasted into a tag does not leave.
+- qloudpulse's own features see only the encrypted value: rules in qloudpulse that match a tag's value, such as an
+  environment rule on `Name`, cannot match it. Derive what they need first (`[environment]` below), or keep that tag.
 
 ## Privacy extras
 

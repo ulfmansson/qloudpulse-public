@@ -94,6 +94,8 @@ fn rules() -> &'static [Rule] {
             r("jwt", Severity::Block, r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
             r("github-token", Severity::Block, r"\bgh[pousr]_[A-Za-z0-9]{36}\b"),
             r("slack-token", Severity::Block, r"\bxox[baprs]-[A-Za-z0-9-]{10,}"),
+            // A view token reads every value it encrypted: it must never leave in a bundle.
+            r("qloudpulse-view-token", Severity::Block, r"\bqp_[A-Za-z0-9_-]{43}(?:[^A-Za-z0-9_-]|$)"),
             r("password-in-url", Severity::Block, r"\b[a-z][a-z0-9+.-]*://[^/\s:@<>]+:[^/\s@<>]+@"),
             r(
                 "secret-assignment",
@@ -236,5 +238,22 @@ mod tests {
     fn pseudonyms_and_ids_are_not_findings() {
         let body = "<R><value>p_3f9a0c1d2e3f4a5b</value><arn>arn:aws:iam::111122223333:role/x</arn><id>i-0123456789abcdef0</id></R>";
         assert!(scan(&[record(body)], &ScanConfig::default()).kinds.is_empty());
+    }
+
+    #[test]
+    fn a_view_token_never_leaves() {
+        let token = crate::view_token::ViewToken::generate();
+        let sealed = token.cipher().seal("alice");
+        let body = format!(
+            "<R><tagSet><item><key>Note</key><value>{}</value></item><item><key>Owner</key><value>{sealed}</value></item></tagSet></R>",
+            token.text()
+        );
+        let report = scan(&[record(&body)], &ScanConfig::default());
+        assert_eq!(report.kinds["qloudpulse-view-token"].count, 1, "{report:?}");
+        let clean = scan(&[record(&format!("<R><v>{sealed}</v></R>"))], &ScanConfig::default());
+        assert!(
+            clean.blocking().is_empty(),
+            "an encrypted value is not a finding: {clean:?}"
+        );
     }
 }

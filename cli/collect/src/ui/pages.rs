@@ -179,6 +179,7 @@ fn action_class(action: &str) -> &'static str {
         "keep" => "p-keep",
         "drop" => "p-drop",
         "pseudonymize" => "p-pseudonymize",
+        "encrypt" => "p-encrypt",
         "replace" => "p-replace",
         _ => "p-default",
     }
@@ -567,7 +568,7 @@ fn analyze_page(s: &Shared, q: &HashMap<String, String>) -> Result<Response> {
                     show_values,
                     true,
                 );
-                match Pseudonymizer::load(&config.key_file, false) {
+                match Pseudonymizer::for_config(&config, false) {
                     Ok(p) => {
                         let (redacted, _) = rules::redact(&config, &p, records.clone(), &meta.outcome);
                         let after = crate::scan::scan(&redacted, &config.scan);
@@ -801,12 +802,14 @@ fn preview(s: &Shared, config: Option<&Config>, record: Option<usize>) -> Previe
             ..empty("Fix the rules above to see the preview.")
         };
     };
-    let pseudonyms = match Pseudonymizer::load(&config.key_file, false) {
+    let pseudonyms = match Pseudonymizer::for_config(config, false) {
         Ok(p) => p,
         Err(e) => {
             return PreviewView {
                 label,
-                ..empty(&format!("No preview without the pseudonym key: {e:#}"))
+                ..empty(&format!(
+                    "No preview without the pseudonym key and, for encrypt rules, the view token: {e:#}"
+                ))
             };
         }
     };
@@ -975,6 +978,10 @@ fn cost(draft: &Draft, t: &rules::TagRow) -> (String, &'static str) {
         Some((_, f)) => match effective {
             "drop" => (format!("disables {f}"), "bad"),
             "pseudonymize" => (format!("{f} show pseudonyms"), "warn"),
+            "encrypt" => (
+                format!("{f} show encrypted values until the view token is entered"),
+                "warn",
+            ),
             "replace" => (format!("{f} see replaced values"), "warn"),
             _ => (format!("feeds {f}"), "ok"),
         },
@@ -1429,6 +1436,7 @@ fn bundle_page(s: &Shared, name: &str, q: &HashMap<String, String>) -> Result<Re
         ("kept", list(&r.tags_kept)),
         ("dropped", list(&r.tags_dropped)),
         ("pseudonymized", list(&r.tags_pseudonymized)),
+        ("encrypted", list(&r.tags_encrypted)),
         ("replaced", list(&r.tags_replaced)),
         ("fields", list(&r.fields)),
     ];
