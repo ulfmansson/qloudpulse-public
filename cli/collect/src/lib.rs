@@ -15,6 +15,7 @@ pub mod derive;
 pub mod encrypt;
 pub mod identifiers;
 pub mod log;
+pub mod paths;
 pub mod pseudonym;
 pub mod record;
 pub mod redact;

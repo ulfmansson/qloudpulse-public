@@ -1,6 +1,7 @@
 //! Delivering finished bundles: to the customer's own S3 bucket, to qloudpulse (feature `upload`), or to a command.
 //! Raw snapshots are never delivered. Which bundle reached which target is kept in `<output_dir>/.delivered.json`,
-//! so a failed delivery is retried at the next run, and retention never deletes a bundle a target still lacks.
+//! so a failed delivery is retried at the next run, and retention never deletes a bundle a target still lacks. Once
+//! every configured target has a bundle, it is deleted (`[run] delete_delivered`, on by default).
 
 #[cfg(feature = "upload")]
 pub mod qloudpulse;
@@ -102,7 +103,47 @@ impl Deliverer<'_> {
                 failed.join(", ")
             );
         }
+        self.settle(bundle, &name, &mut state)
+    }
+
+    /// Notes that `target` has `bundle`, delivered some other way (`upload`), then deletes it as [`Self::deliver`]
+    /// would. Only a bundle in `output_dir` is noted or deleted.
+    pub fn record_delivered(&self, bundle: &Path, target: &str) -> Result<()> {
+        if !self.in_output_dir(bundle) {
+            return Ok(());
+        }
+        let name = bundle
+            .file_name()
+            .context("a bundle path ends in a file name")?
+            .to_string_lossy()
+            .into_owned();
+        let mut state = load_state(&self.config.output_dir);
+        state.entry(name.clone()).or_default().insert(target.to_string());
+        save_state(&self.config.output_dir, &state)?;
+        self.settle(bundle, &name, &mut state)
+    }
+
+    /// With `delete_delivered`, deletes a bundle of `output_dir` that every configured target has.
+    fn settle(&self, bundle: &Path, name: &str, state: &mut State) -> Result<()> {
+        let everywhere = targets(self.config)
+            .iter()
+            .all(|t| state.get(name).is_some_and(|d| d.contains(*t)));
+        if self.config.run.delete_delivered && everywhere && self.in_output_dir(bundle) {
+            remove(bundle, state)?;
+            save_state(&self.config.output_dir, state)?;
+            log::info("deleted delivered bundle", &[("bundle", name.to_string())]);
+        }
         Ok(())
+    }
+
+    /// Whether `bundle` is one of this config's own, in `output_dir`: a bundle named from anywhere else is the
+    /// customer's copy and is never deleted.
+    pub fn in_output_dir(&self, bundle: &Path) -> bool {
+        let canonical = |p: &Path| std::fs::canonicalize(p).ok();
+        match (bundle.parent().and_then(canonical), canonical(&self.config.output_dir)) {
+            (Some(dir), Some(out)) => dir == out,
+            _ => false,
+        }
     }
 
     fn send(&self, target: &str, bundle: &Path, name: &str) -> Result<String> {
@@ -186,16 +227,22 @@ impl Deliverer<'_> {
         let mut state = load_state(&self.config.output_dir);
         let mut removed = 0;
         for old in all.iter().take(excess).filter(|p| !pending.contains(*p)) {
-            std::fs::remove_file(old)?;
-            let _ = std::fs::remove_file(crate::encrypt::jwe_path(old));
-            if let Some(name) = old.file_name() {
-                state.remove(&*name.to_string_lossy());
-            }
+            remove(old, &mut state)?;
             removed += 1;
         }
         save_state(&self.config.output_dir, &state)?;
         Ok(removed)
     }
+}
+
+/// Deletes a bundle, the `.jwe` beside it, and its line in the delivery state.
+fn remove(bundle: &Path, state: &mut State) -> Result<()> {
+    std::fs::remove_file(bundle).with_context(|| format!("deleting {}", bundle.display()))?;
+    let _ = std::fs::remove_file(crate::encrypt::jwe_path(bundle));
+    if let Some(name) = bundle.file_name() {
+        state.remove(&*name.to_string_lossy());
+    }
+    Ok(())
 }
 
 /// `.tgz` files in `dir`, oldest first (names sort by window).
@@ -247,7 +294,7 @@ mod tests {
             std::fs::write(out.join(format!("qloudpulse-main-20261121{h}.tgz")), b"x").unwrap();
         }
         let text = format!(
-            "source_id = \"main\"\noutput_dir = \"{}\"\n[run]\nkeep_bundles = 1\n[deliver.command]\nargv = [\"true\", \"{{bundle}}\"]\n",
+            "source_id = \"main\"\noutput_dir = \"{}\"\n[run]\nkeep_bundles = 1\ndelete_delivered = false\n[deliver.command]\nargv = [\"true\", \"{{bundle}}\"]\n",
             out.display()
         );
         let config: Config = toml::from_str(&text).unwrap();
@@ -263,5 +310,57 @@ mod tests {
         assert_eq!(deliverer.pending().unwrap().len(), 2);
         assert_eq!(deliverer.prune().unwrap(), 1, "only the delivered old bundle goes");
         assert_eq!(bundles(&out).unwrap().len(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_bundle_every_target_has_is_deleted_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let sent = out.join("qloudpulse-main-20261121T0100Z.tgz");
+        std::fs::write(&sent, b"x").unwrap();
+        std::fs::write(crate::encrypt::jwe_path(&sent), b"x").unwrap();
+        let elsewhere = dir.path().join("qloudpulse-main-20261121T0200Z.tgz");
+        std::fs::write(&elsewhere, b"x").unwrap();
+        let text = format!(
+            "source_id = \"main\"\noutput_dir = \"{}\"\n[deliver.command]\nargv = [\"true\", \"{{bundle}}\"]\n",
+            out.display()
+        );
+        let config: Config = toml::from_str(&text).unwrap();
+        assert!(config.run.delete_delivered);
+        let deliverer = Deliverer {
+            config: &config,
+            transport: &Never,
+            credentials: None,
+        };
+        deliverer.deliver(&sent, None).unwrap();
+        assert!(!sent.exists(), "delivered to every target, so deleted");
+        assert!(!crate::encrypt::jwe_path(&sent).exists());
+        assert!(!load_state(&out).contains_key("qloudpulse-main-20261121T0100Z.tgz"));
+        deliverer.deliver(&elsewhere, None).unwrap();
+        assert!(elsewhere.exists(), "a bundle outside output_dir is the customer's copy");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_target_keeps_the_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let bundle = out.join("qloudpulse-main-20261121T0100Z.tgz");
+        std::fs::write(&bundle, b"x").unwrap();
+        let text = format!(
+            "source_id = \"main\"\noutput_dir = \"{}\"\n[deliver.command]\nargv = [\"false\"]\n",
+            out.display()
+        );
+        let config: Config = toml::from_str(&text).unwrap();
+        let deliverer = Deliverer {
+            config: &config,
+            transport: &Never,
+            credentials: None,
+        };
+        assert!(deliverer.deliver(&bundle, None).is_err());
+        assert!(bundle.exists());
     }
 }

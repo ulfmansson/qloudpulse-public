@@ -30,7 +30,12 @@ most once a day, never from `collect`, `pack`, `deliver`, `upload` or `run`, and
   **call-plan manifest** (operations and IAM actions per collector) and a **bundle JSON Schema** (see Ownership).
 - **Unattended is the primary mode**: no prompts, structured logs, non-zero exit on partial failure. `analyze` and
   `ui` are the human-facing commands.
-- **Config is TOML**, path from `--config`. `init` writes a commented starter file. No secrets in it: AWS credentials
+- **Config is TOML**, path from `--config` (or `QLOUDPULSE_COLLECT_CONFIG`); unnamed, `./qloudpulse-collect.toml` if
+  it exists, else `qloudpulse-collect.toml` in `$XDG_CONFIG_HOME/qloudpulse` or `~/.config/qloudpulse`
+  (`%APPDATA%\qloudpulse` on Windows). Raw snapshots and bundles go to the state directory,
+  `~/.local/state/qloudpulse/collect/<source_id>/` (`$XDG_STATE_HOME`, `%LOCALAPPDATA%`), unless the config names
+  `work_dir` or `output_dir`; a bundle every target has is deleted. `--help` lists the paths. `init` writes a
+  commented starter file. No secrets in it: AWS credentials
   come from the default credential chain.
 
 ### Commands and data flow

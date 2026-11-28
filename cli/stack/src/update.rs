@@ -340,7 +340,7 @@ fn write_cache(path: &Path, now: u64, latest: Option<&str>) {
 }
 
 /// `%LOCALAPPDATA%\qloudpulse` on Windows, else `$XDG_CACHE_HOME/qloudpulse` or `~/.cache/qloudpulse`.
-fn cache_file(client: &Client) -> Option<PathBuf> {
+pub fn cache_file(client: &Client) -> Option<PathBuf> {
     let absolute = |v: std::ffi::OsString| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
     let base = if cfg!(windows) {
         std::env::var_os("LOCALAPPDATA").and_then(absolute)?

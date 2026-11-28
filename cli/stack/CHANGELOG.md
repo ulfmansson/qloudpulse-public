@@ -10,6 +10,11 @@ has lines.
 
 ## [Unreleased]
 
+### Added
+
+- `--help` ends with the files on this machine: where `login` keeps the token (the system keychain, else
+  `~/.config/qloudpulse/credentials`, or `QLOUDPULSE_CREDENTIALS_FILE`) and the update check's cache.
+
 ## [0.6.0] - 2026-11-22
 
 ### Added

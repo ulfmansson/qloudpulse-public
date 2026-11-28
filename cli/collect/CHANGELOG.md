@@ -10,6 +10,21 @@ has lines.
 
 ## [Unreleased]
 
+- **The config lives in `~/.config/qloudpulse` by default** (`$XDG_CONFIG_HOME/qloudpulse` if set,
+  `%APPDATA%\qloudpulse` on Windows), beside the qloudpulse CLI's sign-in: with no `--config` and no
+  `QLOUDPULSE_COLLECT_CONFIG`, the client reads `qloudpulse-collect.toml` there, and `init` writes it there with the
+  key and the view token, creating the directory (0700). A `qloudpulse-collect.toml` in the current directory is still
+  used first, so a setup made before keeps its key and its pseudonyms.
+- **Raw snapshots and bundles go to the state directory**, not beside the config:
+  `~/.local/state/qloudpulse/collect/<source_id>/work` and `.../bundles` (`$XDG_STATE_HOME` if set,
+  `%LOCALAPPDATA%\qloudpulse` on Windows), one directory per `source_id`. Only when the config leaves `work_dir` and
+  `output_dir` out: a config that names them, as `init` wrote them before, keeps its files where they are. The starter
+  config leaves them out.
+- **A delivered bundle is deleted**: once every `[deliver]` target has it, or once `upload` sent a bundle of
+  `output_dir`, the bundle and its `.jwe` go. `[run] delete_delivered = false` keeps them until `keep_bundles` pushes
+  them out, as before. A bundle outside `output_dir` is never deleted.
+- `--help` ends with the files on this machine, worked out from the config the run would use: config, pseudonym key,
+  view token, raw snapshots, bundles, sign-in token and update check.
 - **Encrypted values and the view token.** A new action, `encrypt`, for `[tags]` (`encrypt = ["Owner"]`) and
   `[[fields]]` (`action = "encrypt"`): the value leaves as `qpe1_<key id>_…`, AES-256-GCM under a key derived from
   the view token, `qp_…`, which `init` (or `view-token --create`) creates and only you hold. The same value always
