@@ -325,6 +325,7 @@ fn action_class(action: &str) -> &'static str {
         "keep" => "p-keep",
         "drop" => "p-drop",
         "pseudonymize" => "p-pseudonymize",
+        "encrypt" => "p-encrypt",
         "replace" => "p-replace",
         _ => "p-default",
     }
@@ -379,15 +380,44 @@ fn read_manifest(path: &Path) -> Result<Manifest> {
 pub struct Delivery {
     pub target: String,
     pub done: bool,
+    /// Where to follow it after it left: the report site's bundle page, once qloudpulse has it. Else empty.
+    pub href: String,
+}
+
+/// The report site's page that follows each uploaded bundle (checked, replayed, refused), for the qloudpulse that
+/// `[deliver.qloudpulse]` names, or the one `upload` sends to without it. Empty in a build without the upload, or
+/// for an endpoint that is not usable.
+#[cfg(feature = "upload")]
+fn progress_page(config: &Config) -> String {
+    let endpoint = config
+        .deliver
+        .qloudpulse
+        .as_ref()
+        .map_or(crate::config::QLOUDPULSE_ENDPOINT, |q| q.endpoint.as_str());
+    crate::deliver::qloudpulse::progress_page(endpoint).unwrap_or_default()
+}
+
+#[cfg(not(feature = "upload"))]
+fn progress_page(_config: &Config) -> String {
+    String::new()
 }
 
 fn deliveries(config: &Config, state: &BTreeMap<String, BTreeSet<String>>, name: &str) -> Vec<Delivery> {
     let done = state.get(name).cloned().unwrap_or_default();
+    let progress = progress_page(config);
     crate::deliver::targets(config)
         .into_iter()
-        .map(|t| Delivery {
-            target: t.to_string(),
-            done: done.contains(t),
+        .map(|t| {
+            let done = done.contains(t);
+            Delivery {
+                target: t.to_string(),
+                done,
+                href: if done && t == "qloudpulse" {
+                    progress.clone()
+                } else {
+                    String::new()
+                },
+            }
         })
         .collect()
 }
@@ -687,7 +717,7 @@ fn analyze_page(s: &Shared, q: &HashMap<String, String>) -> Result<Response> {
                     show_values,
                     true,
                 );
-                match Pseudonymizer::load(&config.key_file, false) {
+                match Pseudonymizer::for_config(&config, false) {
                     Ok(p) => {
                         let (redacted, _) = rules::redact(&config, &p, records.clone(), &meta.outcome);
                         let after = crate::scan::scan(&redacted, &config.scan);
@@ -923,12 +953,14 @@ fn preview(s: &Shared, config: Option<&Config>, record: Option<usize>) -> Previe
             ..empty("Fix the rules above to see the preview.")
         };
     };
-    let pseudonyms = match Pseudonymizer::load(&config.key_file, false) {
+    let pseudonyms = match Pseudonymizer::for_config(config, false) {
         Ok(p) => p,
         Err(e) => {
             return PreviewView {
                 label,
-                ..empty(&format!("No preview without the pseudonym key: {e:#}"))
+                ..empty(&format!(
+                    "No preview without the pseudonym key and, for encrypt rules, the view token: {e:#}"
+                ))
             };
         }
     };
@@ -1097,6 +1129,10 @@ fn cost(draft: &Draft, t: &rules::TagRow) -> (String, &'static str) {
         Some((_, f)) => match effective {
             "drop" => (format!("disables {f}"), "bad"),
             "pseudonymize" => (format!("{f} show pseudonyms"), "warn"),
+            "encrypt" => (
+                format!("{f} show encrypted values until the view token is entered"),
+                "warn",
+            ),
             "replace" => (format!("{f} see replaced values"), "warn"),
             _ => (format!("feeds {f}"), "ok"),
         },
@@ -1283,6 +1319,8 @@ struct BundlesView {
     output_dir: String,
     keep: usize,
     targets: Vec<TargetView>,
+    /// The report site's bundle page, or empty: see [`progress_page`].
+    progress: String,
     rows: Vec<BundleRow>,
 }
 
@@ -1387,6 +1425,7 @@ fn bundles_page(s: &Shared) -> Result<Response> {
         output_dir: config.output_dir.display().to_string(),
         keep: config.run.keep_bundles,
         targets: targets(&config),
+        progress: progress_page(&config),
         rows,
     }))
 }
@@ -1550,6 +1589,7 @@ fn bundle_page(s: &Shared, name: &str, q: &HashMap<String, String>) -> Result<Re
         ("kept", list(&r.tags_kept)),
         ("dropped", list(&r.tags_dropped)),
         ("pseudonymized", list(&r.tags_pseudonymized)),
+        ("encrypted", list(&r.tags_encrypted)),
         ("replaced", list(&r.tags_replaced)),
         ("fields", list(&r.fields)),
     ];

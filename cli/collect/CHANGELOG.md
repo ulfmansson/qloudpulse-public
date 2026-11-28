@@ -10,6 +10,34 @@ has lines.
 
 ## [Unreleased]
 
+- **The config lives in `~/.config/qloudpulse` by default** (`$XDG_CONFIG_HOME/qloudpulse` if set,
+  `%APPDATA%\qloudpulse` on Windows), beside the qloudpulse CLI's sign-in: with no `--config` and no
+  `QLOUDPULSE_COLLECT_CONFIG`, the client reads `qloudpulse-collect.toml` there, and `init` writes it there with the
+  key and the view token, creating the directory (0700). A `qloudpulse-collect.toml` in the current directory is still
+  used first, so a setup made before keeps its key and its pseudonyms.
+- **Raw snapshots and bundles go to the state directory**, not beside the config:
+  `~/.local/state/qloudpulse/collect/<source_id>/work` and `.../bundles` (`$XDG_STATE_HOME` if set,
+  `%LOCALAPPDATA%\qloudpulse` on Windows), one directory per `source_id`. Only when the config leaves `work_dir` and
+  `output_dir` out: a config that names them, as `init` wrote them before, keeps its files where they are. The starter
+  config leaves them out.
+- **A delivered bundle is deleted**: once every `[deliver]` target has it, or once `upload` sent a bundle of
+  `output_dir`, the bundle and its `.jwe` go. `[run] delete_delivered = false` keeps them until `keep_bundles` pushes
+  them out, as before. A bundle outside `output_dir` is never deleted.
+- `--help` ends with the files on this machine, worked out from the config the run would use: config, pseudonym key,
+  view token, raw snapshots, bundles, sign-in token and update check.
+- **Encrypted values and the view token.** A new action, `encrypt`, for `[tags]` (`encrypt = ["Owner"]`) and
+  `[[fields]]` (`action = "encrypt"`): the value leaves as `qpe1_<key id>_…`, AES-256-GCM under a key derived from
+  the view token, `qp_…`, which `init` (or `view-token --create`) creates and only you hold. The same value always
+  gives the same output, so qloudpulse still groups costs by it and the replay still matches. Enter the token in
+  qloudpulse and your browser decrypts the values there; the token and the real values never reach qloudpulse.
+  `view-token` prints it. The manifest names the token by its key id (`view_key_id`), never the token itself.
+- The browser code that decrypts, `web/qloudpulse-values.js` (WebCrypto only, no network), is published here with
+  test vectors the client's tests keep current.
+- `pack` refuses a bundle that holds a view token (`qloudpulse-view-token`).
+- Bundle `schema_version` 1.1.0: the manifest adds `view_key_id` and `rules.tags_encrypted`, both optional.
+- After an upload, the client says where to follow the bundle on qloudpulse: `upload`, `deliver` and `run` print the
+  report site's **Bundles arrived** page with the reference, and in the local UI a delivered `qloudpulse ✓` (Bundles,
+  a bundle's page, Run history) links to it, as does the Bundles page's targets panel.
 - `run` collects when it starts, then at each aligned time as before; it no longer waits up to an hour for the first
   cycle. Started before `[run] minute` past the hour, it waits for that minute. An hour whose bundle is already in
   `output_dir` is not collected again (a restart within the hour only delivers what is owed), and a cycle that runs

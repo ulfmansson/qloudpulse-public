@@ -24,6 +24,10 @@ pub struct Config {
     pub accounts: Vec<AccountConfig>,
     #[serde(default = "default_key_file")]
     pub key_file: PathBuf,
+    /// The view token behind the `encrypt` action (`qp_…`). You enter it in qloudpulse to read encrypted values in
+    /// your browser; qloudpulse never receives it.
+    #[serde(default = "default_view_token_file")]
+    pub view_token_file: PathBuf,
     /// Raw snapshots and the client's own state. Never delivered.
     #[serde(default = "default_work_dir")]
     pub work_dir: PathBuf,
@@ -93,6 +97,9 @@ pub struct TagRules {
     pub drop: Vec<String>,
     #[serde(default)]
     pub pseudonymize: Vec<String>,
+    /// Encrypted with the view token: qloudpulse groups by them, and only someone with the token reads them.
+    #[serde(default)]
+    pub encrypt: Vec<String>,
     #[serde(default)]
     pub replace: Vec<TagReplace>,
 }
@@ -104,6 +111,7 @@ impl Default for TagRules {
             keep: FEATURE_TAGS.iter().map(|(k, _)| k.to_string()).collect(),
             drop: vec![],
             pseudonymize: vec![],
+            encrypt: vec![],
             replace: vec![],
         }
     }
@@ -126,6 +134,7 @@ pub enum FieldAction {
     Drop,
     Replace,
     Pseudonymize,
+    Encrypt,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -213,6 +222,10 @@ pub struct RunConfig {
     /// Bundles kept in `output_dir`; an undelivered one is never deleted.
     #[serde(default = "week_of_hours")]
     pub keep_bundles: usize,
+    /// Delete a bundle (and its `.jwe`) from `output_dir` once every configured target has it. Off: delivered
+    /// bundles stay until `keep_bundles` pushes them out.
+    #[serde(default = "yes")]
+    pub delete_delivered: bool,
 }
 
 impl Default for RunConfig {
@@ -223,6 +236,7 @@ impl Default for RunConfig {
             daily_hour: 0,
             keep_raw: false,
             keep_bundles: 168,
+            delete_delivered: true,
         }
     }
 }
@@ -321,6 +335,9 @@ fn default_table() -> String {
 fn default_key_file() -> PathBuf {
     "qloudpulse-collect.key".into()
 }
+fn default_view_token_file() -> PathBuf {
+    "qloudpulse-collect.view-token".into()
+}
 fn default_work_dir() -> PathBuf {
     "qloudpulse-collect-work".into()
 }
@@ -363,11 +380,34 @@ fn week_of_hours() -> usize {
 impl Config {
     pub fn load(path: &Path) -> Result<(Config, Vec<u8>)> {
         let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-        let mut config: Config = toml::from_str(std::str::from_utf8(&bytes).context("the config is not UTF-8")?)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let config = Config::parse_at(&bytes, path)?;
+        Ok((config, bytes))
+    }
+
+    /// The config `bytes` would be as the file at `path`: what [`Config::load`] reads, and what `--help` shows
+    /// for a config `init` has not written yet.
+    pub fn parse_at(bytes: &[u8], path: &Path) -> Result<Config> {
+        let text = std::str::from_utf8(bytes).context("the config is not UTF-8")?;
+        let mut config: Config = toml::from_str(text).with_context(|| format!("reading {}", path.display()))?;
         config.resolve_paths(path.parent().unwrap_or(Path::new(".")));
         config.check()?;
-        Ok((config, bytes))
+        let named: toml::Table = toml::from_str(text)?;
+        config.use_state_dir(&named, crate::paths::state_dir().as_deref());
+        Ok(config)
+    }
+
+    /// `work_dir` and `output_dir` the config leaves out go to the source's own directory in the state directory,
+    /// not beside the config. Named ones, as `init` wrote them before, stay where they say. With no state directory
+    /// the defaults beside the config are kept.
+    fn use_state_dir(&mut self, named: &toml::Table, state_dir: Option<&Path>) {
+        let Some(state_dir) = state_dir else { return };
+        let dir = crate::paths::source_state_dir(state_dir, &self.source_id);
+        if !named.contains_key("work_dir") {
+            self.work_dir = dir.join("work");
+        }
+        if !named.contains_key("output_dir") {
+            self.output_dir = dir.join("bundles");
+        }
     }
 
     /// Relative paths are relative to the config file, so a run from any directory finds the same files.
@@ -377,7 +417,12 @@ impl Config {
         {
             e.public_key_file = base.join(&e.public_key_file);
         }
-        for p in [&mut self.key_file, &mut self.work_dir, &mut self.output_dir] {
+        for p in [
+            &mut self.key_file,
+            &mut self.view_token_file,
+            &mut self.work_dir,
+            &mut self.output_dir,
+        ] {
             if p.is_relative() {
                 *p = base.join(&*p);
             }
@@ -473,11 +518,20 @@ impl Config {
                 TagAction::Keep | TagAction::Replace(_) => None,
                 TagAction::Drop => Some(format!("dropping tag {key} disables {feature}")),
                 TagAction::Pseudonymize => Some(format!("pseudonymizing tag {key} makes {feature} show pseudonyms")),
+                TagAction::Encrypt => Some(format!(
+                    "encrypting tag {key} makes {feature} show encrypted values until the view token is entered, \
+                     and rules in qloudpulse cannot match its values"
+                )),
             })
             .collect()
     }
 
-    /// The action for a tag key. Order: drop, pseudonymize, replace, keep, then the default.
+    /// Whether a rule encrypts, so the view token is needed.
+    pub fn encrypts(&self) -> bool {
+        !self.tags.encrypt.is_empty() || self.fields.iter().any(|f| f.action == FieldAction::Encrypt)
+    }
+
+    /// The action for a tag key. Order: drop, pseudonymize, encrypt, replace, keep, then the default.
     pub fn tag_action(&self, key: &str) -> TagAction {
         // Derived from your own rules before redaction: kept, whatever the default.
         if key == crate::derive::ENV_TAG {
@@ -488,6 +542,8 @@ impl Config {
             TagAction::Drop
         } else if t.pseudonymize.iter().any(|k| k == key) {
             TagAction::Pseudonymize
+        } else if t.encrypt.iter().any(|k| k == key) {
+            TagAction::Encrypt
         } else if let Some(i) = t.replace.iter().position(|r| r.key == key) {
             TagAction::Replace(i)
         } else if t.keep.iter().any(|k| k == key) || t.default == TagDefault::Allow {
@@ -512,6 +568,7 @@ pub enum TagAction {
     Keep,
     Drop,
     Pseudonymize,
+    Encrypt,
     /// Index into `tags.replace`.
     Replace(usize),
 }
@@ -522,6 +579,7 @@ impl TagAction {
             TagAction::Keep => "keep",
             TagAction::Drop => "drop",
             TagAction::Pseudonymize => "pseudonymize",
+            TagAction::Encrypt => "encrypt",
             TagAction::Replace(_) => "replace",
         }
     }
@@ -546,8 +604,14 @@ home_region = "eu-west-1"
 # role_arn = "arn:aws:iam::111122223333:role/qloudpulse-collect"
 
 key_file = "qloudpulse-collect.key"      # created by `init`; back it up: losing it changes every pseudonym
-work_dir = "qloudpulse-collect-work"     # raw snapshots and state; never delivered
-output_dir = "bundles"
+# The view token (qp_…) behind the encrypt action, created by `init`. Enter it in qloudpulse to read encrypted values
+# in your browser; qloudpulse never receives it. Back it up: without it nobody can read those values again.
+view_token_file = "qloudpulse-collect.view-token"
+# Raw snapshots (never delivered) and bundles with their delivery state. Left out, they go to the state directory:
+# ~/.local/state/qloudpulse/collect/<source_id>/work and .../bundles ($XDG_STATE_HOME if set, %LOCALAPPDATA% on
+# Windows). A relative path here is relative to this file. `qloudpulse-collect --help` shows where they are.
+# work_dir = "qloudpulse-collect-work"
+# output_dir = "bundles"
 
 # Keep a local table of pseudonym -> real value, to read qloudpulse's reports. It stays on this machine.
 keep_pseudonym_map = false
@@ -563,6 +627,7 @@ keep = ["Name", "Environment", "Team", "Company", "eks:cluster-name", "aws:eks:c
         "karpenter.sh/nodepool", "eks:nodegroup-name", "aws:autoscaling:groupName"]
 drop = []
 pseudonymize = []   # e.g. ["Owner"]: the same value always gives the same pseudonym, which only you can reverse
+encrypt = []        # e.g. ["Owner"]: sent encrypted; whoever has the view token reads it in qloudpulse's UI
 
 # [[tags.replace]]
 # key = "CostCenter"
@@ -570,7 +635,7 @@ pseudonymize = []   # e.g. ["Owner"]: the same value always gives the same pseud
 # with = "$1"
 
 # Rules for any field, by the end of its path in the answer (list wrappers `item`/`member` left out).
-# Actions: drop, replace (with, optional pattern), pseudonymize. Fields qloudpulse prices from are refused.
+# Actions: drop, replace (with, optional pattern), pseudonymize, encrypt. Fields qloudpulse prices from are refused.
 # [[fields]]
 # path = "privateDnsName"
 # action = "pseudonymize"
@@ -618,6 +683,7 @@ minute = 5          # start 5 minutes past the hour, so the hour just ended is c
 daily_hour = 0      # this UTC hour's run also reads the 90-day spot price history
 keep_raw = false
 keep_bundles = 168
+delete_delivered = true   # delete a bundle once every [deliver] target has it
 
 # Encrypt each bundle (JWE, ECDH-ES+A256KW / A256GCM) to qloudpulse's public key for bundles. The plaintext .tgz
 # stays here for you to inspect; the .tgz.jwe next to it is what is delivered.
@@ -699,6 +765,28 @@ mod tests {
             let err = parse(&format!("source_id = \"a\"\napp_url = \"{bad}\"")).unwrap_err();
             assert!(err.to_string().contains("app_url"), "{bad}: {err}");
         }
+    }
+
+    #[test]
+    fn left_out_dirs_go_to_the_source_state_dir_and_named_ones_stay() {
+        let text = "source_id = \"main\"\nwork_dir = \"/w\"\n";
+        let mut config = parse(text).unwrap();
+        config.use_state_dir(&toml::from_str(text).unwrap(), Some(Path::new("/st/qloudpulse")));
+        assert_eq!(config.work_dir, PathBuf::from("/w"));
+        assert_eq!(config.output_dir, PathBuf::from("/st/qloudpulse/collect/main/bundles"));
+
+        let text = "source_id = \"main\"\n";
+        let mut config = parse(text).unwrap();
+        config.use_state_dir(&toml::from_str(text).unwrap(), Some(Path::new("/st/qloudpulse")));
+        assert_eq!(config.work_dir, PathBuf::from("/st/qloudpulse/collect/main/work"));
+
+        let mut config = parse(text).unwrap();
+        config.use_state_dir(&toml::from_str(text).unwrap(), None);
+        assert_eq!(
+            config.work_dir,
+            PathBuf::from("qloudpulse-collect-work"),
+            "no state dir: beside the config"
+        );
     }
 
     #[test]

@@ -42,7 +42,7 @@
       <td class="small nowrap">{{ h.window }}</td><td class="small nowrap">{{ h.collected }}</td><td class="st {{ h.class }}">{{ h.result }}</td>
       <td class="num">{{ h.records }}</td><td class="num small">{{ h.accounts }}</td>
       <td class="mono small"><a href="/bundles/{{ h.name }}">{{ h.name }}</a></td>
-      <td><span class="deliv">{% for d in h.deliveries %}<span class="dv {% if d.done %}ok{% else %}bad{% endif %}">{{ d.target }} {% if d.done %}✓{% else %}✗{% endif %}</span>{% else %}<span class="muted small">—</span>{% endfor %}</span></td>
+      <td><span class="deliv">{% for d in h.deliveries %}{% if !d.href.is_empty() %}<a class="dv ok" href="{{ d.href }}" target="_blank" rel="noopener noreferrer" title="See on qloudpulse what became of it: checked, then read into your reports">{{ d.target }} ✓ ↗</a>{% else %}<span class="dv {% if d.done %}ok{% else %}bad{% endif %}">{{ d.target }} {% if d.done %}✓{% else %}✗{% endif %}</span>{% endif %}{% else %}<span class="muted small">—</span>{% endfor %}</span></td>
       <td class="small">{% if h.failures.is_empty() && h.impact.is_empty() %}<span class="muted">—</span>{% else %}<ul class="plain">{% for f in h.failures %}<li class="warn">{{ f }}</li>{% endfor %}{% for i in h.impact %}<li class="muted">rule cost: {{ i }}</li>{% endfor %}</ul>{% endif %}</td>
     </tr>
     {% endfor %}

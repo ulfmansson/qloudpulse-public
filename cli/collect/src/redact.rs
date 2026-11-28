@@ -172,6 +172,7 @@ impl<'a> Redactor<'a> {
             TagAction::Keep => Some(value.to_string()),
             TagAction::Drop => None,
             TagAction::Pseudonymize => Some(self.pseudonyms.pseudonym(value)),
+            TagAction::Encrypt => self.pseudonyms.encrypt(value),
             TagAction::Replace(i) => {
                 let rule = &self.config.tags.replace[i];
                 Some(match &self.tag_patterns[i] {
@@ -188,6 +189,7 @@ impl<'a> Redactor<'a> {
         let new = match field.rule.action {
             FieldAction::Drop => None,
             FieldAction::Pseudonymize => Some(self.pseudonyms.pseudonym(value)),
+            FieldAction::Encrypt => self.pseudonyms.encrypt(value),
             FieldAction::Replace => {
                 let with = field.rule.with.as_deref().unwrap_or_default();
                 Some(match &field.pattern {
@@ -662,6 +664,50 @@ mod tests {
             "kept under deny: {out}"
         );
         assert_eq!(stats.fields["derived qloudpulse:environment"], 1);
+    }
+
+    #[test]
+    fn encrypted_tags_and_fields_open_with_the_view_token_only() {
+        let config = config(
+            "[tags]\ndefault = \"deny\"\nencrypt = [\"Owner\"]\n[[fields]]\npath = \"TableNames\"\naction = \"encrypt\"\n",
+        );
+        assert!(config.encrypts());
+        let token = crate::view_token::ViewToken::generate();
+        let pseudonyms = Pseudonymizer::new(vec![7; 32], false).with_view_token(&token);
+        let xml = "<R><tagSet><item><key>Owner</key><value>alice@corp</value></item></tagSet></R>";
+        let mut records = vec![
+            record(xml, "", "x"),
+            record(r#"{"TableNames":["orders"]}"#, "{}", "application/x-amz-json-1.0"),
+            record("{}", r#"{"TableName":"orders"}"#, "application/x-amz-json-1.0"),
+        ];
+        let stats = Redactor::new(&config, &pseudonyms).records(&mut records);
+        let cipher = token.cipher();
+        let (owner, table) = (cipher.seal("alice@corp"), cipher.seal("orders"));
+        assert!(records[0].response.body.contains(&format!("<value>{owner}</value>")));
+        assert!(!records[0].response.body.contains("alice"));
+        assert_eq!(cipher.open(&owner).unwrap(), "alice@corp");
+        assert_eq!(records[1].response.body, format!(r#"{{"TableNames":["{table}"]}}"#));
+        assert_eq!(
+            records[2].request.body,
+            format!(r#"{{"TableName":"{table}"}}"#),
+            "carried into the request, so the replay matches"
+        );
+        assert_eq!(stats.tags["Owner"], ("encrypt".to_string(), 1));
+        assert_eq!(pseudonyms.view_key_id(), Some(token.key_id()));
+    }
+
+    #[test]
+    fn without_a_view_token_an_encrypted_value_is_dropped_not_sent() {
+        let config = config("[tags]\ndefault = \"allow\"\nencrypt = [\"Owner\"]\n");
+        let pseudonyms = Pseudonymizer::new(vec![7; 32], false);
+        let xml = "<R><tagSet><item><key>Owner</key><value>alice@corp</value></item></tagSet></R>";
+        let mut records = vec![record(xml, "", "x")];
+        Redactor::new(&config, &pseudonyms).records(&mut records);
+        assert!(
+            !records[0].response.body.contains("alice"),
+            "{}",
+            records[0].response.body
+        );
     }
 
     #[test]

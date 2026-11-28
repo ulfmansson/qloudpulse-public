@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: &str = "1.0.0";
+pub const SCHEMA_VERSION: &str = "1.1.0";
 const MANIFEST: &str = "manifest.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +56,10 @@ pub struct Manifest {
     pub identifiers: IdStats,
     /// Names the pseudonym key without revealing it. When it changes, every pseudonym changed.
     pub key_fingerprint: String,
+    /// Names the view token that encrypted this bundle's `qpe1_…` values, when a rule encrypts. qloudpulse asks
+    /// for a token with this key id; it never receives the token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view_key_id: Option<String>,
     /// What the rules cost in qloudpulse's reports.
     pub feature_impact: Vec<String>,
     /// What the last look before packing found in what leaves: kinds, counts, masked samples.
@@ -77,6 +81,8 @@ pub struct RulesSummary {
     pub tags_kept: Vec<String>,
     pub tags_dropped: Vec<String>,
     pub tags_pseudonymized: Vec<String>,
+    #[serde(default)]
+    pub tags_encrypted: Vec<String>,
     pub tags_replaced: Vec<String>,
     /// `path action`
     pub fields: Vec<String>,
@@ -93,6 +99,7 @@ impl RulesSummary {
             tags_kept: t.keep.clone(),
             tags_dropped: t.drop.clone(),
             tags_pseudonymized: t.pseudonymize.clone(),
+            tags_encrypted: t.encrypt.clone(),
             tags_replaced: t.replace.iter().map(|r| r.key.clone()).collect(),
             fields: config
                 .fields
@@ -190,6 +197,7 @@ pub fn pack(
         redaction: stats,
         identifiers: id_stats,
         key_fingerprint: pseudonyms.fingerprint(),
+        view_key_id: pseudonyms.view_key_id(),
         feature_impact: config.feature_impact(),
         scan,
     };
@@ -421,5 +429,51 @@ mod tests {
         assert!(!opened.records[0].response.body.contains("alice"));
         assert_eq!(opened.manifest.redaction.tags["Owner"], ("drop".to_string(), 1));
         assert_eq!(opened.manifest.key_fingerprint, pseudonyms.fingerprint());
+        assert_eq!(opened.manifest.view_key_id, None, "nothing encrypted, no key id");
+    }
+
+    #[test]
+    fn the_manifest_names_the_view_token_without_holding_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = format!(
+            "source_id = \"main\"\noutput_dir = \"{}\"\nwork_dir = \"{}\"\n[tags]\nencrypt = [\"Owner\"]\n",
+            dir.path().join("out").display(),
+            dir.path().join("work").display()
+        );
+        let config: Config = toml::from_str(&text).unwrap();
+        let token = crate::view_token::ViewToken::generate();
+        let pseudonyms = Pseudonymizer::new(vec![9; 32], false).with_view_token(&token);
+        let now: jiff::Timestamp = "2026-11-21T07:05:00Z".parse().unwrap();
+        let meta = SnapshotMeta {
+            tool_version: "t".into(),
+            call_plan_version: "p".into(),
+            window: Window::last_full_hour(now),
+            collected_at: now,
+            outcome: Outcome {
+                accounts: vec!["111122223333".into()],
+                regions: vec!["eu-west-1".into()],
+                failures: vec![],
+                cur: None,
+                forecast: None,
+            },
+        };
+        let tagged = "<R><tagSet><item><key>Owner</key><value>alice</value></item></tagSet></R>";
+        let snapshot = Snapshot::write(dir.path().join("raw"), meta, vec![record("aws-cost-collect", tagged)]).unwrap();
+        let path = pack(&config, text.as_bytes(), &pseudonyms, &snapshot, false).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let opened = open(&path).unwrap();
+        assert_eq!(opened.manifest.view_key_id, Some(token.key_id()));
+        assert_eq!(opened.manifest.rules.tags_encrypted, vec!["Owner".to_string()]);
+        let body = &opened.records[0].response.body;
+        let sealed = token.cipher().seal("alice");
+        assert!(body.contains(&sealed), "{body}");
+        let mut plain = Vec::new();
+        std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&bytes[..]), &mut plain).unwrap();
+        let plain = String::from_utf8_lossy(&plain);
+        assert!(
+            !plain.contains(&token.text()[3..]),
+            "the token is nowhere in the bundle"
+        );
+        assert!(!plain.contains("alice<"), "nor the real value");
     }
 }

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as Process, ExitCode, ExitStatus, Stdio};
 
 use anyhow::{Context, Result, anyhow, bail};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory as _, FromArgMatches as _, Parser, Subcommand, ValueEnum};
 
 use qloudpulse_stack::catalogue::Catalogue;
 use qloudpulse_stack::credentials::{self, Kept, Saved};
@@ -640,8 +640,25 @@ fn pulumi_up(args: &UpArgs) -> Result<ExitCode> {
     Ok(exit_code(run_pulumi(&pulumi, "up", pulumi_args)?))
 }
 
+/// Where the client keeps its files on this machine, worked out now: shown under `--help`.
+fn files_help(client: &update::Client) -> String {
+    let mut out = String::from("Files on this machine:\n");
+    let _ = writeln!(out, "  Sign-in token   {}", credentials::where_kept());
+    if std::env::var("QLOUDPULSE_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
+        let _ = writeln!(out, "                  (QLOUDPULSE_TOKEN is set and wins over it)");
+    }
+    match update::cache_file(client) {
+        Some(file) => {
+            let _ = write!(out, "  Update check    {}", file.display());
+        }
+        None => out.push_str("  Update check    not kept (no home directory)"),
+    }
+    out
+}
+
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let command = Cli::command().after_help(format!("{}\n\n{CONNECT}", files_help(&update::STACK)));
+    let cli = Cli::from_arg_matches(&command.get_matches()).unwrap_or_else(|e| e.exit());
     let result = match &cli.command {
         Command::Estimate(args) => estimate(args),
         Command::Pulumi(PulumiCommand::Preview(args)) => pulumi_preview(args),

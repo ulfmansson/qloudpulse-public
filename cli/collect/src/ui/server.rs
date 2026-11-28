@@ -404,7 +404,9 @@ mod tests {
         for path in ["/analyze", "/rules", "/bundles", "/runs"] {
             let page = body(call(app.clone(), get(path, "127.0.0.1:7781", Some(&s.token))));
             let links = outside_links(&page);
-            assert_eq!(links.len(), 2, "{path}: the app and its collectors page: {links:?}");
+            // The header's two come first: the app and its collectors page. A page may add its own after them,
+            // as /bundles does with Bundles arrived.
+            assert!(links.len() >= 2, "{path}: the app and its collectors page: {links:?}");
             assert!(links[0].contains(r#"href="https://app.qloudpulse.com""#), "{links:?}");
             assert!(
                 links[1].contains(r#"href="https://app.qloudpulse.com/account/aws""#),
@@ -413,7 +415,13 @@ mod tests {
             for link in links {
                 // The UI's first address carries the session token: no Referer may ever reach qloudpulse, and the
                 // page it opens gets no handle on this one.
-                assert!(link.contains(r#"rel="noreferrer noopener""#), "{link}");
+                let rel = link
+                    .split(r#"rel=""#)
+                    .nth(1)
+                    .and_then(|r| r.split('"').next())
+                    .unwrap_or("");
+                let rel: Vec<&str> = rel.split_whitespace().collect();
+                assert!(rel.contains(&"noreferrer") && rel.contains(&"noopener"), "{link}");
                 assert!(link.contains(r#"target="_blank""#), "{link}");
             }
             assert!(!page.contains(&s.token), "the token is in no page");
@@ -635,6 +643,70 @@ mod tests {
         assert!(
             after.contains(r#"<div class="note warn">qloudpulse-collect 9.9.9 is out (this is 0.1.0): "#),
             "{after}"
+        );
+    }
+
+    #[cfg(feature = "upload")]
+    #[test]
+    fn a_bundle_qloudpulse_has_links_to_where_it_is_followed() {
+        let dir = tempfile::tempdir().unwrap().keep();
+        // The Bundles page says how an upload would sign in: from a file of the test's, never this machine's keychain.
+        // SAFETY: no other test reads QLOUDPULSE_CREDENTIALS_FILE, and each one setting it would set a missing file.
+        unsafe {
+            std::env::set_var(
+                qloudpulse_stack::credentials::FILE_VARIABLE,
+                dir.join("credentials.json"),
+            )
+        };
+        let path = dir.join("c.toml");
+        let config = format!(
+            "{}\n[deliver.qloudpulse]\nendpoint = \"https://api.qloudpulse.com\"\n\n[deliver.command]\nargv = [\"true\"]\n",
+            crate::config::starter()
+        );
+        std::fs::write(&path, config).unwrap();
+        let bundles = dir.join("bundles");
+        std::fs::create_dir_all(&bundles).unwrap();
+        for name in ["main-2026112702.tgz", "main-2026112703.tgz"] {
+            std::fs::write(bundles.join(name), b"not read for the list").unwrap();
+        }
+        std::fs::write(
+            bundles.join(".delivered.json"),
+            r#"{"main-2026112702.tgz":["qloudpulse","command"],"main-2026112703.tgz":["command"]}"#,
+        )
+        .unwrap();
+        let s = Arc::new(Shared::new(path, "127.0.0.1:7781".parse().unwrap(), vec![], None));
+        let app = router(s.clone());
+        let text = |r: Response| {
+            let bytes = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(axum::body::to_bytes(r.into_body(), usize::MAX))
+                .unwrap();
+            String::from_utf8(bytes.to_vec()).unwrap()
+        };
+        let page = "https:&#x2f;&#x2f;app.qloudpulse.com&#x2f;account&#x2f;aws#aws-offline";
+        let page = |html: &str| {
+            html.replace(page, "PAGE")
+                .replace("https://app.qloudpulse.com/account/aws#aws-offline", "PAGE")
+        };
+        for uri in ["/bundles", "/runs"] {
+            let html = page(&text(call(app.clone(), get(uri, "127.0.0.1:7781", Some(&s.token)))));
+            // The one bundle qloudpulse has links there; the one it lacks, and the command's, do not.
+            assert_eq!(
+                html.matches(r#"<a class="dv ok" href="PAGE" target="_blank" rel="noopener noreferrer""#)
+                    .count(),
+                1,
+                "{uri}: {html}"
+            );
+            assert!(html.contains("qloudpulse ✓ ↗</a>"), "{uri}: {html}");
+            assert!(html.contains(r#"<span class="dv bad">qloudpulse ✗"#), "{uri}: {html}");
+        }
+        let html = page(&text(call(app, get("/bundles", "127.0.0.1:7781", Some(&s.token)))));
+        assert!(
+            html.contains(
+                r#"<a href="PAGE" target="_blank" rel="noopener noreferrer">Bundles arrived on qloudpulse ↗</a>"#
+            ),
+            "{html}"
         );
     }
 

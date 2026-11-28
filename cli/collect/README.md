@@ -74,8 +74,19 @@ release it would install has the upload in it. Build the new tag the same way in
 qloudpulse-collect init
 ```
 
-`init` writes `qloudpulse-collect.toml` and a pseudonym key, `qloudpulse-collect.key`. Back the key up: losing it
-changes every pseudonym, which breaks cost history at that point. Then set the role to read through:
+`init` writes `qloudpulse-collect.toml`, a pseudonym key, `qloudpulse-collect.key`, and a view token,
+`qloudpulse-collect.view-token` (see [Encrypted values](#encrypted-values-and-the-view-token)), all in
+`~/.config/qloudpulse` (`$XDG_CONFIG_HOME/qloudpulse` if that is set, `%APPDATA%\qloudpulse` on Windows), the directory
+the qloudpulse CLI keeps its sign-in in. `--config <file>` or `QLOUDPULSE_COLLECT_CONFIG` names another config file; a
+`qloudpulse-collect.toml` in the current directory, as earlier releases wrote it, is used before the default. The key
+and the view token sit beside the config file. What the client writes as it runs goes to the state directory, not the
+config directory: raw snapshots to `~/.local/state/qloudpulse/collect/<source_id>/work`, bundles and their delivery
+state to `.../bundles` (`$XDG_STATE_HOME` if set, `%LOCALAPPDATA%` on Windows), unless the config sets `work_dir` or
+`output_dir`. A bundle is deleted once every `[deliver]` target has it, or once `upload` sent it (`[run]
+delete_delivered = false` keeps it). `qloudpulse-collect --help` lists where each file is with the config it would
+use. Back the key and the view token up: losing
+the key changes every pseudonym, which breaks cost history at that point, and without the view token nobody can read
+encrypted values again. Then set the role to read through:
 
 ```bash
 qloudpulse-collect policy > policy.json
@@ -111,14 +122,14 @@ qloudpulse-collect pack
 ```
 
 ```bash
-qloudpulse-collect analyze bundles/qloudpulse-main-20261121T0600Z.tgz
+qloudpulse-collect analyze ~/.local/state/qloudpulse/collect/main/bundles/qloudpulse-main-20261121T0600Z.tgz
 ```
 
 ```bash
-qloudpulse-collect verify bundles/qloudpulse-main-20261121T0600Z.tgz
+qloudpulse-collect verify ~/.local/state/qloudpulse/collect/main/bundles/qloudpulse-main-20261121T0600Z.tgz
 ```
 
-- `pack` applies the rules and writes the bundle.
+- `pack` applies the rules and writes the bundle, and prints its path.
 - `analyze <bundle>` shows exactly what leaves.
 - `verify` checks every file in the bundle against its manifest.
 
@@ -159,6 +170,8 @@ action:
 - `keep`
 - `drop`
 - `pseudonymize`: the same value always gives the same `p_…`, and only your key can reverse it
+- `encrypt`: the same value always gives the same `qpe1_…`, which anyone with your view token can read in
+  qloudpulse's web UI, in their own browser (see [Encrypted values](#encrypted-values-and-the-view-token))
 - `replace`: a regex with `$1`, or a fixed value
 
 `[identifiers]` pseudonymizes account IDs and resource IDs while keeping their format: an account ID becomes another
@@ -169,6 +182,44 @@ inside ARNs and requests too, so the bill and the inventory still join. Both are
 for fields qloudpulse prices from, such as instance type, size or engine. When a rule changes a value, for example a
 table name, the change carries into the later requests that name it. Nothing leaks through a request, and
 qloudpulse's replay still matches.
+
+## Encrypted values and the view token
+
+`pseudonymize` hides a value from qloudpulse and from everyone who reads your reports. `encrypt` hides it from
+qloudpulse only: the people you give the **view token** still see the real value in qloudpulse's reports, decrypted
+in their browser.
+
+```toml
+[tags]
+encrypt = ["Owner", "Name"]
+
+[[fields]]
+path = "TableNames"
+action = "encrypt"
+```
+
+```bash
+qloudpulse-collect view-token
+```
+
+- **The token** is `qp_` and 43 characters, 32 random bytes that `init` writes to `view_token_file`
+  (`qloudpulse-collect.view-token`, readable by its owner only). `view-token` prints it on stdout, for a password
+  manager; `view-token --create` makes one for a config from before `encrypt`, and refuses to replace one.
+  `view-token --key-id` prints only the eight hex digits that name it.
+- **What leaves** is `qpe1_<key id>_<data>`: AES-256-GCM under a key derived from the token. The same value always
+  gives the same output, across bundles, so costs still group by it and a table name carried into a later request
+  still matches on replay. Like a pseudonym, that shows which resources share a value and nothing more; values are
+  padded to 16 bytes, so short values do not give away their length. The manifest carries the key id,
+  `view_key_id`, never the token.
+- **Reading it**: enter the token where qloudpulse asks for one. The page derives the keys with WebCrypto and
+  decrypts the values in your browser; the token and the real values are never sent to qloudpulse or stored by it.
+  That page's code is [`web/qloudpulse-values.js`](web/qloudpulse-values.js), tested against values this client
+  encrypted ([`web/test-vectors.json`](web/test-vectors.json), kept current by `cargo test`).
+- **Anyone holding the token reads every value it encrypted.** Share it the way you share a password. Losing it
+  makes those values unreadable for good: qloudpulse cannot recover them. `pack` refuses a bundle that holds a view
+  token, so one pasted into a tag does not leave.
+- qloudpulse's own features see only the encrypted value: rules in qloudpulse that match a tag's value, such as an
+  environment rule on `Name`, cannot match it. Derive what they need first (`[environment]` below), or keep that tag.
 
 ## Privacy extras
 
@@ -192,9 +243,10 @@ qloudpulse's replay still matches.
 qloudpulse-collect run
 ```
 
-`run` collects when it starts and then at 5 past each hour, packs, deletes the raw snapshot, delivers, and keeps the
-newest `keep_bundles` bundles. It never deletes a bundle a delivery target is still missing; a failed delivery is
-retried at the next run. Use `run --once` for cron, a systemd timer or a Kubernetes CronJob.
+`run` collects when it starts and then at 5 past each hour, packs, deletes the raw snapshot, delivers, and deletes
+each bundle once every delivery target has it (`[run] delete_delivered = false` keeps the newest `keep_bundles`
+instead). It never deletes a bundle a delivery target is still missing; a failed delivery is retried at the next run.
+Use `run --once` for cron, a systemd timer or a Kubernetes CronJob.
 
 - **At the start** it collects the hour that just ended, so you need not wait for the next 5 past. Started before 5
   past (`[run] minute`), it waits for that minute first: until then AWS may not have the whole hour.
@@ -232,7 +284,9 @@ qloudpulse-collect run --ui
   stay), and refuses if the file changed on disk meanwhile. Under `run`, a saved rule applies from the next cycle.
 - **Bundles**: every bundle, which target has it, its manifest checked against its files, and every record as it
   left. **Run history**: each bundle's window, failures and deliveries, and under `run --ui` each cycle of the
-  process, the one at its start included.
+  process, the one at its start included. Once qloudpulse has a bundle, its `qloudpulse ✓` links to **Bundles
+  arrived** on qloudpulse (`/account/aws#aws-offline`), which shows each upload by reference and what became of it.
+  The link opens in a new tab; the UI itself still loads nothing from qloudpulse.
 - It answers only to requests that name it by IP address, as `localhost`, or by a name you give with
   `--ui-allow-host` (other DNS names are refused, against DNS rebinding), and that carry the token; every form carries
   a second token. Every asset is in the binary and the page may load nothing from anywhere else.
