@@ -75,7 +75,16 @@ qloudpulse-collect init
 ```
 
 `init` writes `qloudpulse-collect.toml`, a pseudonym key, `qloudpulse-collect.key`, and a view token,
-`qloudpulse-collect.view-token` (see [Encrypted values](#encrypted-values-and-the-view-token)). Back both up: losing
+`qloudpulse-collect.view-token` (see [Encrypted values](#encrypted-values-and-the-view-token)), all in
+`~/.config/qloudpulse` (`$XDG_CONFIG_HOME/qloudpulse` if that is set, `%APPDATA%\qloudpulse` on Windows), the directory
+the qloudpulse CLI keeps its sign-in in. `--config <file>` or `QLOUDPULSE_COLLECT_CONFIG` names another config file; a
+`qloudpulse-collect.toml` in the current directory, as earlier releases wrote it, is used before the default. The key
+and the view token sit beside the config file. What the client writes as it runs goes to the state directory, not the
+config directory: raw snapshots to `~/.local/state/qloudpulse/collect/<source_id>/work`, bundles and their delivery
+state to `.../bundles` (`$XDG_STATE_HOME` if set, `%LOCALAPPDATA%` on Windows), unless the config sets `work_dir` or
+`output_dir`. A bundle is deleted once every `[deliver]` target has it, or once `upload` sent it (`[run]
+delete_delivered = false` keeps it). `qloudpulse-collect --help` lists where each file is with the config it would
+use. Back the key and the view token up: losing
 the key changes every pseudonym, which breaks cost history at that point, and without the view token nobody can read
 encrypted values again. Then set the role to read through:
 
@@ -113,14 +122,14 @@ qloudpulse-collect pack
 ```
 
 ```bash
-qloudpulse-collect analyze bundles/qloudpulse-main-20261121T0600Z.tgz
+qloudpulse-collect analyze ~/.local/state/qloudpulse/collect/main/bundles/qloudpulse-main-20261121T0600Z.tgz
 ```
 
 ```bash
-qloudpulse-collect verify bundles/qloudpulse-main-20261121T0600Z.tgz
+qloudpulse-collect verify ~/.local/state/qloudpulse/collect/main/bundles/qloudpulse-main-20261121T0600Z.tgz
 ```
 
-- `pack` applies the rules and writes the bundle.
+- `pack` applies the rules and writes the bundle, and prints its path.
 - `analyze <bundle>` shows exactly what leaves.
 - `verify` checks every file in the bundle against its manifest.
 
@@ -234,9 +243,9 @@ qloudpulse-collect view-token
 qloudpulse-collect run
 ```
 
-`run` collects at 5 past each hour, packs, deletes the raw snapshot, delivers, and keeps the newest
-`keep_bundles` bundles. It never deletes a bundle a delivery target is still missing; a failed delivery is retried
-at the next run. Use `run --once` for cron, a systemd timer or a Kubernetes CronJob.
+`run` collects at 5 past each hour, packs, deletes the raw snapshot, delivers, and deletes each bundle once every
+delivery target has it (`[run] delete_delivered = false` keeps the newest `keep_bundles` instead). It never deletes a
+bundle a delivery target is still missing; a failed delivery is retried at the next run. Use `run --once` for cron, a systemd timer or a Kubernetes CronJob.
 
 ## The local UI
 
