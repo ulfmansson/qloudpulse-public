@@ -266,7 +266,9 @@ qloudpulse-collect run --ui
   redactor as `pack`. Saving goes through the same checks as the CLI, rewrites only what changed (your comments
   stay), and refuses if the file changed on disk meanwhile. Under `run`, a saved rule applies from the next cycle.
 - **Bundles**: every bundle, which target has it, its manifest checked against its files, and every record as it
-  left. **Run history**: each bundle's window, failures and deliveries.
+  left. **Run history**: each bundle's window, failures and deliveries. Once qloudpulse has a bundle, its
+  `qloudpulse ✓` links to **Bundles arrived** on qloudpulse (`/account/aws#aws-offline`), which shows each upload by
+  reference and what became of it. The link opens in a new tab; the UI itself still loads nothing from qloudpulse.
 - It answers only to requests that name it by IP address, as `localhost`, or by a name you give with
   `--ui-allow-host` (other DNS names are refused, against DNS rebinding), and that carry the token; every form carries
   a second token. Every asset is in the binary and the page may load nothing from anywhere else.

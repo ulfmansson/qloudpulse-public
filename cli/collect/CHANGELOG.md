@@ -35,6 +35,9 @@ has lines.
   test vectors the client's tests keep current.
 - `pack` refuses a bundle that holds a view token (`qloudpulse-view-token`).
 - Bundle `schema_version` 1.1.0: the manifest adds `view_key_id` and `rules.tags_encrypted`, both optional.
+- After an upload, the client says where to follow the bundle on qloudpulse: `upload`, `deliver` and `run` print the
+  report site's **Bundles arrived** page with the reference, and in the local UI a delivered `qloudpulse ✓` (Bundles,
+  a bundle's page, Run history) links to it, as does the Bundles page's targets panel.
 
 ## [0.1.1] - 2026-11-23
 

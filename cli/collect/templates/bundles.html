@@ -9,6 +9,7 @@
     <b>Delivery targets</b>
     {% if targets.is_empty() %}<p class="muted">None configured: bundles stay in the output directory. See <code>[deliver]</code> in the config.</p>{% else %}
     <ul class="plain">{% for t in targets %}<li><code>{{ t.name }}</code> → {{ t.detail }}{% if !t.state.is_empty() %}<br><span class="{{ t.state_class }}">{{ t.state }}</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
+    {% if !progress.is_empty() %}<p><b>After an upload</b><br>qloudpulse checks each bundle, then reads it into your reports when its hour is replayed. Follow each one by its reference under <a href="{{ progress }}" target="_blank" rel="noopener noreferrer">Bundles arrived on qloudpulse ↗</a></p>{% endif %}
   </div>
 </div>
 <div class="panel">
@@ -22,7 +23,7 @@
       <td class="num">{{ b.records }}</td>
       <td class="num">{{ b.accounts }}</td>
       <td class="num small">{{ b.size }}</td>
-      <td><span class="deliv">{% for d in b.deliveries %}<span class="dv {% if d.done %}ok{% else %}bad{% endif %}">{{ d.target }} {% if d.done %}✓{% else %}✗ pending{% endif %}</span>{% else %}<span class="muted small">—</span>{% endfor %}</span></td>
+      <td><span class="deliv">{% for d in b.deliveries %}{% if !d.href.is_empty() %}<a class="dv ok" href="{{ d.href }}" target="_blank" rel="noopener noreferrer" title="See on qloudpulse what became of it: checked, then read into your reports">{{ d.target }} ✓ ↗</a>{% else %}<span class="dv {% if d.done %}ok{% else %}bad{% endif %}">{{ d.target }} {% if d.done %}✓{% else %}✗ pending{% endif %}</span>{% endif %}{% else %}<span class="muted small">—</span>{% endfor %}</span></td>
       <td class="small {{ b.note_class }}">{{ b.note }}</td>
     </tr>
     {% endfor %}
